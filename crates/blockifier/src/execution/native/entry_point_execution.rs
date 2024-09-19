@@ -28,8 +28,18 @@ pub fn execute_entry_point_call(
         context,
     );
 
-    println!("Blockifier-Native: running the Native Executor");
-    let result = run_native_executor(&contract_class.executor, function_id, call, syscall_handler);
-    println!("Blockifier-Native: Native Executor finished running");
+    let result = run_native_executor(&contract_class.executor, function_id, call.clone(), syscall_handler);
+
+    if let Err(e) = &result {
+        dbg!("==== CALLER: {} ====", call.caller_address);
+        dbg!("==== CLASH {} ====", call.class_hash);
+        dbg!("==== CODE ADDRESS {} ====", call.code_address);
+        dbg!("==== CALLDATA {} ====", call.calldata);
+        dbg!("==== ENTRYPOINT {} ====", call.entry_point_selector);
+        dbg!("==== ERROR ====", e);
+        
+        dbg!("\n");
+    }
+
     result
 }
