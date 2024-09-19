@@ -112,6 +112,7 @@ pub fn versioned_rpc(attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 /// This macro will emit a histogram metric with the given name and the latency of the function.
+///
 /// In addition, also a debug log with the metric name and the execution time will be emitted.
 /// The macro also receives a boolean for whether it will be emitted only when
 /// profiling is activated or at all times.

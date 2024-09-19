@@ -12,6 +12,7 @@ pub type OriginalSkeletonNodeMap = HashMap<NodeIndex, OriginalSkeletonNode>;
 pub type OriginalSkeletonTreeResult<T> = Result<T, OriginalSkeletonTreeError>;
 
 /// Consider a Patricia-Merkle Tree which should be updated with new leaves.
+///
 /// This trait represents the structure of the subtree which will be modified in the
 /// update. It also contains the hashes (for edge siblings - also the edge data) of the unmodified
 /// nodes on the Merkle paths from the updated leaves to the root.

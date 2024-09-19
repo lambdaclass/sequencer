@@ -70,6 +70,13 @@ impl ChainId {
     pub fn as_hex(&self) -> String {
         format!("0x{}", hex::encode(self.to_string()))
     }
+
+    #[cfg(any(feature = "testing", test))]
+    pub fn create_for_testing() -> Self {
+        const CHAIN_ID_NAME: &str = "SN_GOERLI";
+
+        ChainId::Other(CHAIN_ID_NAME.to_string())
+    }
 }
 
 /// The address of a contract, used for example in [StateDiff](`crate::state::StateDiff`),
@@ -211,6 +218,14 @@ impl Nonce {
             return Err(StarknetApiError::OutOfRange { string: format!("{:?}", self) });
         }
         Ok(Self(incremented))
+    }
+
+    pub fn try_decrement(&self) -> Result<Self, StarknetApiError> {
+        // Check if an underflow occurred during decrement.
+        if self.0 == Felt::ZERO {
+            return Err(StarknetApiError::OutOfRange { string: format!("{:?}", self) });
+        }
+        Ok(Self(self.0 - Felt::ONE))
     }
 }
 

@@ -129,6 +129,7 @@ pub enum DeployAccountTransaction {
 }
 
 /// An invoke account transaction that can be added to Starknet through the Starknet gateway.
+///
 /// The invoke is a V0 transaction.
 /// It has a serialization format that the Starknet gateway accepts in the `add_transaction`
 /// HTTP method.
@@ -146,6 +147,7 @@ pub struct InvokeV0Transaction {
 }
 
 /// An invoke account transaction that can be added to Starknet through the Starknet gateway.
+///
 /// The invoke is a V1 transaction.
 /// It has a serialization format that the Starknet gateway accepts in the `add_transaction`
 /// HTTP method.
@@ -162,6 +164,7 @@ pub struct InvokeV1Transaction {
 }
 
 /// An invoke account transaction that can be added to Starknet through the Starknet gateway.
+///
 /// The invoke is a V3 transaction.
 /// It has a serialization format that the Starknet gateway accepts in the `add_transaction`
 /// HTTP method.

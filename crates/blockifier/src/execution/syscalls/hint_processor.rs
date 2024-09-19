@@ -17,7 +17,7 @@ use cairo_vm::vm::vm_core::VirtualMachine;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::state::StorageKey;
-use starknet_api::transaction::{Calldata, Resource};
+use starknet_api::transaction::{AllResourceBounds, Calldata, ValidResourceBounds};
 use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
@@ -209,6 +209,8 @@ pub const L1_GAS: &str = "0x0000000000000000000000000000000000000000000000000000
 pub const L2_GAS: &str = "0x00000000000000000000000000000000000000000000000000004c325f474153";
 // "L1_DATA_GAS";
 pub const L1_DATA_GAS: &str = "0x0000000000000000000000000000000000004c315f444154415f474153";
+// "L1_DATA"
+pub const L1_DATA: &str = "0x00000000000000000000000000000000000000000000000000004c325f474153";
 // Failed to execute call
 pub const FAILED_TO_EXECUTE_CALL: &str = "0x004661696c656420746f20657865637574652063616c6c";
 // Failed to calculate address
@@ -471,26 +473,29 @@ impl<'a> SyscallHintProcessor<'a> {
         vm: &mut VirtualMachine,
         tx_info: &CurrentTransactionInfo,
     ) -> SyscallResult<(Relocatable, Relocatable)> {
-        let l1_gas = Felt::from_hex(L1_GAS).map_err(SyscallExecutionError::from)?;
-        let l2_gas = Felt::from_hex(L2_GAS).map_err(SyscallExecutionError::from)?;
-        let flat_resource_bounds: Vec<Felt> = tx_info
-            .resource_bounds
-            .0
-            .iter()
-            .flat_map(|(resource, resource_bounds)| {
-                let resource = match resource {
-                    Resource::L1Gas => l1_gas,
-                    Resource::L2Gas => l2_gas,
-                    Resource::L1DataGas => todo!(),
-                };
+        let l1_gas_as_felt = Felt::from_hex(L1_GAS).map_err(SyscallExecutionError::from)?;
+        let l2_gas_as_felt = Felt::from_hex(L2_GAS).map_err(SyscallExecutionError::from)?;
+        let l1_data_gas_as_felt = Felt::from_hex(L1_DATA_GAS).map_err(SyscallExecutionError::from)?;
 
-                vec![
-                    resource,
-                    Felt::from(resource_bounds.max_amount),
-                    Felt::from(resource_bounds.max_price_per_unit),
-                ]
-            })
-            .collect();
+        let l1_gas_bounds = tx_info.resource_bounds.get_l1_bounds();
+        let l2_gas_bounds = tx_info.resource_bounds.get_l2_bounds();
+        let mut flat_resource_bounds = vec![
+            l1_gas_as_felt,
+            Felt::from(l1_gas_bounds.max_amount),
+            Felt::from(l1_gas_bounds.max_price_per_unit),
+            l2_gas_as_felt,
+            Felt::from(l2_gas_bounds.max_amount),
+            Felt::from(l2_gas_bounds.max_price_per_unit),
+        ];
+        if let ValidResourceBounds::AllResources(AllResourceBounds { l1_data_gas, .. }) =
+            tx_info.resource_bounds
+        {
+            flat_resource_bounds.extend(vec![
+                l1_data_gas_as_felt,
+                Felt::from(l1_data_gas.max_amount),
+                Felt::from(l1_data_gas.max_price_per_unit),
+            ])
+        }
 
         self.allocate_data_segment(vm, &flat_resource_bounds)
     }

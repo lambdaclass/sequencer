@@ -14,6 +14,7 @@ concurrency = []
 jemalloc = ["dep:tikv-jemallocator"]
 testing = ["rand", "rstest"]
 use-sierra-emu = []
+transaction_serde = []
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -38,14 +39,15 @@ indexmap.workspace = true
 tracing.workspace = true
 itertools.workspace = true
 keccak.workspace = true
+lazy_static.workspace = true
 log.workspace = true
 num-bigint.workspace = true
 num-integer.workspace = true
-num-rational.workspace = true
+num-rational = { workspace = true, features = ["serde"] }
 num-traits.workspace = true
 papyrus_config.workspace = true
 paste.workspace = true
-phf.workspace = true
+phf = { workspace = true, features = ["macros"] }
 rand = { workspace = true, optional = true }
 rstest = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -84,4 +86,9 @@ required-features = ["testing"]
 [[test]]
 name = "erc20_tests"
 path = "tests/erc20_tests.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_native_contract"
+path = "tests/test_native_contract.rs"
 required-features = ["testing"]
