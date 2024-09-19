@@ -15,7 +15,7 @@ use num_traits::ToBytes;
 use sierra_emu::{ProgramTrace, StateDump};
 use starknet_api::core::{ContractAddress, EntryPointSelector};
 use starknet_api::state::StorageKey;
-use starknet_api::transaction::Resource;
+use starknet_api::transaction::{AllResourceBounds, ValidResourceBounds};
 use starknet_types_core::felt::Felt;
 
 use crate::execution::call_info::{
@@ -129,7 +129,9 @@ fn create_callinfo(
     syscall_handler: NativeSyscallHandler<'_>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
+        // We can use `.unwrap()` directly in both cases because the most significant bit is could
+        // be only 63 here (128 = 64 + 64).
+        let low: u64 = (run_result.remaining_gas & ((1u128 << 64) - 1)).try_into().unwrap();
         let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
         if high != 0 {
             return Err(EntryPointExecutionError::NativeExecutionError {
@@ -169,7 +171,9 @@ pub fn create_callinfo_emu(
     accessed_storage_keys: HashSet<StorageKey, RandomState>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
+        // We can use `.unwrap()` directly in both cases because the most significant bit is could
+        // be only 63 here (128 = 64 + 64).
+        let low: u64 = (run_result.remaining_gas & ((1u128 << 64) - 1)).try_into().unwrap();
         let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
         if high != 0 {
             return Err(EntryPointExecutionError::NativeExecutionError {
@@ -286,28 +290,34 @@ pub fn default_tx_v2_info_sierra_emu() -> sierra_emu::starknet::TxV2Info {
 pub fn calculate_resource_bounds(
     tx_info: &CurrentTransactionInfo,
 ) -> SyscallResult<Vec<ResourceBounds>> {
-    let l1_gas = Felt::from_hex(L1_GAS).map_err(|e| encode_str_as_felts(&e.to_string()))?;
-    let l2_gas = Felt::from_hex(L2_GAS).map_err(|e| encode_str_as_felts(&e.to_string()))?;
+    let l1_gas_felt = Felt::from_hex(L1_GAS).map_err(|e| encode_str_as_felts(&e.to_string()))?;
+    let l2_gas_felt = Felt::from_hex(L2_GAS).map_err(|e| encode_str_as_felts(&e.to_string()))?;
     // TODO: Recheck correctness of L1_DATA_GAS
-    let l1_data_gas =
+    let l1_data_gas_felt =
         Felt::from_hex(L1_DATA_GAS).map_err(|e| encode_str_as_felts(&e.to_string()))?;
 
-    Ok(tx_info
-        .resource_bounds
-        .0
-        .iter()
-        .map(|(resource, resource_bound)| {
-            let resource = match resource {
-                Resource::L1Gas => l1_gas,
-                Resource::L2Gas => l2_gas,
-                Resource::L1DataGas => l1_data_gas,
-            };
+    let mut resource_bounds = vec![
+        ResourceBounds{
+            resource: l1_gas_felt,
+            max_amount: tx_info.resource_bounds.get_l1_bounds().max_amount,
+            max_price_per_unit: tx_info.resource_bounds.get_l1_bounds().max_price_per_unit,
+        },
+        ResourceBounds{
+            resource: l2_gas_felt,
+            max_amount: tx_info.resource_bounds.get_l2_bounds().max_amount,
+            max_price_per_unit: tx_info.resource_bounds.get_l2_bounds().max_price_per_unit,
+        },
+    ];
 
-            ResourceBounds {
-                resource,
-                max_amount: resource_bound.max_amount,
-                max_price_per_unit: resource_bound.max_price_per_unit,
-            }
-        })
-        .collect())
+    if let ValidResourceBounds::AllResources(AllResourceBounds { l1_data_gas, .. }) =
+        tx_info.resource_bounds
+    {
+        resource_bounds.push(ResourceBounds{
+            resource: l1_data_gas_felt,
+            max_amount: l1_data_gas.max_amount,
+            max_price_per_unit: l1_data_gas.max_price_per_unit,
+        });
+    }
+
+    Ok(resource_bounds)
 }

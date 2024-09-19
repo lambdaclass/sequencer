@@ -274,6 +274,7 @@ impl ContractClassV1 {
             program: Default::default(),
             entry_points_by_type: Default::default(),
             hints: Default::default(),
+            compiler_version: Default::default(),
             bytecode_segment_lengths: NestedIntList::Leaf(0),
         }))
     }
@@ -375,6 +376,7 @@ pub struct ContractClassV1Inner {
     pub program: Program,
     pub entry_points_by_type: HashMap<EntryPointType, Vec<EntryPointV1>>,
     pub hints: HashMap<String, Hint>,
+    pub compiler_version: String,
     bytecode_segment_lengths: NestedIntList,
 }
 
@@ -457,6 +459,7 @@ impl TryFrom<CasmContractClass> for ContractClassV1 {
             program,
             entry_points_by_type,
             hints: string_to_hint,
+            compiler_version: class.compiler_version,
             bytecode_segment_lengths,
         })))
     }

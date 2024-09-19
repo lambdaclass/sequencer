@@ -48,7 +48,13 @@ use super::utils::{
     u256_to_biguint,
 };
 use crate::abi::constants;
-use crate::execution::call_info::{CallInfo, MessageToL1, OrderedEvent, OrderedL2ToL1Message};
+use crate::execution::call_info::{
+    CallInfo,
+    MessageToL1,
+    OrderedEvent,
+    OrderedL2ToL1Message,
+    Retdata,
+};
 use crate::execution::common_hints::ExecutionMode;
 use crate::execution::contract_class::ContractClass;
 use crate::execution::entry_point::{
@@ -120,7 +126,7 @@ impl<'state> NativeSyscallHandler<'state> {
         &mut self,
         entry_point: CallEntryPoint,
         remaining_gas: &mut u128,
-    ) -> SyscallResult<CallInfo> {
+    ) -> SyscallResult<Retdata> {
         let call_info = entry_point
             .execute(self.state, self.execution_resources, self.execution_context)
             .map_err(|e| encode_str_as_felts(&e.to_string()))?;
@@ -133,9 +139,11 @@ impl<'state> NativeSyscallHandler<'state> {
 
         self.update_remaining_gas(remaining_gas, &call_info);
 
-        self.inner_calls.push(call_info.clone());
+        let retdata = call_info.execution.retdata.clone();
 
-        Ok(call_info)
+        self.inner_calls.push(call_info);
+
+        Ok(retdata)
     }
 
     pub fn update_remaining_gas(&mut self, remaining_gas: &mut u128, call_info: &CallInfo) {
@@ -513,11 +521,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
             initial_gas: u64::try_from(*remaining_gas).unwrap(),
         };
 
-        let retdata = self
-            .execute_inner_call(entry_point, remaining_gas)
-            .map(|call_info| call_info.execution.retdata.0.clone())?;
-
-        Ok(retdata)
+        Ok(self.execute_inner_call(entry_point, remaining_gas)?.0)
     }
 
     fn call_contract(
@@ -561,11 +565,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
             initial_gas: u64::try_from(*remaining_gas).unwrap(),
         };
 
-        let retdata = self
-            .execute_inner_call(entry_point, remaining_gas)
-            .map(|call_info| call_info.execution.retdata.0.clone())?;
-
-        Ok(retdata)
+        Ok(self.execute_inner_call(entry_point, remaining_gas)?.0)
     }
 
     fn storage_read(
@@ -1299,10 +1299,9 @@ pub mod sierra_emu_impl {
             };
 
             let retdata = self
-                .execute_inner_call(entry_point, remaining_gas)
-                .map(|call_info| call_info.execution.retdata.0.clone())?;
+                .execute_inner_call(entry_point, remaining_gas)?;
 
-            Ok(retdata)
+            Ok(retdata.0)
         }
 
         fn call_contract(
@@ -1347,10 +1346,9 @@ pub mod sierra_emu_impl {
             };
 
             let retdata = self
-                .execute_inner_call(entry_point, remaining_gas)
-                .map(|call_info| call_info.execution.retdata.0.clone())?;
+                .execute_inner_call(entry_point, remaining_gas)?;
 
-            Ok(retdata)
+            Ok(retdata.0)
         }
 
         fn storage_read(
