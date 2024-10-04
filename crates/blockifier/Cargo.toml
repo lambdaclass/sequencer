@@ -14,6 +14,7 @@ concurrency = []
 jemalloc = ["dep:tikv-jemallocator"]
 testing = ["rand", "rstest"]
 use-sierra-emu = []
+with-trace-dump = ["cairo-native/with-trace-dump"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

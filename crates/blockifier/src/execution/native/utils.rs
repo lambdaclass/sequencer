@@ -51,6 +51,7 @@ pub fn run_native_executor(
     function_id: &FunctionId,
     call: CallEntryPoint,
     mut syscall_handler: NativeSyscallHandler<'_>,
+    #[cfg(feature = "with-trace-dump")] trace_id: usize,
 ) -> EntryPointExecutionResult<CallInfo> {
     let execution_result = native_executor.run(
         function_id,
@@ -58,6 +59,33 @@ pub fn run_native_executor(
         Some(call.initial_gas.into()),
         &mut syscall_handler,
     );
+
+    #[cfg(feature = "with-trace-dump")]
+    #[allow(warnings)]
+    {
+        use std::sync::Mutex;
+
+        use cairo_native::runtime::trace_dump::TraceDump;
+
+        let trace = serde_json::to_string_pretty(&{
+            let trace_dump = unsafe {
+                let fn_ptr = native_executor
+                    .library
+                    .get::<extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(
+                        b"get_trace_dump_ptr\0",
+                    )
+                    .unwrap();
+
+                fn_ptr()
+            };
+            let mut trace_dump = trace_dump.lock().unwrap();
+
+            trace_dump.remove(&u64::try_from(trace_id).unwrap()).unwrap().trace
+        })
+        .unwrap();
+        std::fs::create_dir_all("traces/native/").unwrap();
+        std::fs::write(&format!("traces/native/trace_{}.json", trace_id), trace).unwrap();
+    }
 
     let run_result = match execution_result {
         Ok(res) if res.failure_flag => Err(EntryPointExecutionError::NativeExecutionError {
@@ -100,6 +128,9 @@ pub fn run_sierra_emu_executor(
     std::fs::create_dir_all("traces/emu/").unwrap();
     std::fs::write(format!("traces/emu/trace_{}.json", counter_value), trace).unwrap();
 
+    std::fs::write(format!("traces/program_{}.sierra", counter_value), format!("{}", vm.program))
+        .unwrap();
+
     if execution_result.failure_flag {
         Err(EntryPointExecutionError::NativeExecutionError {
             info: if !execution_result.return_values.is_empty() {
@@ -129,8 +160,8 @@ fn create_callinfo(
     syscall_handler: NativeSyscallHandler<'_>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
-        let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
+        let low = u64::try_from(run_result.remaining_gas & u128::from(u64::MAX)).unwrap();
+        let high = u64::try_from(run_result.remaining_gas >> 64).unwrap();
         if high != 0 {
             return Err(EntryPointExecutionError::NativeExecutionError {
                 info: "Overflow: gas consumed bigger than 64 bit".into(),
@@ -169,8 +200,8 @@ pub fn create_callinfo_emu(
     accessed_storage_keys: HashSet<StorageKey, RandomState>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
-        let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
+        let low = u64::try_from(run_result.remaining_gas & u128::from(u64::MAX)).unwrap();
+        let high = u64::try_from(run_result.remaining_gas >> 64).unwrap();
         if high != 0 {
             return Err(EntryPointExecutionError::NativeExecutionError {
                 info: "Overflow: gas consumed bigger than 64 bit".into(),
