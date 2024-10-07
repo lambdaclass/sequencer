@@ -875,10 +875,10 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
 
     fn sha256_process_block(
         &mut self,
-        prev_state: &[u32; 8],
+        prev_state: &mut [u32; 8],
         current_block: &[u32; 16],
         remaining_gas: &mut u128,
-    ) -> SyscallResult<[u32; 8]> {
+    ) -> SyscallResult<()> {
         const SHA256_STATE_SIZE: usize = 8;
 
         self.pre_execute_syscall(
@@ -895,7 +895,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         );
         let mut state: [u32; SHA256_STATE_SIZE] = *prev_state;
         sha2::compress256(&mut state, &[data_as_bytes]);
-        Ok(state)
+        Ok(())
     }
 }
 
@@ -904,35 +904,18 @@ pub mod sierra_emu_impl {
 
     use num_traits::ToPrimitive;
     use sierra_emu::starknet::{
-        BlockInfo,
-        ExecutionInfo,
-        ExecutionInfoV2,
-        ResourceBounds,
-        Secp256k1Point,
-        Secp256r1Point,
-        SyscallResult,
-        TxInfo,
-        TxV2Info,
-        U256,
+        BlockInfo, ExecutionInfo, ExecutionInfoV2, ResourceBounds, Secp256k1Point, Secp256r1Point,
+        SyscallResult, TxInfo, TxV2Info, U256,
     };
     use starknet_api::core::{
-        calculate_contract_address,
-        ClassHash,
-        ContractAddress,
-        EntryPointSelector,
-        EthAddress,
+        calculate_contract_address, ClassHash, ContractAddress, EntryPointSelector, EthAddress,
         PatriciaKey,
     };
     use starknet_api::data_availability::DataAvailabilityMode;
     use starknet_api::deprecated_contract_class::EntryPointType;
     use starknet_api::state::StorageKey;
     use starknet_api::transaction::{
-        Calldata,
-        ContractAddressSalt,
-        EventContent,
-        EventData,
-        EventKey,
-        L2ToL1Payload,
+        Calldata, ContractAddressSalt, EventContent, EventData, EventKey, L2ToL1Payload,
     };
     use starknet_types_core::felt::Felt;
 
@@ -944,15 +927,11 @@ pub mod sierra_emu_impl {
     use crate::execution::entry_point::{CallEntryPoint, CallType, ConstructorContext};
     use crate::execution::execution_utils::{execute_deployment, max_fee_for_execution_info};
     use crate::execution::native::utils::{
-        calculate_resource_bounds,
-        contract_address_to_native_felt,
-        default_tx_v2_info_sierra_emu,
+        calculate_resource_bounds, contract_address_to_native_felt, default_tx_v2_info_sierra_emu,
         encode_str_as_felts,
     };
     use crate::execution::syscalls::hint_processor::{
-        SyscallExecutionError,
-        BLOCK_NUMBER_OUT_OF_RANGE_ERROR,
-        INVALID_INPUT_LENGTH_ERROR,
+        SyscallExecutionError, BLOCK_NUMBER_OUT_OF_RANGE_ERROR, INVALID_INPUT_LENGTH_ERROR,
         OUT_OF_GAS_ERROR,
     };
     use crate::execution::syscalls::{exceeds_event_size_limit, SyscallSelector};
