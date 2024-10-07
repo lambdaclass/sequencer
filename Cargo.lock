@@ -925,7 +925,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1699,8 +1699,8 @@ dependencies = [
 
 [[package]]
 name = "cairo-native"
-version = "0.2.0-alpha.1"
-source = "git+https://github.com/lambdaclass/cairo_native#d12419920184cd66f06ec048a451bfba928fc499"
+version = "0.2.0-alpha.2"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=501d2fad8728f92961ef7c170a4d15413b5fecb9#501d2fad8728f92961ef7c170a4d15413b5fecb9"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -1751,13 +1751,19 @@ dependencies = [
 
 [[package]]
 name = "cairo-native-runtime"
-version = "0.2.0-alpha.1"
-source = "git+https://github.com/lambdaclass/cairo_native#d12419920184cd66f06ec048a451bfba928fc499"
+version = "0.2.0-alpha.2"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=501d2fad8728f92961ef7c170a4d15413b5fecb9#501d2fad8728f92961ef7c170a4d15413b5fecb9"
 dependencies = [
+ "cairo-lang-sierra",
  "cairo-lang-sierra-gas",
+ "cairo-lang-utils",
+ "itertools 0.13.0",
  "lazy_static",
  "libc",
+ "num-bigint 0.4.6",
+ "num-traits 0.2.19",
  "rand 0.8.5",
+ "sierra-emu",
  "starknet-curve 0.5.1",
  "starknet-types-core",
 ]
