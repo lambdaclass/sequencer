@@ -1699,11 +1699,15 @@ dependencies = [
 
 [[package]]
 name = "cairo-native"
-version = "0.2.0-alpha.2"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=501d2fad8728f92961ef7c170a4d15413b5fecb9#501d2fad8728f92961ef7c170a4d15413b5fecb9"
+version = "0.2.0-alpha.3"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=82c25b377f50904e1253b614c8719388277530e6#82c25b377f50904e1253b614c8719388277530e6"
 dependencies = [
  "anyhow",
  "aquamarine",
+ "ark-ec",
+ "ark-ff",
+ "ark-secp256k1",
+ "ark-secp256r1",
  "bumpalo",
  "cairo-lang-compiler",
  "cairo-lang-defs",
@@ -1725,7 +1729,6 @@ dependencies = [
  "colored",
  "educe",
  "itertools 0.13.0",
- "k256",
  "keccak",
  "lazy_static",
  "libc",
@@ -1734,9 +1737,8 @@ dependencies = [
  "melior",
  "mlir-sys",
  "num-bigint 0.4.6",
+ "num-integer",
  "num-traits 0.2.19",
- "p256",
- "sec1",
  "serde",
  "serde_json",
  "sha2",
@@ -1751,19 +1753,15 @@ dependencies = [
 
 [[package]]
 name = "cairo-native-runtime"
-version = "0.2.0-alpha.2"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=501d2fad8728f92961ef7c170a4d15413b5fecb9#501d2fad8728f92961ef7c170a4d15413b5fecb9"
+version = "0.2.0-alpha.3"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=82c25b377f50904e1253b614c8719388277530e6#82c25b377f50904e1253b614c8719388277530e6"
 dependencies = [
- "cairo-lang-sierra",
  "cairo-lang-sierra-gas",
- "cairo-lang-utils",
  "itertools 0.13.0",
  "lazy_static",
  "libc",
- "num-bigint 0.4.6",
  "num-traits 0.2.19",
  "rand 0.8.5",
- "sierra-emu",
  "starknet-curve 0.5.1",
  "starknet-types-core",
 ]
