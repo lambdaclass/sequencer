@@ -103,6 +103,8 @@ pub fn execute_entry_point_call(
             println!("Execution started for trace #{counter_value}.");
             dbg!(trace_dump.keys().collect::<Vec<_>>());
 
+            drop(trace_dump);
+
             let x = run_native_executor(
                 &contract_class.executor,
                 function_id,
