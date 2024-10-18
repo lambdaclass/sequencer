@@ -48,7 +48,7 @@ pub fn execute_entry_point_call(
         run_sierra_emu_executor(vm, function_id, call.clone())
     } else {
         #[cfg(feature = "with-trace-dump")]
-        let counter_value = {
+        {
             use std::collections::HashMap;
             use std::sync::atomic::AtomicUsize;
             use std::sync::Mutex;
@@ -96,26 +96,32 @@ pub fn execute_entry_point_call(
                     .as_mut()
                     .unwrap()
             };
+            let old_trace_id = *trace_id_ref;
+
             *trace_id_ref = u64::try_from(counter_value).unwrap();
 
             println!("Execution started for trace #{counter_value}.");
             dbg!(trace_dump.keys().collect::<Vec<_>>());
-            counter_value
-        };
 
-        let x = run_native_executor(
-            &contract_class.executor,
-            function_id,
-            call,
-            syscall_handler,
-            #[cfg(feature = "with-trace-dump")]
-            counter_value,
-        );
+            let x = run_native_executor(
+                &contract_class.executor,
+                function_id,
+                call,
+                syscall_handler,
+                counter_value,
+            );
 
-        #[cfg(feature = "with-trace-dump")]
-        println!("Execution finished for trace #{counter_value}.");
+            println!("Execution finished for trace #{counter_value}.");
 
-        x
+            *trace_id_ref = old_trace_id;
+
+            println!("Resetting to trace #{old_trace_id}.");
+
+            x
+        }
+
+        #[cfg(not(feature = "with-trace-dump"))]
+        run_native_executor(&contract_class.executor, function_id, call, syscall_handler)
     };
     let execution_time = pre_execution_instant.elapsed().as_millis();
     tracing::info!(time = execution_time, "native contract execution finished");
