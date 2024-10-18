@@ -1699,8 +1699,8 @@ dependencies = [
 
 [[package]]
 name = "cairo-native"
-version = "0.2.0-alpha.3"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=1a783e79b688c90963bb3411f36f0b4e91e0c614#1a783e79b688c90963bb3411f36f0b4e91e0c614"
+version = "0.2.0-alpha.4"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=07bf052d743031a089990db90cf80bfea29bf960#07bf052d743031a089990db90cf80bfea29bf960"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -1711,7 +1711,6 @@ dependencies = [
  "bumpalo",
  "cairo-lang-compiler",
  "cairo-lang-defs",
- "cairo-lang-diagnostics",
  "cairo-lang-filesystem",
  "cairo-lang-runner",
  "cairo-lang-semantic",
@@ -1753,15 +1752,14 @@ dependencies = [
 
 [[package]]
 name = "cairo-native-runtime"
-version = "0.2.0-alpha.3"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=1a783e79b688c90963bb3411f36f0b4e91e0c614#1a783e79b688c90963bb3411f36f0b4e91e0c614"
+version = "0.2.0-alpha.4"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=07bf052d743031a089990db90cf80bfea29bf960#07bf052d743031a089990db90cf80bfea29bf960"
 dependencies = [
  "cairo-lang-sierra",
  "cairo-lang-sierra-gas",
  "cairo-lang-utils",
  "itertools 0.13.0",
  "lazy_static",
- "libc",
  "num-bigint 0.4.6",
  "num-traits 0.2.19",
  "rand 0.8.5",
