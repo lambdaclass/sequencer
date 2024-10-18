@@ -172,7 +172,6 @@ serde_repr = "0.1.19"
 serde_yaml = "0.9.16"
 sha2 = "0.10.8"
 sha3 = "0.10.8"
-sierra-emu = { git = "https://github.com/lambdaclass/sierra-emu.git" }
 simple_logger = "4.0.0"
 starknet-core = "0.6.0"
 starknet-crypto = "0.5.1"
