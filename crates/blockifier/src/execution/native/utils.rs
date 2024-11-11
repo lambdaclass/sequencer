@@ -55,7 +55,7 @@ pub fn run_native_executor(
     let execution_result = native_executor.run(
         selector,
         &call.calldata.0,
-        Some(call.initial_gas.into()),
+        Some(call.initial_gas),
         None,
         &mut syscall_handler,
     );
@@ -87,7 +87,7 @@ pub fn run_sierra_emu_executor(
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let counter_value = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    vm.call_contract(&function, call.initial_gas.into(), call.calldata.0.iter().cloned());
+    vm.call_contract(&function, call.initial_gas, call.calldata.0.iter().cloned());
 
     let mut trace = ProgramTrace::new();
 
@@ -130,14 +130,7 @@ fn create_callinfo(
     syscall_handler: NativeSyscallHandler<'_>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
-        let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
-        if high != 0 {
-            return Err(EntryPointExecutionError::NativeExecutionError {
-                info: "Overflow: gas consumed bigger than 64 bit".into(),
-            });
-        }
-        call.initial_gas - low
+        call.initial_gas - run_result.remaining_gas
     };
 
     Ok(CallInfo {
@@ -170,14 +163,7 @@ pub fn create_callinfo_emu(
     accessed_storage_keys: HashSet<StorageKey, RandomState>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
     let gas_consumed = {
-        let low: u64 = run_result.remaining_gas.try_into().unwrap();
-        let high: u64 = (run_result.remaining_gas >> 64).try_into().unwrap();
-        if high != 0 {
-            return Err(EntryPointExecutionError::NativeExecutionError {
-                info: "Overflow: gas consumed bigger than 64 bit".into(),
-            });
-        }
-        call.initial_gas - low
+        call.initial_gas - run_result.remaining_gas
     };
 
     Ok(CallInfo {
