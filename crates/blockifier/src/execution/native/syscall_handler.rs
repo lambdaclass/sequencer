@@ -186,6 +186,31 @@ impl<'state> NativeSyscallHandler<'state> {
 
         Ok(())
     }
+
+    pub fn pre_execute_syscall_gasu64(
+        &mut self,
+        remaining_gas: &mut u64,
+        syscall_selector: SyscallSelector,
+        syscall_gas_cost: u64,
+    ) -> SyscallResult<()> {
+        // Increment the syscall counter. For Keccak syscall count is calculated by the number of
+        // steps
+        if syscall_selector != SyscallSelector::Keccak {
+            self.increment_syscall_count(&syscall_selector);
+        }
+
+        // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
+        let required_gas = syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
+
+        if *remaining_gas < required_gas {
+            //  Out of gas failure.
+            return Err(vec![Felt::from_hex(OUT_OF_GAS_ERROR).unwrap()]);
+        }
+
+        *remaining_gas -= required_gas;
+
+        Ok(())
+    }
 }
 
 impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
@@ -894,6 +919,14 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         sha2::compress256(prev_state, &[data_as_bytes]);
         Ok(())
     }
+
+    fn get_class_hash_at(
+        &mut self,
+        _contract_address: Felt,
+        _remaining_gas: &mut u128,
+    ) -> SyscallResult<Felt> {
+        todo!()
+    }
 }
 
 pub mod sierra_emu_impl {
@@ -954,14 +987,15 @@ pub mod sierra_emu_impl {
     };
     use crate::execution::syscalls::{exceeds_event_size_limit, SyscallSelector};
     use crate::transaction::objects::TransactionInfo;
+    use crate::transaction::transaction_utils::update_remaining_gas;
 
     impl<'state> sierra_emu::starknet::StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         fn get_block_hash(
             &mut self,
             block_number: u64,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Felt> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::GetBlockHash,
                 self.execution_context.gas_costs().get_block_hash_gas_cost,
@@ -1005,8 +1039,8 @@ pub mod sierra_emu_impl {
             }
         }
 
-        fn get_execution_info(&mut self, remaining_gas: &mut u128) -> SyscallResult<ExecutionInfo> {
-            self.pre_execute_syscall(
+        fn get_execution_info(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfo> {
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::GetExecutionInfo,
                 self.execution_context.gas_costs().get_execution_info_gas_cost,
@@ -1073,9 +1107,9 @@ pub mod sierra_emu_impl {
 
         fn get_execution_info_v2(
             &mut self,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<ExecutionInfoV2> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::GetExecutionInfo,
                 self.execution_context.gas_costs().get_execution_info_gas_cost,
@@ -1140,7 +1174,7 @@ pub mod sierra_emu_impl {
                         .map(|x| ResourceBounds {
                             resource: x.resource,
                             max_amount: x.max_amount,
-                            max_price_per_unit: x.max_price_per_unit,
+                            max_price_per_unit: x.max_price_per_unit.try_into().unwrap(),
                         })
                         .collect(),
                     tip: context.tip.0.into(),
@@ -1171,9 +1205,9 @@ pub mod sierra_emu_impl {
             contract_address_salt: Felt,
             calldata: Vec<Felt>,
             deploy_from_zero: bool,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<(Felt, Vec<Felt>)> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Deploy,
                 self.execution_context.gas_costs().deploy_gas_cost,
@@ -1208,7 +1242,7 @@ pub mod sierra_emu_impl {
                 // Warning: converting of reference would create a new reference to different data,
                 // example:
                 //     let mut a: u128 = 1;
-                //     let a_ref: &mut u128 = &mut a;
+                //     let a_ref: &mut u64 = &mut a;
                 //
                 //     let mut b: u64 = u64::try_from(*a_ref).unwrap();
                 //
@@ -1220,11 +1254,11 @@ pub mod sierra_emu_impl {
                 //     assert_eq!(a, 1);
                 // in this case we don't pass a reference, so everything is OK, but still can cause
                 // conversion issues
-                u64::try_from(*remaining_gas).unwrap(),
+                *remaining_gas,
             )
             .map_err(|error| encode_str_as_felts(&error.to_string()))?;
 
-            self.update_remaining_gas(remaining_gas, &call_info);
+            update_remaining_gas(remaining_gas, &call_info);
 
             let return_data = call_info.execution.retdata.0[..].to_vec();
             let contract_address_felt = Felt::from(calculated_contract_address);
@@ -1237,9 +1271,9 @@ pub mod sierra_emu_impl {
         fn replace_class(
             &mut self,
             class_hash: Felt,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<()> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::ReplaceClass,
                 self.execution_context.gas_costs().replace_class_gas_cost,
@@ -1270,9 +1304,9 @@ pub mod sierra_emu_impl {
             class_hash: Felt,
             function_selector: Felt,
             calldata: Vec<Felt>,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Vec<Felt>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::LibraryCall,
                 self.execution_context.gas_costs().library_call_gas_cost,
@@ -1292,12 +1326,15 @@ pub mod sierra_emu_impl {
                 storage_address: self.contract_address,
                 caller_address: self.caller_address,
                 call_type: CallType::Delegate,
-                initial_gas: u64::try_from(*remaining_gas).unwrap(),
+                initial_gas: *remaining_gas,
             };
 
+            let mut gas: u128 = (*remaining_gas).into();
             let retdata = self
-                .execute_inner_call(entry_point, remaining_gas)
+                .execute_inner_call(entry_point, &mut gas)
                 .map(|call_info| call_info.execution.retdata.0.clone())?;
+
+            *remaining_gas = gas.try_into().unwrap();
 
             Ok(retdata)
         }
@@ -1307,9 +1344,9 @@ pub mod sierra_emu_impl {
             address: Felt,
             entry_point_selector: Felt,
             calldata: Vec<Felt>,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Vec<Felt>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::CallContract,
                 self.execution_context.gas_costs().call_contract_gas_cost,
@@ -1340,12 +1377,15 @@ pub mod sierra_emu_impl {
                 storage_address: contract_address,
                 caller_address: self.contract_address,
                 call_type: CallType::Call,
-                initial_gas: u64::try_from(*remaining_gas).unwrap(),
+                initial_gas: *remaining_gas,
             };
 
+            let mut gas: u128 = (*remaining_gas).into();
             let retdata = self
-                .execute_inner_call(entry_point, remaining_gas)
+                .execute_inner_call(entry_point, &mut gas)
                 .map(|call_info| call_info.execution.retdata.0.clone())?;
+
+            *remaining_gas = gas.try_into().unwrap();
 
             Ok(retdata)
         }
@@ -1354,9 +1394,9 @@ pub mod sierra_emu_impl {
             &mut self,
             _address_domain: u32,
             address: Felt,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Felt> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::StorageRead,
                 self.execution_context.gas_costs().storage_read_gas_cost,
@@ -1380,9 +1420,9 @@ pub mod sierra_emu_impl {
             _address_domain: u32,
             address: Felt,
             value: Felt,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<()> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::StorageWrite,
                 self.execution_context.gas_costs().storage_write_gas_cost,
@@ -1403,9 +1443,9 @@ pub mod sierra_emu_impl {
             &mut self,
             keys: Vec<Felt>,
             data: Vec<Felt>,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<()> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::EmitEvent,
                 self.execution_context.gas_costs().emit_event_gas_cost,
@@ -1434,9 +1474,9 @@ pub mod sierra_emu_impl {
             &mut self,
             to_address: Felt,
             payload: Vec<Felt>,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<()> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::SendMessageToL1,
                 self.execution_context.gas_costs().send_message_to_l1_gas_cost,
@@ -1458,8 +1498,8 @@ pub mod sierra_emu_impl {
             Ok(())
         }
 
-        fn keccak(&mut self, input: Vec<u64>, remaining_gas: &mut u128) -> SyscallResult<U256> {
-            self.pre_execute_syscall(
+        fn keccak(&mut self, input: Vec<u64>, remaining_gas: &mut u64) -> SyscallResult<U256> {
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Keccak,
                 self.execution_context.gas_costs().keccak_gas_cost,
@@ -1478,9 +1518,8 @@ pub mod sierra_emu_impl {
             // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
             // works.
             let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-            let gas_cost = u128::from(
-                n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost,
-            );
+            let gas_cost =
+                n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
             if gas_cost > *remaining_gas {
                 // In VM this error is wrapped into `SyscallExecutionError::SyscallError`
@@ -1511,9 +1550,9 @@ pub mod sierra_emu_impl {
             &mut self,
             x: U256,
             y: U256,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Option<Secp256k1Point>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256k1New,
                 self.execution_context.gas_costs().secp256k1_new_gas_cost,
@@ -1526,9 +1565,9 @@ pub mod sierra_emu_impl {
             &mut self,
             p0: Secp256k1Point,
             p1: Secp256k1Point,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Secp256k1Point> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256k1Add,
                 self.execution_context.gas_costs().secp256k1_add_gas_cost,
@@ -1541,9 +1580,9 @@ pub mod sierra_emu_impl {
             &mut self,
             p: Secp256k1Point,
             m: U256,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Secp256k1Point> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256k1Mul,
                 self.execution_context.gas_costs().secp256k1_mul_gas_cost,
@@ -1556,9 +1595,9 @@ pub mod sierra_emu_impl {
             &mut self,
             x: U256,
             y_parity: bool,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Option<Secp256k1Point>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256k1GetPointFromX,
                 self.execution_context.gas_costs().secp256k1_get_point_from_x_gas_cost,
@@ -1571,9 +1610,9 @@ pub mod sierra_emu_impl {
         fn secp256k1_get_xy(
             &mut self,
             p: Secp256k1Point,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<(U256, U256)> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256k1GetXy,
                 self.execution_context.gas_costs().secp256k1_get_xy_gas_cost,
@@ -1586,9 +1625,9 @@ pub mod sierra_emu_impl {
             &mut self,
             x: U256,
             y: U256,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Option<Secp256r1Point>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256r1New,
                 self.execution_context.gas_costs().secp256r1_new_gas_cost,
@@ -1601,9 +1640,9 @@ pub mod sierra_emu_impl {
             &mut self,
             p0: Secp256r1Point,
             p1: Secp256r1Point,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Secp256r1Point> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256r1Add,
                 self.execution_context.gas_costs().secp256r1_add_gas_cost,
@@ -1616,9 +1655,9 @@ pub mod sierra_emu_impl {
             &mut self,
             p: Secp256r1Point,
             m: U256,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Secp256r1Point> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256r1Mul,
                 self.execution_context.gas_costs().secp256r1_mul_gas_cost,
@@ -1631,9 +1670,9 @@ pub mod sierra_emu_impl {
             &mut self,
             x: U256,
             y_parity: bool,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<Option<Secp256r1Point>> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256r1GetPointFromX,
                 self.execution_context.gas_costs().secp256r1_get_point_from_x_gas_cost,
@@ -1646,9 +1685,9 @@ pub mod sierra_emu_impl {
         fn secp256r1_get_xy(
             &mut self,
             p: Secp256r1Point,
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<(U256, U256)> {
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Secp256r1GetXy,
                 self.execution_context.gas_costs().secp256r1_get_xy_gas_cost,
@@ -1661,11 +1700,11 @@ pub mod sierra_emu_impl {
             &mut self,
             prev_state: [u32; 8],
             current_block: [u32; 16],
-            remaining_gas: &mut u128,
+            remaining_gas: &mut u64,
         ) -> SyscallResult<[u32; 8]> {
             const SHA256_STATE_SIZE: usize = 8;
 
-            self.pre_execute_syscall(
+            self.pre_execute_syscall_gasu64(
                 remaining_gas,
                 SyscallSelector::Sha256ProcessBlock,
                 self.execution_context.gas_costs().sha256_process_block_gas_cost,
