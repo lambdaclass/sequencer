@@ -12,7 +12,7 @@ use crate::retdata;
 use crate::state::state_api::StateReader;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{trivial_external_entry_point_new, CairoVersion, BALANCE};
+use crate::test_utils::{BALANCE, CairoVersion, trivial_external_entry_point_new};
 
 #[test_case(FeatureContract::TestContract(CairoVersion::Native), 25920; "Native")]
 #[test_case(FeatureContract::TestContract(CairoVersion::Cairo1), REQUIRED_GAS_STORAGE_READ_WRITE_TEST; "VM"
@@ -30,14 +30,11 @@ fn test_storage_read_write(test_contract: FeatureContract, expected_gas: u64) {
         ..trivial_external_entry_point_new(test_contract)
     };
     let storage_address = entry_point_call.storage_address;
-    assert_eq!(
-        entry_point_call.execute_directly(&mut state).unwrap().execution,
-        CallExecution {
-            retdata: retdata![value],
-            gas_consumed: expected_gas,
-            ..CallExecution::default()
-        }
-    );
+    assert_eq!(entry_point_call.execute_directly(&mut state).unwrap().execution, CallExecution {
+        retdata: retdata![value],
+        gas_consumed: expected_gas,
+        ..CallExecution::default()
+    });
 
     // Verify that the state has changed.
     let value_from_state =

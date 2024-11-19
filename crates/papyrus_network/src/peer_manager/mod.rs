@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use futures::future::BoxFuture;
 use futures::FutureExt;
-use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::ToSwarm;
+use futures::future::BoxFuture;
 use libp2p::PeerId;
+use libp2p::swarm::ToSwarm;
+use libp2p::swarm::dial_opts::DialOpts;
 use tracing::info;
 
 pub use self::behaviour_impl::ToOtherBehaviourEvent;

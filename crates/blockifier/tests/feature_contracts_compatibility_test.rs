@@ -1,7 +1,7 @@
 use std::fs;
 
-use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::CairoVersion;
+use blockifier::test_utils::contracts::FeatureContract;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 

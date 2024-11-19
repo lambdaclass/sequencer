@@ -7,10 +7,10 @@ use serde::de::Error as DeserializationError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::StarknetApiError;
 use crate::core::EntryPointSelector;
 use crate::hash::StarkHash;
 use crate::serde_utils::deserialize_optional_contract_class_abi_entry_vector;
-use crate::StarknetApiError;
 
 /// A deprecated contract class.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]

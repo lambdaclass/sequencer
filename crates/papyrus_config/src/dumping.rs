@@ -40,17 +40,17 @@ use std::io::{BufWriter, Write};
 
 use itertools::chain;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::{
     ConfigError,
+    IS_NONE_MARK,
     ParamPath,
     ParamPrivacy,
     ParamPrivacyInput,
     SerializationType,
     SerializedContent,
     SerializedParam,
-    IS_NONE_MARK,
 };
 
 /// Serialization for configs.
@@ -279,14 +279,11 @@ pub(crate) fn combine_config_map_and_pointers(
                 config_map.get(pointing_param).ok_or(ConfigError::PointerSourceNotFound {
                     pointing_param: pointing_param.to_owned(),
                 })?;
-            config_map.insert(
-                pointing_param.to_owned(),
-                SerializedParam {
-                    description: pointing_serialized_param.description.clone(),
-                    content: SerializedContent::PointerTarget(target_param.to_owned()),
-                    privacy: pointing_serialized_param.privacy.clone(),
-                },
-            );
+            config_map.insert(pointing_param.to_owned(), SerializedParam {
+                description: pointing_serialized_param.description.clone(),
+                content: SerializedContent::PointerTarget(target_param.to_owned()),
+                privacy: pointing_serialized_param.privacy.clone(),
+            });
         }
     }
     Ok(json!(config_map))

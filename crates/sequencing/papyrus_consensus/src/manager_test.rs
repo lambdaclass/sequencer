@@ -2,20 +2,20 @@ use std::time::Duration;
 use std::vec;
 
 use async_trait::async_trait;
-use futures::channel::{mpsc, oneshot};
 use futures::SinkExt;
+use futures::channel::{mpsc, oneshot};
 use lazy_static::lazy_static;
 use mockall::mock;
 use mockall::predicate::eq;
-use papyrus_network::network_manager::test_utils::create_test_broadcasted_message_manager;
 use papyrus_network::network_manager::BroadcastedMessageManager;
+use papyrus_network::network_manager::test_utils::create_test_broadcasted_message_manager;
 use papyrus_protobuf::consensus::{ConsensusMessage, Vote};
 use papyrus_protobuf::converters::ProtobufConversionError;
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::transaction::Transaction;
 use starknet_types_core::felt::Felt;
 
-use super::{run_consensus, MultiHeightManager};
+use super::{MultiHeightManager, run_consensus};
 use crate::config::TimeoutsConfig;
 use crate::test_utils::{precommit, prevote, proposal};
 use crate::types::{

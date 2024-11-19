@@ -1,6 +1,6 @@
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::INFO;
 

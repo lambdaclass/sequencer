@@ -12,7 +12,7 @@ use super::SingleHeightConsensus;
 use crate::config::TimeoutsConfig;
 use crate::single_height_consensus::{ShcReturn, ShcTask};
 use crate::state_machine::StateMachineEvent;
-use crate::test_utils::{precommit, prevote, MockTestContext, TestBlock};
+use crate::test_utils::{MockTestContext, TestBlock, precommit, prevote};
 use crate::types::{ConsensusBlock, ConsensusError, ProposalInit, ValidatorId};
 
 lazy_static! {

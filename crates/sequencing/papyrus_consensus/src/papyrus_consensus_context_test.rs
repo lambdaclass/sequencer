@@ -1,8 +1,8 @@
-use futures::channel::{mpsc, oneshot};
 use futures::StreamExt;
+use futures::channel::{mpsc, oneshot};
 use papyrus_network::network_manager::test_utils::{
-    mock_register_broadcast_topic,
     BroadcastNetworkMock,
+    mock_register_broadcast_topic,
 };
 use papyrus_protobuf::consensus::{ConsensusMessage, Proposal, Vote};
 use papyrus_storage::body::BodyStorageWriter;

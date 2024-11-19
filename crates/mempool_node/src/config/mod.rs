@@ -7,10 +7,10 @@ use std::path::Path;
 
 use clap::Command;
 use papyrus_config::dumping::{
+    SerializeConfig,
     append_sub_config_name,
     ser_optional_sub_config,
     ser_param,
-    SerializeConfig,
 };
 use papyrus_config::loading::load_and_process_config;
 use papyrus_config::{ConfigError, ParamPath, ParamPrivacyInput, SerializedParam};

@@ -14,11 +14,11 @@ use cairo_vm::vm::errors::memory_errors::MemoryError;
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ExecutionResources, ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
+use starknet_api::StarknetApiError;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::{Calldata, Resource};
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
@@ -28,14 +28,15 @@ use crate::execution::common_hints::{ExecutionMode, HintExecutionResult};
 use crate::execution::entry_point::{CallEntryPoint, CallType, EntryPointExecutionContext};
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
+    ReadOnlySegment,
+    ReadOnlySegments,
     felt_from_ptr,
     felt_range_from_ptr,
     max_fee_for_execution_info,
     write_maybe_relocatable,
-    ReadOnlySegment,
-    ReadOnlySegments,
 };
 use crate::execution::syscalls::secp::{
+    SecpHintProcessor,
     secp256k1_add,
     secp256k1_get_point_from_x,
     secp256k1_get_xy,
@@ -46,9 +47,16 @@ use crate::execution::syscalls::secp::{
     secp256r1_get_xy,
     secp256r1_mul,
     secp256r1_new,
-    SecpHintProcessor,
 };
 use crate::execution::syscalls::{
+    StorageReadResponse,
+    StorageWriteResponse,
+    SyscallRequest,
+    SyscallRequestWrapper,
+    SyscallResponse,
+    SyscallResponseWrapper,
+    SyscallResult,
+    SyscallSelector,
     call_contract,
     deploy,
     emit_event,
@@ -62,14 +70,6 @@ use crate::execution::syscalls::{
     sha_256_process_block,
     storage_read,
     storage_write,
-    StorageReadResponse,
-    StorageWriteResponse,
-    SyscallRequest,
-    SyscallRequestWrapper,
-    SyscallResponse,
-    SyscallResponseWrapper,
-    SyscallResult,
-    SyscallSelector,
 };
 use crate::state::errors::StateError;
 use crate::state::state_api::State;

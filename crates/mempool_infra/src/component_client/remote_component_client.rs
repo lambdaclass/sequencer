@@ -6,8 +6,8 @@ use bincode::{deserialize, serialize};
 use hyper::body::to_bytes;
 use hyper::header::CONTENT_TYPE;
 use hyper::{Body, Client, Request as HyperRequest, Response as HyperResponse, StatusCode, Uri};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::definitions::{ClientError, ClientResult};
 use crate::component_definitions::APPLICATION_OCTET_STREAM;

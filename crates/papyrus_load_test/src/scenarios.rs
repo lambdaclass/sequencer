@@ -1,7 +1,6 @@
 use goose::goose::Scenario;
 
 use crate::{
-    transactions as txs,
     BLOCK_HASH_AND_NUMBER_WEIGHT,
     BLOCK_NUMBER_WEIGHT,
     CHAIN_ID_WEIGHT,
@@ -17,8 +16,8 @@ use crate::{
     GET_CLASS_BY_NUMBER_WEIGHT,
     GET_CLASS_HASH_AT_BY_HASH_WEIGHT,
     GET_CLASS_HASH_AT_BY_NUMBER_WEIGHT,
-    GET_EVENTS_WITHOUT_ADDRESS_WEIGHT,
     GET_EVENTS_WITH_ADDRESS_WEIGHT,
+    GET_EVENTS_WITHOUT_ADDRESS_WEIGHT,
     GET_NONCE_BY_HASH_WEIGHT,
     GET_NONCE_BY_NUMBER_WEIGHT,
     GET_STATE_UPDATE_BY_HASH_WEIGHT,
@@ -33,6 +32,7 @@ use crate::{
     TRACE_BLOCK_TRANSACTIONS_BY_HASH_WEIGHT,
     TRACE_BLOCK_TRANSACTIONS_BY_NUMBER_WEIGHT,
     TRACE_TRANSACTION_WEIGHT,
+    transactions as txs,
 };
 
 // TODO(dvir): add also traceTransaction, simulateTransactions, estimateFee and call endpoints.

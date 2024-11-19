@@ -25,7 +25,7 @@ use std::num::NonZeroU128;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
-use blockifier::blockifier::block::{pre_process_block, BlockInfo, BlockNumberHashPair, GasPrices};
+use blockifier::blockifier::block::{BlockInfo, BlockNumberHashPair, GasPrices, pre_process_block};
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
 use blockifier::execution::call_info::CallExecution;
@@ -50,9 +50,9 @@ use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use execution_utils::{get_trace_constructor, induced_state_diff};
 use objects::{PriceUnit, TransactionSimulationOutput};
-use papyrus_common::transaction_hash::get_transaction_hash;
 use papyrus_common::TransactionOptions;
-use papyrus_config::dumping::{ser_param, SerializeConfig};
+use papyrus_common::transaction_hash::get_transaction_hash;
+use papyrus_config::dumping::{SerializeConfig, ser_param};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::{StorageError, StorageReader};
@@ -80,11 +80,11 @@ use starknet_api::transaction::{
     TransactionHash,
     TransactionVersion,
 };
-use starknet_api::{contract_address, felt, patricia_key, StarknetApiError};
+use starknet_api::{StarknetApiError, contract_address, felt, patricia_key};
 use state_reader::ExecutionStateReader;
 use tracing::trace;
 
-use crate::objects::{tx_execution_output_to_fee_estimation, FeeEstimation, PendingData};
+use crate::objects::{FeeEstimation, PendingData, tx_execution_output_to_fee_estimation};
 
 const STARKNET_VERSION_O_13_0: &str = "0.13.0";
 const STARKNET_VERSION_O_13_1: &str = "0.13.1";

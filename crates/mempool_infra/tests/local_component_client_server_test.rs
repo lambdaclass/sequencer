@@ -20,7 +20,7 @@ use starknet_mempool_infra::component_server::{ComponentServerStarter, LocalComp
 use tokio::sync::mpsc::channel;
 use tokio::task;
 
-use crate::common::{test_a_b_functionality, ComponentA, ComponentB, ValueA, ValueB};
+use crate::common::{ComponentA, ComponentB, ValueA, ValueB, test_a_b_functionality};
 
 type ComponentAClient = LocalComponentClient<ComponentARequest, ComponentAResponse>;
 type ComponentBClient = LocalComponentClient<ComponentBRequest, ComponentBResponse>;

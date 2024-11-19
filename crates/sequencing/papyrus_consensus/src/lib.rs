@@ -18,4 +18,4 @@ pub(crate) mod test_utils;
 #[allow(missing_docs)]
 pub mod types;
 
-pub use manager::{run_consensus, ProposalWrapper};
+pub use manager::{ProposalWrapper, run_consensus};

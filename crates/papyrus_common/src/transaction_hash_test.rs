@@ -8,10 +8,10 @@ use starknet_api::transaction::{Transaction, TransactionHash};
 use starknet_types_core::felt::Felt;
 
 use super::{
+    CONSTRUCTOR_ENTRY_POINT_SELECTOR,
     ascii_as_felt,
     get_transaction_hash,
     validate_transaction_hash,
-    CONSTRUCTOR_ENTRY_POINT_SELECTOR,
 };
 use crate::TransactionOptions;
 

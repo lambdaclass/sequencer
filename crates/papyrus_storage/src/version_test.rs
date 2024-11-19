@@ -10,21 +10,21 @@ use crate::test_utils::{
 };
 use crate::version::{
     StorageVersionError,
+    VERSION_BLOCKS_KEY,
+    VERSION_STATE_KEY,
     Version,
     VersionStorageReader,
     VersionStorageWriter,
-    VERSION_BLOCKS_KEY,
-    VERSION_STATE_KEY,
 };
 use crate::{
-    open_storage,
-    set_version_if_needed,
-    verify_storage_version,
+    STORAGE_VERSION_BLOCKS,
+    STORAGE_VERSION_STATE,
     StorageError,
     StorageScope,
     StorageWriter,
-    STORAGE_VERSION_BLOCKS,
-    STORAGE_VERSION_STATE,
+    open_storage,
+    set_version_if_needed,
+    verify_storage_version,
 };
 
 // TODO: Add this test for set_blocks_version or combine the logic.
@@ -93,16 +93,14 @@ fn version_migration() {
         get_test_storage_with_config_by_scope(StorageScope::FullArchive);
 
     // Set the storage version on a lower minor version.
-    change_storage_version(
-        &mut writer,
-        VERSION_STATE_KEY,
-        &Version { major: STORAGE_VERSION_STATE.major, minor: 0 },
-    );
-    change_storage_version(
-        &mut writer,
-        VERSION_BLOCKS_KEY,
-        &Version { major: STORAGE_VERSION_BLOCKS.major, minor: 0 },
-    );
+    change_storage_version(&mut writer, VERSION_STATE_KEY, &Version {
+        major: STORAGE_VERSION_STATE.major,
+        minor: 0,
+    });
+    change_storage_version(&mut writer, VERSION_BLOCKS_KEY, &Version {
+        major: STORAGE_VERSION_BLOCKS.major,
+        minor: 0,
+    });
     drop(reader);
     drop(writer);
 

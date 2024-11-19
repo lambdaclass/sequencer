@@ -4,12 +4,12 @@ use std::vec;
 use assert_matches::assert_matches;
 use mempool_test_utils::declare_tx_args;
 use mempool_test_utils::starknet_api_test_utils::{
+    NON_EMPTY_RESOURCE_BOUNDS,
+    TransactionType,
     create_resource_bounds_mapping,
     external_declare_tx,
     rpc_tx_for_testing,
     zero_resource_bounds_mapping,
-    TransactionType,
-    NON_EMPTY_RESOURCE_BOUNDS,
 };
 use rstest::rstest;
 use starknet_api::core::EntryPointSelector;

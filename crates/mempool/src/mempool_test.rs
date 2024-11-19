@@ -624,14 +624,10 @@ fn test_add_tx_after_get_txs_fails_on_duplicate_nonce() {
 
     // Test.
     mempool.get_txs(1).unwrap();
-    add_tx_expect_error(
-        &mut mempool,
-        &input_tx,
-        MempoolError::DuplicateNonce {
-            address: contract_address!("0x0"),
-            nonce: Nonce(felt!(0_u16)),
-        },
-    );
+    add_tx_expect_error(&mut mempool, &input_tx, MempoolError::DuplicateNonce {
+        address: contract_address!("0x0"),
+        nonce: Nonce(felt!(0_u16)),
+    });
 }
 
 #[rstest]

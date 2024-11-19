@@ -1,4 +1,4 @@
-use starknet_mempool_infra::component_server::{create_empty_server, EmptyServer};
+use starknet_mempool_infra::component_server::{EmptyServer, create_empty_server};
 
 use crate::gateway::Gateway;
 

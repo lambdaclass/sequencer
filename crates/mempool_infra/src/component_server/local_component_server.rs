@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::Receiver;
 use tracing::error;
 
-use super::definitions::{request_response_loop, start_component, ComponentServerStarter};
+use super::definitions::{ComponentServerStarter, request_response_loop, start_component};
 use crate::component_definitions::{ComponentRequestAndResponseSender, ComponentRequestHandler};
 use crate::component_runner::ComponentStarter;
 
@@ -31,7 +31,7 @@ use crate::component_runner::ComponentStarter;
 /// # Example
 /// ```rust
 /// // Example usage of the LocalComponentServer
-/// use std::sync::mpsc::{channel, Receiver};
+/// use std::sync::mpsc::{Receiver, channel};
 ///
 /// use async_trait::async_trait;
 /// use starknet_mempool_infra::component_runner::{ComponentStartError, ComponentStarter};

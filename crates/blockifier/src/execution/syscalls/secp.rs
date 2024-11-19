@@ -10,9 +10,9 @@ use starknet_types_core::felt::Felt;
 use crate::abi::sierra_types::{SierraType, SierraU256};
 use crate::execution::execution_utils::{felt_from_ptr, write_maybe_relocatable, write_u256};
 use crate::execution::syscalls::hint_processor::{
-    felt_to_bool,
-    SyscallHintProcessor,
     INVALID_ARGUMENT,
+    SyscallHintProcessor,
+    felt_to_bool,
 };
 use crate::execution::syscalls::{
     SyscallExecutionError,

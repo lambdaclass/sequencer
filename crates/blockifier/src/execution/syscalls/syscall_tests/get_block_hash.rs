@@ -18,10 +18,10 @@ use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::dict_state_reader::DictStateReader;
 use crate::test_utils::initial_test_state::test_state;
 use crate::test_utils::{
-    trivial_external_entry_point_new,
-    CairoVersion,
     BALANCE,
     CURRENT_BLOCK_NUMBER,
+    CairoVersion,
+    trivial_external_entry_point_new,
 };
 
 fn initialize_state(test_contract: FeatureContract) -> (CachedState<DictStateReader>, Felt, Felt) {

@@ -5,9 +5,6 @@ use axum::response::{IntoResponse, Response};
 use blockifier::state::errors::StateError;
 use enum_assoc::Assoc;
 use papyrus_rpc::error::{
-    unexpected_error,
-    validation_failure,
-    JsonRpcError,
     CLASS_ALREADY_DECLARED,
     CLASS_HASH_NOT_FOUND,
     COMPILATION_FAILED,
@@ -17,9 +14,12 @@ use papyrus_rpc::error::{
     INSUFFICIENT_ACCOUNT_BALANCE,
     INSUFFICIENT_MAX_FEE,
     INVALID_TRANSACTION_NONCE,
+    JsonRpcError,
     NON_ACCOUNT,
     UNSUPPORTED_CONTRACT_CLASS_VERSION,
     UNSUPPORTED_TX_VERSION,
+    unexpected_error,
+    validation_failure,
 };
 use serde_json::{Error as SerdeError, Value};
 use starknet_api::block::GasPrice;

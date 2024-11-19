@@ -1,6 +1,6 @@
 use futures::channel::mpsc::{Receiver, SendError, Sender};
 use futures::channel::oneshot;
-use futures::future::{ready, Ready};
+use futures::future::{Ready, ready};
 use futures::sink::With;
 use futures::stream::Map;
 use futures::{FutureExt, SinkExt, StreamExt};

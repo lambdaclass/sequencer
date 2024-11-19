@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{Sender, channel};
 
 use crate::component_definitions::ComponentRequestAndResponseSender;
 

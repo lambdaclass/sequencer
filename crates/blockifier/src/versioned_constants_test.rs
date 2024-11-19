@@ -1,5 +1,5 @@
 use cairo_vm::types::builtin_name::BuiltinName;
-use glob::{glob, Paths};
+use glob::{Paths, glob};
 use pretty_assertions::assert_eq;
 
 use super::*;

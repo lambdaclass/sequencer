@@ -8,15 +8,15 @@ use hyper::body::to_bytes;
 use hyper::header::CONTENT_TYPE;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request as HyperRequest, Response as HyperResponse, Server, StatusCode};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use super::definitions::ComponentServerStarter;
 use crate::component_definitions::{
+    APPLICATION_OCTET_STREAM,
     ComponentRequestHandler,
     ServerError,
-    APPLICATION_OCTET_STREAM,
 };
 
 /// The `RemoteComponentServer` struct is a generic server that handles requests and responses for a

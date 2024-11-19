@@ -12,7 +12,7 @@ use crate::invoke_tx_args;
 use crate::state::state_api::StateReader;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::{fund_account, test_state, test_state_inner};
-use crate::test_utils::{create_trivial_calldata, CairoVersion, BALANCE};
+use crate::test_utils::{BALANCE, CairoVersion, create_trivial_calldata};
 use crate::transaction::objects::FeeType;
 use crate::transaction::test_utils::{account_invoke_tx, block_context, max_resource_bounds};
 

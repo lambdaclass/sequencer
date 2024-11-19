@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use blockifier::test_utils::contracts::FeatureContract;
-use blockifier::test_utils::{create_trivial_calldata, CairoVersion, NonceManager};
+use blockifier::test_utils::{CairoVersion, NonceManager, create_trivial_calldata};
 use serde_json::to_string_pretty;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
@@ -36,13 +36,13 @@ use starknet_api::{calldata, felt};
 use starknet_types_core::felt::Felt;
 
 use crate::{
+    COMPILED_CLASS_HASH_OF_CONTRACT_CLASS,
+    CONTRACT_CLASS_FILE,
+    TEST_FILES_FOLDER,
     declare_tx_args,
     deploy_account_tx_args,
     get_absolute_path,
     invoke_tx_args,
-    COMPILED_CLASS_HASH_OF_CONTRACT_CLASS,
-    CONTRACT_CLASS_FILE,
-    TEST_FILES_FOLDER,
 };
 
 pub const VALID_L1_GAS_MAX_AMOUNT: u64 = 203484;
@@ -222,14 +222,11 @@ impl MultiAccountTransactionGenerator {
         let nonce_manager = SharedNonceManager::default();
         for (account_id, account) in accounts.into_iter().enumerate() {
             let n_current_contract = account_type_to_n_instances.entry(account).or_insert(0);
-            account_contracts.insert(
-                account_id,
-                AccountTransactionGenerator {
-                    account,
-                    contract_instance_id: *n_current_contract,
-                    nonce_manager: nonce_manager.clone(),
-                },
-            );
+            account_contracts.insert(account_id, AccountTransactionGenerator {
+                account,
+                contract_instance_id: *n_current_contract,
+                nonce_manager: nonce_manager.clone(),
+            });
             *n_current_contract += 1;
         }
 

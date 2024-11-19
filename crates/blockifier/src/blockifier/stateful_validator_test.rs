@@ -6,15 +6,15 @@ use crate::blockifier::stateful_validator::StatefulValidator;
 use crate::context::BlockContext;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::{fund_account, test_state};
-use crate::test_utils::{CairoVersion, BALANCE};
+use crate::test_utils::{BALANCE, CairoVersion};
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::test_utils::{
-    block_context,
-    create_account_tx_for_validate_test_nonce_0,
-    max_resource_bounds,
     FaultyAccountTxCreatorArgs,
     INVALID,
     VALID,
+    block_context,
+    create_account_tx_for_validate_test_nonce_0,
+    max_resource_bounds,
 };
 use crate::transaction::transaction_types::TransactionType;
 

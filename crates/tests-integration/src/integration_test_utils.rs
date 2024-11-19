@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use axum::body::Body;
 use blockifier::test_utils::contracts::FeatureContract;
 use mempool_test_utils::starknet_api_test_utils::{
-    rpc_tx_to_json,
     MultiAccountTransactionGenerator,
+    rpc_tx_to_json,
 };
 use reqwest::{Client, Response};
 use starknet_api::rpc_transaction::RpcTransaction;

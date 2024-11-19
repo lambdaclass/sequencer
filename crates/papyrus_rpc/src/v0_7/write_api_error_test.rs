@@ -10,7 +10,7 @@ use super::{
     starknet_error_to_deploy_account_error,
     starknet_error_to_invoke_error,
 };
-use crate::test_utils::{get_starknet_spec_api_schema_for_method_errors, SpecFile};
+use crate::test_utils::{SpecFile, get_starknet_spec_api_schema_for_method_errors};
 use crate::version_config::VERSION_0_7 as Version;
 
 const MESSAGE: &str = "message";

@@ -4,10 +4,10 @@ use papyrus_test_utils::read_json_file;
 use pretty_assertions::assert_eq;
 use starknet_api::core::ClassHash;
 
+use crate::StorageError;
 use crate::compiled_class::{CasmStorageReader, CasmStorageWriter};
 use crate::db::{DbError, KeyAlreadyExistsError};
 use crate::test_utils::get_test_storage;
-use crate::StorageError;
 
 #[test]
 fn append_casm() {

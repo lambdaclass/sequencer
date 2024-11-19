@@ -5,17 +5,16 @@ mod flow_test;
 pub mod identify_impl;
 pub mod kad_impl;
 
-use std::task::{ready, Context, Poll, Waker};
+use std::task::{Context, Poll, Waker, ready};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
-use futures::{pin_mut, Future, FutureExt};
+use futures::{Future, FutureExt, pin_mut};
 use kad_impl::KadToOtherBehaviourEvent;
 use libp2p::core::Endpoint;
 use libp2p::swarm::behaviour::ConnectionEstablished;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{
-    dummy,
     AddressChange,
     ConnectionClosed,
     ConnectionDenied,
@@ -25,6 +24,7 @@ use libp2p::swarm::{
     FromSwarm,
     NetworkBehaviour,
     ToSwarm,
+    dummy,
 };
 use libp2p::{Multiaddr, PeerId};
 use tokio_retry::strategy::ExponentialBackoff;

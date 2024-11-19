@@ -1,7 +1,7 @@
-use crate::communication::{create_node_channels, create_node_clients, MempoolNodeClients};
+use crate::communication::{MempoolNodeClients, create_node_channels, create_node_clients};
 use crate::components::create_components;
 use crate::config::MempoolNodeConfig;
-use crate::servers::{create_servers, Servers};
+use crate::servers::{Servers, create_servers};
 
 pub fn create_clients_servers_from_config(
     config: &MempoolNodeConfig,

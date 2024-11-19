@@ -14,7 +14,7 @@ use starknet_api::block::BlockNumber;
 use starknet_api::state::ThinStateDiff;
 
 use crate::client::stream_builder::{BlockData, BlockNumberLimit, DataStreamBuilder};
-use crate::client::{P2PSyncClientError, NETWORK_DATA_TIMEOUT};
+use crate::client::{NETWORK_DATA_TIMEOUT, P2PSyncClientError};
 
 impl BlockData for (ThinStateDiff, BlockNumber) {
     #[latency_histogram("p2p_sync_state_diff_write_to_storage_latency_seconds", true)]

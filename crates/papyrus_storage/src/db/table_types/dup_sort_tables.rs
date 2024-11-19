@@ -19,10 +19,10 @@ use crate::db::{
     DbValueType,
     DbWriter,
     KeyAlreadyExistsError,
+    RW,
     TableHandle,
     TableIdentifier,
     TransactionKind,
-    RW,
 };
 
 // NOTICE: If a write operation fails (insert, upsert, append, delete, append_greater_sub_key), the

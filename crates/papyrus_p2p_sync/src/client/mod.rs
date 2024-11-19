@@ -12,11 +12,11 @@ mod transaction;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use futures::channel::mpsc::SendError;
 use futures::Stream;
+use futures::channel::mpsc::SendError;
 use header::HeaderStreamBuilder;
 use papyrus_config::converters::deserialize_seconds_to_duration;
-use papyrus_config::dumping::{ser_optional_param, ser_param, SerializeConfig};
+use papyrus_config::dumping::{SerializeConfig, ser_optional_param, ser_param};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_network::network_manager::SqmrClientSender;
 use papyrus_protobuf::converters::ProtobufConversionError;

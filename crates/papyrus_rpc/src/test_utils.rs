@@ -6,8 +6,8 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::server::RpcModule;
 use jsonrpsee::types::ErrorObjectOwned;
 use jsonschema::JSONSchema;
-use papyrus_common::pending_classes::PendingClasses;
 use papyrus_common::BlockHashAndNumber;
+use papyrus_common::pending_classes::PendingClasses;
 use papyrus_execution::ExecutionConfig;
 use papyrus_storage::test_utils::get_test_storage_by_scope;
 use papyrus_storage::{StorageScope, StorageWriter};
@@ -23,9 +23,9 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tokio::sync::RwLock;
 
-use crate::api::JsonRpcServerTrait;
-use crate::version_config::{VersionId, VERSION_PATTERN};
 use crate::RpcConfig;
+use crate::api::JsonRpcServerTrait;
+use crate::version_config::{VERSION_PATTERN, VersionId};
 
 pub fn get_test_rpc_config() -> RpcConfig {
     RpcConfig {

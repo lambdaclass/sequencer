@@ -9,16 +9,19 @@ mod starknet_feeder_gateway_client_test;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use cairo_lang_starknet_classes::casm_contract_class::{CasmContractClass, CasmContractEntryPoints};
+use cairo_lang_starknet_classes::casm_contract_class::{
+    CasmContractClass,
+    CasmContractEntryPoints,
+};
 #[cfg(any(feature = "testing", test))]
 use mockall::automock;
 use papyrus_common::pending_classes::ApiContractClass;
 use serde::{Deserialize, Serialize};
+use starknet_api::StarknetApiError;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ClassHash, SequencerPublicKey};
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
 use starknet_api::transaction::TransactionHash;
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::Felt;
 use tracing::{debug, error, instrument};
 use url::Url;

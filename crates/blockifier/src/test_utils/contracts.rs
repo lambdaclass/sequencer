@@ -24,7 +24,7 @@ use crate::execution::contract_class::{
     NativeContractClassV1,
 };
 use crate::test_utils::cairo_compile::{cairo0_compile, cairo1_compile, sierra_compile};
-use crate::test_utils::{get_raw_contract_class, CairoVersion};
+use crate::test_utils::{CairoVersion, get_raw_contract_class};
 // This file contains featured contracts, used for tests. Use the function 'test_state' in
 // initial_test_state.rs to initialize a state with these contracts.
 //

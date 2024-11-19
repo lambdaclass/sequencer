@@ -6,11 +6,11 @@ use std::time::Duration;
 use std::vec;
 
 use deadqueue::unlimited::Queue;
-use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures::channel::mpsc::{UnboundedSender, unbounded};
 use futures::channel::oneshot;
 use futures::future::FutureExt;
 use futures::stream::Stream;
-use futures::{pin_mut, Future, SinkExt, StreamExt};
+use futures::{Future, SinkExt, StreamExt, pin_mut};
 use lazy_static::lazy_static;
 use libp2p::core::ConnectedPoint;
 use libp2p::gossipsub::{SubscriptionError, TopicHash};
@@ -20,8 +20,8 @@ use tokio::select;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-use super::swarm_trait::{Event, SwarmTrait};
 use super::GenericNetworkManager;
+use super::swarm_trait::{Event, SwarmTrait};
 use crate::gossipsub_impl::{self, Topic};
 use crate::mixed_behaviour;
 use crate::network_manager::ServerQueryManager;

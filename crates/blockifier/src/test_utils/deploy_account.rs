@@ -1,4 +1,4 @@
-use starknet_api::core::{calculate_contract_address, ClassHash, ContractAddress, Nonce};
+use starknet_api::core::{ClassHash, ContractAddress, Nonce, calculate_contract_address};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::transaction::{
     Calldata,
@@ -14,7 +14,7 @@ use starknet_api::transaction::{
     TransactionVersion,
 };
 
-use crate::test_utils::{default_testing_resource_bounds, NonceManager};
+use crate::test_utils::{NonceManager, default_testing_resource_bounds};
 use crate::transaction::transactions::DeployAccountTransaction;
 
 #[derive(Clone)]

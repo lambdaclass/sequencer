@@ -5,8 +5,8 @@
 
 use std::sync::mpsc::{self, Receiver};
 
-use papyrus_storage::body::BodyStorageReader;
 use papyrus_storage::StorageReader;
+use papyrus_storage::body::BodyStorageReader;
 use starknet_api::block::BlockNumber;
 use starknet_api::transaction::Transaction;
 use tracing::instrument;

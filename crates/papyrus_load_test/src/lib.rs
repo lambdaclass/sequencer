@@ -20,7 +20,7 @@ use goose::goose::{GooseUser, TransactionError};
 use once_cell::sync::OnceCell;
 use rand::Rng;
 use serde::Deserialize;
-use serde_json::{json, Value as jsonVal};
+use serde_json::{Value as jsonVal, json};
 
 type PostResult = Result<jsonVal, Box<TransactionError>>;
 

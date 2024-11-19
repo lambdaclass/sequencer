@@ -2,11 +2,11 @@
 //! Test utilities for the storage crate users.
 
 use starknet_api::core::ChainId;
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 use crate::db::DbConfig;
 use crate::mmap_file::MmapFileConfig;
-use crate::{open_storage, StorageConfig, StorageReader, StorageScope, StorageWriter};
+use crate::{StorageConfig, StorageReader, StorageScope, StorageWriter, open_storage};
 
 /// Returns a db config and the temporary directory that holds this db.
 /// The TempDir object is returned as a handler for the lifetime of this object (the temp

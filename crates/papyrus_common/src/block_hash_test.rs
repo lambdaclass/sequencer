@@ -4,11 +4,11 @@ use starknet_api::block::Block;
 use starknet_api::core::ChainId;
 
 use crate::block_hash::{
+    BlockHashError,
+    BlockHashVersion,
     calculate_block_hash_by_version,
     calculate_event_commitment_by_version,
     calculate_transaction_commitment_by_version,
-    BlockHashError,
-    BlockHashVersion,
 };
 
 fn validate_block_hash_util(file_name: &str, version: BlockHashVersion) {

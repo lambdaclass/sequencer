@@ -7,12 +7,12 @@ use ethers::contract::Contract;
 use ethers::prelude::{AbiError, Address, ContractError, Http, Middleware, Provider};
 use ethers::providers::ProviderError;
 use ethers::types::{I256, U256};
-use papyrus_config::dumping::{ser_param, ser_required_param, SerializeConfig};
+use papyrus_config::dumping::{SerializeConfig, ser_param, ser_required_param};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializationType, SerializedParam};
 use serde::{Deserialize, Serialize};
+use starknet_api::StarknetApiError;
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::hash::StarkHash;
-use starknet_api::StarknetApiError;
 use url::ParseError;
 
 use crate::BaseLayerContract;

@@ -2,20 +2,20 @@
 mod main_test;
 
 use std::env::args;
-use std::future::{pending, Future};
+use std::future::{Future, pending};
 use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::stream::StreamExt;
 use futures::FutureExt;
+use futures::stream::StreamExt;
 use papyrus_base_layer::ethereum_base_layer_contract::EthereumBaseLayerConfig;
+use papyrus_common::BlockHashAndNumber;
 use papyrus_common::metrics::COLLECT_PROFILING_METRICS;
 use papyrus_common::pending_classes::PendingClasses;
-use papyrus_common::BlockHashAndNumber;
+use papyrus_config::ConfigError;
 use papyrus_config::presentation::get_config_presentation;
 use papyrus_config::validators::config_validate;
-use papyrus_config::ConfigError;
 use papyrus_consensus::config::ConsensusConfig;
 use papyrus_consensus::papyrus_consensus_context::PapyrusConsensusContext;
 use papyrus_consensus::simulation_network_receiver::NetworkReceiver;
@@ -23,7 +23,7 @@ use papyrus_consensus::types::ConsensusError;
 use papyrus_monitoring_gateway::MonitoringServer;
 use papyrus_network::gossipsub_impl::Topic;
 use papyrus_network::network_manager::NetworkManager;
-use papyrus_network::{network_manager, NetworkConfig};
+use papyrus_network::{NetworkConfig, network_manager};
 use papyrus_node::config::NodeConfig;
 use papyrus_node::version::VERSION_FULL;
 use papyrus_p2p_sync::client::{
@@ -33,24 +33,24 @@ use papyrus_p2p_sync::client::{
     P2PSyncClientError,
 };
 use papyrus_p2p_sync::server::{P2PSyncServer, P2PSyncServerChannels};
-use papyrus_p2p_sync::{Protocol, BUFFER_SIZE};
+use papyrus_p2p_sync::{BUFFER_SIZE, Protocol};
 #[cfg(feature = "rpc")]
 use papyrus_rpc::run_server;
-use papyrus_storage::{open_storage, update_storage_metrics, StorageReader, StorageWriter};
+use papyrus_storage::{StorageReader, StorageWriter, open_storage, update_storage_metrics};
 use papyrus_sync::sources::base_layer::{BaseLayerSourceError, EthereumBaseLayerSource};
 use papyrus_sync::sources::central::{CentralError, CentralSource, CentralSourceConfig};
 use papyrus_sync::sources::pending::PendingSource;
 use papyrus_sync::{StateSync, StateSyncError, SyncConfig};
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::felt;
-use starknet_client::reader::objects::pending_data::{PendingBlock, PendingBlockOrDeprecated};
 use starknet_client::reader::PendingData;
+use starknet_client::reader::objects::pending_data::{PendingBlock, PendingBlockOrDeprecated};
 use tokio::sync::RwLock;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::metadata::LevelFilter;
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{Instrument, debug, debug_span, error, info, warn};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 // TODO(yair): Add to config.
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::INFO;

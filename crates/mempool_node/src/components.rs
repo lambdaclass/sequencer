@@ -1,6 +1,6 @@
-use starknet_batcher::batcher::{create_batcher, Batcher};
+use starknet_batcher::batcher::{Batcher, create_batcher};
 use starknet_consensus_manager::consensus_manager::ConsensusManager;
-use starknet_gateway::gateway::{create_gateway, Gateway};
+use starknet_gateway::gateway::{Gateway, create_gateway};
 use starknet_mempool::mempool::Mempool;
 
 use crate::communication::MempoolNodeClients;

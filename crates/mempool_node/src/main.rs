@@ -1,8 +1,8 @@
 use std::env::args;
 use std::process::exit;
 
-use papyrus_config::validators::config_validate;
 use papyrus_config::ConfigError;
+use papyrus_config::validators::config_validate;
 use starknet_mempool_infra::trace_util::configure_tracing;
 use starknet_mempool_node::config::MempoolNodeConfig;
 use starknet_mempool_node::servers::run_component_servers;

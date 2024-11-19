@@ -12,7 +12,7 @@ use crate::retdata;
 use crate::state::state_api::StateReader;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{calldata_for_deploy_test, trivial_external_entry_point_new, CairoVersion};
+use crate::test_utils::{CairoVersion, calldata_for_deploy_test, trivial_external_entry_point_new};
 
 // TODO add all combinations of Native and Vm deployer and deployee
 #[test_case(FeatureContract::TestContract(CairoVersion::Native);"Native")]
@@ -23,11 +23,10 @@ fn no_constructor(deployer_contract: FeatureContract) {
     let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
     let class_hash = empty_contract.get_class_hash();
 
-    let mut state = test_state(
-        &ChainInfo::create_for_testing(),
-        0,
-        &[(deployer_contract, 1), (empty_contract, 0)],
-    );
+    let mut state = test_state(&ChainInfo::create_for_testing(), 0, &[
+        (deployer_contract, 1),
+        (empty_contract, 0),
+    ]);
 
     let calldata = calldata_for_deploy_test(class_hash, &[], true);
     let entry_point_call = CallEntryPoint {
@@ -46,10 +45,11 @@ fn no_constructor(deployer_contract: FeatureContract) {
     let deploy_call = &entry_point_call.execute_directly(&mut state).unwrap().inner_calls[0];
 
     assert_eq!(deploy_call.call.storage_address, deployed_contract_address);
-    assert_eq!(
-        deploy_call.execution,
-        CallExecution { retdata: retdata![], gas_consumed: 0, ..CallExecution::default() }
-    );
+    assert_eq!(deploy_call.execution, CallExecution {
+        retdata: retdata![],
+        gas_consumed: 0,
+        ..CallExecution::default()
+    });
     assert_eq!(state.get_class_hash_at(deployed_contract_address).unwrap(), class_hash);
 }
 
@@ -59,11 +59,10 @@ fn no_constructor_nonempty_calldata(deployer_contract: FeatureContract) {
     let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
     let class_hash = empty_contract.get_class_hash();
 
-    let mut state = test_state(
-        &ChainInfo::create_for_testing(),
-        0,
-        &[(deployer_contract, 1), (empty_contract, 0)],
-    );
+    let mut state = test_state(&ChainInfo::create_for_testing(), 0, &[
+        (deployer_contract, 1),
+        (empty_contract, 0),
+    ]);
 
     let calldata = calldata_for_deploy_test(class_hash, &[felt!(1_u8), felt!(1_u8)], true);
 
@@ -84,11 +83,10 @@ fn no_constructor_nonempty_calldata(deployer_contract: FeatureContract) {
 #[test_case(FeatureContract::TestContract(CairoVersion::Cairo1), 5210;"VM")]
 fn with_constructor(deployer_contract: FeatureContract, expected_gas: u64) {
     let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
-    let mut state = test_state(
-        &ChainInfo::create_for_testing(),
-        0,
-        &[(deployer_contract, 1), (empty_contract, 0)],
-    );
+    let mut state = test_state(&ChainInfo::create_for_testing(), 0, &[
+        (deployer_contract, 1),
+        (empty_contract, 0),
+    ]);
 
     let class_hash = deployer_contract.get_class_hash();
     let constructor_calldata = vec![
@@ -115,14 +113,11 @@ fn with_constructor(deployer_contract: FeatureContract, expected_gas: u64) {
     let deploy_call = &entry_point_call.execute_directly(&mut state).unwrap().inner_calls[0];
 
     assert_eq!(deploy_call.call.storage_address, contract_address);
-    assert_eq!(
-        deploy_call.execution,
-        CallExecution {
-            retdata: retdata![constructor_calldata[0]],
-            gas_consumed: expected_gas,
-            ..CallExecution::default()
-        }
-    );
+    assert_eq!(deploy_call.execution, CallExecution {
+        retdata: retdata![constructor_calldata[0]],
+        gas_consumed: expected_gas,
+        ..CallExecution::default()
+    });
     assert_eq!(state.get_class_hash_at(contract_address).unwrap(), class_hash);
 }
 
@@ -130,11 +125,10 @@ fn with_constructor(deployer_contract: FeatureContract, expected_gas: u64) {
 #[test_case(FeatureContract::TestContract(CairoVersion::Native);"Native")]
 fn to_unavailable_address(deployer_contract: FeatureContract) {
     let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
-    let mut state = test_state(
-        &ChainInfo::create_for_testing(),
-        0,
-        &[(deployer_contract, 1), (empty_contract, 0)],
-    );
+    let mut state = test_state(&ChainInfo::create_for_testing(), 0, &[
+        (deployer_contract, 1),
+        (empty_contract, 0),
+    ]);
 
     let class_hash = deployer_contract.get_class_hash();
     let constructor_calldata = vec![

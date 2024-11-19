@@ -2,8 +2,9 @@ use std::sync::LazyLock;
 
 use starknet_types_core::felt::Felt;
 
+use crate::StarknetApiError;
 use crate::block::BlockNumber;
-use crate::core::{calculate_contract_address, ChainId, ContractAddress};
+use crate::core::{ChainId, ContractAddress, calculate_contract_address};
 use crate::crypto::utils::HashChain;
 use crate::data_availability::DataAvailabilityMode;
 use crate::transaction::{
@@ -28,7 +29,6 @@ use crate::transaction::{
     TransactionHash,
     TransactionVersion,
 };
-use crate::StarknetApiError;
 
 type ResourceName = [u8; 7];
 

@@ -14,7 +14,7 @@ use starknet_mempool_infra::component_server::{
     EmptyServer,
     LocalActiveComponentServer,
 };
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{Sender, channel};
 use tokio::sync::{Barrier, Mutex};
 use tokio::task;
 

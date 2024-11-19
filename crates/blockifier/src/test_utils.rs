@@ -17,11 +17,11 @@ use std::sync::Arc;
 use cairo_native::starknet::SyscallResult;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use starknet_api::core::{
-    calculate_contract_address,
     ClassHash,
     ContractAddress,
     Nonce,
     PatriciaKey,
+    calculate_contract_address,
 };
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::{
@@ -52,8 +52,8 @@ use crate::execution::native::utils::{
     decode_felts_as_str,
     encode_str_as_felts,
 };
-use crate::execution::syscalls::hint_processor::FAILED_TO_CALCULATE_CONTRACT_ADDRESS;
 use crate::execution::syscalls::SyscallSelector;
+use crate::execution::syscalls::hint_processor::FAILED_TO_CALCULATE_CONTRACT_ADDRESS;
 use crate::state::cached_state::{CachedState, StateChangesCount};
 use crate::state::state_api::State;
 use crate::test_utils::cached_state::get_erc20_class_hash_mapping;
@@ -554,15 +554,10 @@ pub fn prepare_erc20_deploy_test_state() -> (ContractAddress, CachedState<DictSt
 
     let class_hash = Felt::from_hex(TEST_ERC20_FULL_CONTRACT_CLASS_HASH).unwrap();
 
-    let (contract_address, _) = deploy_contract(
-        &mut state,
-        class_hash,
-        Felt::from(0),
-        &[
-            contract_address_to_native_felt(Signers::Alice.into()), // Recipient
-            contract_address_to_native_felt(Signers::Alice.into()), // Owner
-        ],
-    )
+    let (contract_address, _) = deploy_contract(&mut state, class_hash, Felt::from(0), &[
+        contract_address_to_native_felt(Signers::Alice.into()), // Recipient
+        contract_address_to_native_felt(Signers::Alice.into()), // Owner
+    ])
     .unwrap_or_else(|e| panic!("Failed to deploy contract: {:?}", decode_felts_as_str(&e)));
 
     let contract_address = ContractAddress(PatriciaKey::try_from(contract_address).unwrap());

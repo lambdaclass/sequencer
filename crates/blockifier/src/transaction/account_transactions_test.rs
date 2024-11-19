@@ -5,7 +5,7 @@ use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ResourceTracker;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-use starknet_api::core::{calculate_contract_address, ClassHash, ContractAddress, PatriciaKey};
+use starknet_api::core::{ClassHash, ContractAddress, PatriciaKey, calculate_contract_address};
 use starknet_api::hash::StarkHash;
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::{
@@ -39,21 +39,24 @@ use crate::test_utils::deploy_account::deploy_account_tx;
 use crate::test_utils::initial_test_state::{fund_account, test_state};
 use crate::test_utils::invoke::InvokeTxArgs;
 use crate::test_utils::{
+    BALANCE,
+    CairoVersion,
+    DEFAULT_STRK_L1_GAS_PRICE,
+    MAX_FEE,
+    NonceManager,
     create_calldata,
     create_trivial_calldata,
     get_syscall_resources,
     get_tx_resources,
     u64_from_usize,
-    CairoVersion,
-    NonceManager,
-    BALANCE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-    MAX_FEE,
 };
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::constants::TRANSFER_ENTRY_POINT_NAME;
 use crate::transaction::objects::{FeeType, GasVector, HasRelatedFeeType, TransactionInfoCreator};
 use crate::transaction::test_utils::{
+    FaultyAccountTxCreatorArgs,
+    INVALID,
+    TestInitData,
     account_invoke_tx,
     block_context,
     calculate_class_info_for_testing,
@@ -64,9 +67,6 @@ use crate::transaction::test_utils::{
     max_fee,
     max_resource_bounds,
     run_invoke_tx,
-    FaultyAccountTxCreatorArgs,
-    TestInitData,
-    INVALID,
 };
 use crate::transaction::transaction_types::TransactionType;
 use crate::transaction::transactions::{DeclareTransaction, ExecutableTransaction, ExecutionFlags};
@@ -99,14 +99,10 @@ fn test_circuit(block_context: BlockContext, max_resource_bounds: DeprecatedReso
             ),
         nonce: nonce_manager.next(account_address)
     };
-    let tx_execution_info = run_invoke_tx(
-        state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: max_resource_bounds,
-            ..tx_args
-        },
-    )
+    let tx_execution_info = run_invoke_tx(state, &block_context, invoke_tx_args! {
+        resource_bounds: max_resource_bounds,
+        ..tx_args
+    })
     .unwrap();
 
     assert!(tx_execution_info.revert_error.is_none());
@@ -136,14 +132,10 @@ fn test_rc96_holes(
             ),
         nonce: nonce_manager.next(account_address)
     };
-    let tx_execution_info = run_invoke_tx(
-        state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: max_resource_bounds,
-            ..tx_args
-        },
-    )
+    let tx_execution_info = run_invoke_tx(state, &block_context, invoke_tx_args! {
+        resource_bounds: max_resource_bounds,
+        ..tx_args
+    })
     .unwrap();
 
     assert!(!tx_execution_info.is_reverted());
@@ -186,18 +178,14 @@ fn test_fee_enforcement(
 fn test_enforce_fee_false_works(block_context: BlockContext, #[case] version: TransactionVersion) {
     let TestInitData { mut state, account_address, contract_address, mut nonce_manager } =
         create_test_init_data(&block_context.chain_info, CairoVersion::Cairo0);
-    let tx_execution_info = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            max_fee: Fee(0),
-            resource_bounds: l1_resource_bounds(0, DEFAULT_STRK_L1_GAS_PRICE),
-            sender_address: account_address,
-            calldata: create_trivial_calldata(contract_address),
-            version,
-            nonce: nonce_manager.next(account_address),
-        },
-    )
+    let tx_execution_info = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        max_fee: Fee(0),
+        resource_bounds: l1_resource_bounds(0, DEFAULT_STRK_L1_GAS_PRICE),
+        sender_address: account_address,
+        calldata: create_trivial_calldata(contract_address),
+        version,
+        nonce: nonce_manager.next(account_address),
+    })
     .unwrap();
     assert!(!tx_execution_info.is_reverted());
     assert_eq!(tx_execution_info.receipt.fee, Fee(0));
@@ -217,19 +205,15 @@ fn test_account_flow_test(
         create_test_init_data(&block_context.chain_info, CairoVersion::Cairo0);
 
     // Invoke a function from the newly deployed contract.
-    run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            max_fee,
-            sender_address: account_address,
-            calldata: create_trivial_calldata(contract_address),
-            version: tx_version,
-            resource_bounds: max_resource_bounds,
-            nonce: nonce_manager.next(account_address),
-            only_query,
-        },
-    )
+    run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        max_fee,
+        sender_address: account_address,
+        calldata: create_trivial_calldata(contract_address),
+        version: tx_version,
+        resource_bounds: max_resource_bounds,
+        nonce: nonce_manager.next(account_address),
+        only_query,
+    })
     .unwrap();
 }
 
@@ -250,23 +234,19 @@ fn test_invoke_tx_from_non_deployed_account(
 
     let non_deployed_contract_address = StarkHash::TWO;
 
-    let tx_result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            max_fee,
-            sender_address: account_address,
-            calldata: calldata![
-                non_deployed_contract_address, // Contract address.
-                entry_point_selector.0,    // EP selector.
-                felt!(1_u8),         // Calldata length.
-                felt!(2_u8)          // Calldata: num.
-            ],
-            resource_bounds: max_resource_bounds,
-            version: tx_version,
-            nonce: nonce_manager.next(account_address),
-        },
-    );
+    let tx_result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        max_fee,
+        sender_address: account_address,
+        calldata: calldata![
+            non_deployed_contract_address, // Contract address.
+            entry_point_selector.0,    // EP selector.
+            felt!(1_u8),         // Calldata length.
+            felt!(2_u8)          // Calldata: num.
+        ],
+        resource_bounds: max_resource_bounds,
+        version: tx_version,
+        nonce: nonce_manager.next(account_address),
+    });
     let expected_error = "is not deployed.";
     match tx_result {
         Ok(info) => {
@@ -302,27 +282,19 @@ fn test_infinite_recursion(
     let execute_calldata = if normal_recurse {
         create_calldata(contract_address, "recurse", &[felt!(recursion_depth)])
     } else {
-        create_calldata(
-            contract_address,
-            "recursive_syscall",
-            &[
-                *contract_address.0.key(), // Calldata: raw contract address.
-                selector_from_name("recursive_syscall").0, // Calldata: raw selector
-                felt!(recursion_depth),
-            ],
-        )
+        create_calldata(contract_address, "recursive_syscall", &[
+            *contract_address.0.key(), // Calldata: raw contract address.
+            selector_from_name("recursive_syscall").0, // Calldata: raw selector
+            felt!(recursion_depth),
+        ])
     };
 
-    let tx_execution_info = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: max_resource_bounds,
-            sender_address: account_address,
-            calldata: execute_calldata,
-            nonce: nonce_manager.next(account_address),
-        },
-    )
+    let tx_execution_info = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        resource_bounds: max_resource_bounds,
+        sender_address: account_address,
+        calldata: execute_calldata,
+        nonce: nonce_manager.next(account_address),
+    })
     .unwrap();
     if success {
         assert!(tx_execution_info.revert_error.is_none());
@@ -421,20 +393,16 @@ fn test_max_fee_limit_validate(
     let estimated_min_fee =
         get_fee_by_gas_vector(block_info, estimated_min_gas_usage_vector, &account_tx.fee_type());
 
-    let error_trace = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            max_fee: estimated_min_fee,
-            // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
-            // works.
-            resource_bounds: l1_resource_bounds(
-                estimated_min_l1_gas.try_into().expect("Failed to convert u128 to u64."),
-                block_info.gas_prices.get_l1_gas_price_by_fee_type(&account_tx.fee_type()).into()
-            ),
-            ..tx_args
-        },
-    )
+    let error_trace = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        max_fee: estimated_min_fee,
+        // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
+        // works.
+        resource_bounds: l1_resource_bounds(
+            estimated_min_l1_gas.try_into().expect("Failed to convert u128 to u64."),
+            block_info.gas_prices.get_l1_gas_price_by_fee_type(&account_tx.fee_type()).into()
+        ),
+        ..tx_args
+    })
     .unwrap_err()
     .to_string();
 
@@ -468,15 +436,11 @@ fn test_recursion_depth_exceeded(
         .expect("Failed to convert usize to u8.");
 
     let recursive_syscall_entry_point_name = "recursive_syscall";
-    let calldata = create_calldata(
-        contract_address,
-        recursive_syscall_entry_point_name,
-        &[
-            *contract_address.0.key(), // Calldata: raw contract address.
-            selector_from_name(recursive_syscall_entry_point_name).0, // Calldata: raw selector.
-            felt!(max_inner_recursion_depth),
-        ],
-    );
+    let calldata = create_calldata(contract_address, recursive_syscall_entry_point_name, &[
+        *contract_address.0.key(), // Calldata: raw contract address.
+        selector_from_name(recursive_syscall_entry_point_name).0, // Calldata: raw selector.
+        felt!(max_inner_recursion_depth),
+    ]);
     let invoke_args = invoke_tx_args! {
         max_fee,
         sender_address: account_address,
@@ -493,15 +457,11 @@ fn test_recursion_depth_exceeded(
 
     let exceeding_recursion_depth = max_inner_recursion_depth + 1;
 
-    let calldata = create_calldata(
-        contract_address,
-        recursive_syscall_entry_point_name,
-        &[
-            *contract_address.0.key(), // Calldata: raw contract address.
-            selector_from_name(recursive_syscall_entry_point_name).0, // Calldata: raw selector.
-            felt!(exceeding_recursion_depth),
-        ],
-    );
+    let calldata = create_calldata(contract_address, recursive_syscall_entry_point_name, &[
+        *contract_address.0.key(), // Calldata: raw contract address.
+        selector_from_name(recursive_syscall_entry_point_name).0, // Calldata: raw selector.
+        felt!(exceeding_recursion_depth),
+    ]);
     let invoke_args = crate::test_utils::invoke::InvokeTxArgs {
         calldata,
         nonce: nonce_manager.next(account_address),
@@ -533,22 +493,18 @@ fn test_revert_invoke(
 
     // Invoke a function that changes the state and reverts.
     let storage_key = felt!(9_u8);
-    let tx_execution_info = run_invoke_tx(
-        state,
-        &block_context,
-        invoke_tx_args! {
-            max_fee,
-            sender_address: account_address,
-            calldata: create_calldata(
-                test_contract_address,
-                "write_and_revert",
-                // Write some non-zero value.
-                &[storage_key, felt!(99_u8)]
-            ),
-            version: transaction_version,
-            nonce: nonce_manager.next(account_address),
-        },
-    )
+    let tx_execution_info = run_invoke_tx(state, &block_context, invoke_tx_args! {
+        max_fee,
+        sender_address: account_address,
+        calldata: create_calldata(
+            test_contract_address,
+            "write_and_revert",
+            // Write some non-zero value.
+            &[storage_key, felt!(99_u8)]
+        ),
+        version: transaction_version,
+        nonce: nonce_manager.next(account_address),
+    })
     .unwrap();
 
     // TODO(Dori, 1/7/2023): Verify that the actual fee collected is exactly the fee computed for
@@ -711,15 +667,11 @@ fn test_reverted_reach_steps_limit(
     };
 
     // Invoke the `recurse` function with 0 iterations. This call should succeed.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 0, false),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 0, false),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     let n_steps_0 = result.receipt.resources.total_charged_steps();
     let actual_fee_0 = result.receipt.fee.0;
@@ -727,15 +679,11 @@ fn test_reverted_reach_steps_limit(
     assert!(!result.is_reverted());
 
     // Invoke the `recurse` function with 1 iteration. This call should succeed.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 1, false),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 1, false),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     let n_steps_1 = result.receipt.resources.total_charged_steps();
     let actual_fee_1 = result.receipt.fee.0;
@@ -754,15 +702,11 @@ fn test_reverted_reach_steps_limit(
     let fail_depth = block_context.versioned_constants.invoke_tx_max_n_steps / steps_diff_as_u32;
 
     // Invoke the `recurse` function with `fail_depth` iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, fail_depth, false),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, fail_depth, false),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     let n_steps_fail = result.receipt.resources.total_charged_steps();
     let actual_fee_fail: u128 = result.receipt.fee.0;
@@ -775,15 +719,11 @@ fn test_reverted_reach_steps_limit(
     assert!(actual_fee_fail > actual_fee_1);
 
     // Invoke the `recurse` function with `fail_depth`+1 iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, fail_depth + 1, false),
-            ..recursion_base_args
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, fail_depth + 1, false),
+        ..recursion_base_args
+    })
     .unwrap();
     let n_steps_fail_next = result.receipt.resources.total_charged_steps();
     let actual_fee_fail_next: u128 = result.receipt.fee.0;
@@ -812,15 +752,11 @@ fn test_n_reverted_steps(
     };
 
     // Invoke the `recursive_fail` function with 0 iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 0, true),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 0, true),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     // Ensure the transaction was reverted.
     assert!(result.is_reverted());
@@ -829,15 +765,11 @@ fn test_n_reverted_steps(
     let actual_fee_0 = result.receipt.fee.0;
 
     // Invoke the `recursive_fail` function with 1 iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 1, true),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 1, true),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     // Ensure the transaction was reverted.
     assert!(result.is_reverted());
@@ -846,15 +778,11 @@ fn test_n_reverted_steps(
     let actual_fee_1 = result.receipt.fee.0;
 
     // Invoke the `recursive_fail` function with 2 iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 2, true),
-            ..recursion_base_args.clone()
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 2, true),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     let n_steps_2 = result.receipt.resources.total_charged_steps();
     let actual_fee_2 = result.receipt.fee.0;
@@ -878,15 +806,11 @@ fn test_n_reverted_steps(
     actual_resources_0.vm_resources.n_steps = n_steps_0;
 
     // Invoke the `recursive_fail` function with 100 iterations. This call should fail.
-    let result = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 100, true),
-            ..recursion_base_args
-        },
-    )
+    let result = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 100, true),
+        ..recursion_base_args
+    })
     .unwrap();
     let n_steps_100 = result.receipt.resources.total_charged_steps();
     let actual_fee_100 = result.receipt.fee.0;
@@ -992,16 +916,12 @@ fn test_insufficient_max_fee_reverts(
     };
 
     // Invoke the `recurse` function with depth 1 and MAX_FEE. This call should succeed.
-    let tx_execution_info1 = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: max_resource_bounds,
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 1, false),
-            ..recursion_base_args.clone()
-        },
-    )
+    let tx_execution_info1 = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        resource_bounds: max_resource_bounds,
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 1, false),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     assert!(!tx_execution_info1.is_reverted());
     let actual_fee_depth1 = tx_execution_info1.receipt.fee;
@@ -1013,16 +933,12 @@ fn test_insufficient_max_fee_reverts(
     // Invoke the `recurse` function with depth of 2 and the actual fee of depth 1 as max_fee.
     // This call should fail due to insufficient max fee (steps bound based on max_fee is not so
     // tight as to stop execution between iterations 1 and 2).
-    let tx_execution_info2 = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: l1_resource_bounds(gas_ammount, gas_price),
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 2, false),
-            ..recursion_base_args.clone()
-        },
-    )
+    let tx_execution_info2 = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        resource_bounds: l1_resource_bounds(gas_ammount, gas_price),
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 2, false),
+        ..recursion_base_args.clone()
+    })
     .unwrap();
     assert!(tx_execution_info2.is_reverted());
     assert!(tx_execution_info2.receipt.fee == actual_fee_depth1);
@@ -1031,16 +947,12 @@ fn test_insufficient_max_fee_reverts(
     // Invoke the `recurse` function with depth of 824 and the actual fee of depth 1 as max_fee.
     // This call should fail due to no remaining steps (execution steps based on max_fee are bounded
     // well enough to catch this mid-execution).
-    let tx_execution_info3 = run_invoke_tx(
-        &mut state,
-        &block_context,
-        invoke_tx_args! {
-            resource_bounds: l1_resource_bounds(gas_ammount, gas_price),
-            nonce: nonce_manager.next(account_address),
-            calldata: recursive_function_calldata(&contract_address, 824, false),
-            ..recursion_base_args
-        },
-    )
+    let tx_execution_info3 = run_invoke_tx(&mut state, &block_context, invoke_tx_args! {
+        resource_bounds: l1_resource_bounds(gas_ammount, gas_price),
+        nonce: nonce_manager.next(account_address),
+        calldata: recursive_function_calldata(&contract_address, 824, false),
+        ..recursion_base_args
+    })
     .unwrap();
     assert!(tx_execution_info3.is_reverted());
     assert!(tx_execution_info3.receipt.fee == actual_fee_depth1);
@@ -1126,11 +1038,11 @@ fn test_count_actual_storage_changes(
         create_calldata(contract_address, "test_count_actual_storage_changes", &[]);
     let recipient = 435_u16;
     let transfer_amount: Felt = 1.into();
-    let transfer_calldata = create_calldata(
-        fee_token_address,
-        TRANSFER_ENTRY_POINT_NAME,
-        &[felt!(recipient), transfer_amount, felt!(0_u8)],
-    );
+    let transfer_calldata = create_calldata(fee_token_address, TRANSFER_ENTRY_POINT_NAME, &[
+        felt!(recipient),
+        transfer_amount,
+        felt!(0_u8),
+    ]);
 
     // Run transactions; using transactional state to count only storage changes of the current
     // transaction.
@@ -1322,11 +1234,11 @@ fn test_concurrency_execute_fee_transfer(
     // Case 2: The transaction read from and write to the sequenser balance before executing fee
     // transfer.
 
-    let transfer_calldata = create_calldata(
-        fee_token_address,
-        TRANSFER_ENTRY_POINT_NAME,
-        &[*block_context.block_info.sequencer_address.0.key(), felt!(TRANSFER_AMOUNT), felt!(0_u8)],
-    );
+    let transfer_calldata = create_calldata(fee_token_address, TRANSFER_ENTRY_POINT_NAME, &[
+        *block_context.block_info.sequencer_address.0.key(),
+        felt!(TRANSFER_AMOUNT),
+        felt!(0_u8),
+    ]);
 
     // Set the sequencer balance to a constant value to check that the read set did not changed.
     fund_account(

@@ -36,20 +36,20 @@ use starknet_api::{felt, patricia_key};
 use super::objects::state::StateUpdate;
 use super::objects::transaction::IntermediateDeclareTransaction;
 use super::{
+    BLOCK_NUMBER_QUERY,
+    CLASS_HASH_QUERY,
     ContractClass,
+    GET_BLOCK_URL,
+    GET_STATE_UPDATE_URL,
     GenericContractClass,
     PendingData,
     ReaderClientError,
     ReaderClientResult,
     StarknetFeederGatewayClient,
     StarknetReader,
-    BLOCK_NUMBER_QUERY,
-    CLASS_HASH_QUERY,
-    GET_BLOCK_URL,
-    GET_STATE_UPDATE_URL,
 };
-use crate::reader::objects::block::{BlockSignatureData, BlockSignatureMessage};
 use crate::reader::Block;
+use crate::reader::objects::block::{BlockSignatureData, BlockSignatureMessage};
 use crate::test_utils::read_resource::read_resource_file;
 use crate::test_utils::retry::get_test_config;
 
@@ -264,24 +264,18 @@ async fn deprecated_contract_class() {
         },
         entry_points_by_type: HashMap::from([
             (DeprecatedEntryPointType::L1Handler, vec![]),
-            (
-                DeprecatedEntryPointType::Constructor,
-                vec![DeprecatedEntryPoint {
-                    selector: EntryPointSelector(felt!(
-                        "0x028ffe4ff0f226a9107253e17a904099aa4f63a02a5621de0576e5aa71bc5194"
-                    )),
-                    offset: EntryPointOffset(62),
-                }],
-            ),
-            (
-                DeprecatedEntryPointType::External,
-                vec![DeprecatedEntryPoint {
-                    selector: EntryPointSelector(felt!(
-                        "0x0000000000000000000000000000000000000000000000000000000000000000"
-                    )),
-                    offset: EntryPointOffset(86),
-                }],
-            ),
+            (DeprecatedEntryPointType::Constructor, vec![DeprecatedEntryPoint {
+                selector: EntryPointSelector(felt!(
+                    "0x028ffe4ff0f226a9107253e17a904099aa4f63a02a5621de0576e5aa71bc5194"
+                )),
+                offset: EntryPointOffset(62),
+            }]),
+            (DeprecatedEntryPointType::External, vec![DeprecatedEntryPoint {
+                selector: EntryPointSelector(felt!(
+                    "0x0000000000000000000000000000000000000000000000000000000000000000"
+                )),
+                offset: EntryPointOffset(86),
+            }]),
         ]),
     };
     let mock_by_hash = mock(

@@ -7,7 +7,7 @@ use starknet_api::core::{ContractAddress, EntryPointSelector, Nonce};
 use starknet_api::transaction::{Calldata, Fee, TransactionHash};
 
 use crate::errors::{NativeBlockifierInputError, NativeBlockifierResult};
-use crate::py_utils::{from_py_felts, py_attr, PyFelt};
+use crate::py_utils::{PyFelt, from_py_felts, py_attr};
 
 #[derive(FromPyObject)]
 struct PyL1HandlerTransaction {

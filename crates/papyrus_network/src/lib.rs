@@ -24,7 +24,7 @@ use papyrus_config::converters::{
     deserialize_seconds_to_duration,
     serialize_optional_vec_u8,
 };
-use papyrus_config::dumping::{ser_optional_param, ser_param, SerializeConfig};
+use papyrus_config::dumping::{SerializeConfig, ser_optional_param, ser_param};
 use papyrus_config::validators::validate_vec_u256;
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use serde::{Deserialize, Serialize};

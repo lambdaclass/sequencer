@@ -4,6 +4,7 @@ mod block_hash_test;
 
 use std::iter::zip;
 
+use starknet_api::StarknetApiError;
 use starknet_api::block::{BlockBody, BlockHash, BlockHeader};
 use starknet_api::core::{
     ChainId,
@@ -20,11 +21,10 @@ use starknet_api::transaction::{
     TransactionHash,
     TransactionOutput,
 };
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::{Pedersen, StarkHash as CoreStarkHash};
 
-use crate::transaction_hash::{ascii_as_felt, HashChain, ZERO};
+use crate::transaction_hash::{HashChain, ZERO, ascii_as_felt};
 use crate::usize_into_felt;
 
 #[derive(Debug, thiserror::Error)]

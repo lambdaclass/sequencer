@@ -6,26 +6,26 @@ use blockifier::context::{BlockContext, ChainInfo};
 use blockifier::execution::contract_class::NativeContractClassV1;
 use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::{
-    CairoVersion,
     BALANCE,
     CURRENT_BLOCK_TIMESTAMP,
+    CairoVersion,
     DEFAULT_ETH_L1_GAS_PRICE,
     DEFAULT_STRK_L1_GAS_PRICE,
     TEST_SEQUENCER_ADDRESS,
 };
 use blockifier::transaction::objects::FeeType;
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
-use indexmap::{indexmap, IndexMap};
+use indexmap::{IndexMap, indexmap};
 use itertools::Itertools;
 use mempool_test_utils::starknet_api_test_utils::deploy_account_tx;
 use papyrus_common::pending_classes::PendingClasses;
-use papyrus_rpc::{run_server, RpcConfig};
+use papyrus_rpc::{RpcConfig, run_server};
 use papyrus_storage::body::BodyStorageWriter;
 use papyrus_storage::class::ClassStorageWriter;
 use papyrus_storage::compiled_class::CasmStorageWriter;
 use papyrus_storage::header::HeaderStorageWriter;
 use papyrus_storage::state::StateStorageWriter;
-use papyrus_storage::{open_storage, StorageConfig, StorageReader};
+use papyrus_storage::{StorageConfig, StorageReader, open_storage};
 use starknet_api::block::{
     BlockBody,
     BlockHeader,

@@ -7,9 +7,9 @@ use strum::IntoEnumIterator;
 use crate::abi::abi_utils::get_fee_token_var_address;
 use crate::context::ChainInfo;
 use crate::state::cached_state::CachedState;
+use crate::test_utils::CairoVersion;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::dict_state_reader::DictStateReader;
-use crate::test_utils::CairoVersion;
 use crate::transaction::objects::FeeType;
 
 /// Utility to fund an account.

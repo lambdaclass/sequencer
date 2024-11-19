@@ -5,9 +5,9 @@ use rstest::{fixture, rstest};
 use crate::felt::Felt;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::internal_test_utils::{
-    get_initial_updated_skeleton,
     MockLeaf,
     OriginalSkeletonMockTrieConfig,
+    get_initial_updated_skeleton,
 };
 use crate::patricia_merkle_tree::node_data::inner_node::PathToBottom;
 use crate::patricia_merkle_tree::node_data::leaf::{LeafModifications, SkeletonLeaf};

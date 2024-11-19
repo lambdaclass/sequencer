@@ -1,5 +1,5 @@
-use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::CairoVersion;
+use blockifier::test_utils::contracts::FeatureContract;
 use starknet_api::transaction::TransactionHash;
 use starknet_mempool_integration_tests::integration_test_utils::setup_with_tx_generation;
 

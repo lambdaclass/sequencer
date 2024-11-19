@@ -1,11 +1,11 @@
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::prelude::*;
 use std::sync::Arc;
 
 use goose::goose::{Transaction, TransactionFunction};
 use rand::Rng;
-use serde_json::{json, Value as jsonVal};
+use serde_json::{Value as jsonVal, json};
 
 use crate::{create_request, jsonrpc_request, path_in_resources, post_jsonrpc_request};
 

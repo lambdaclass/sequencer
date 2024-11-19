@@ -10,11 +10,11 @@ use papyrus_config::converters::{
     deserialize_seconds_to_duration,
 };
 use papyrus_config::dumping::{
+    SerializeConfig,
     append_sub_config_name,
     ser_optional_sub_config,
     ser_param,
     ser_required_param,
-    SerializeConfig,
 };
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializationType, SerializedParam};
 use serde::{Deserialize, Serialize};

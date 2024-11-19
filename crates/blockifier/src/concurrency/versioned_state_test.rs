@@ -5,16 +5,17 @@ use std::thread;
 use assert_matches::assert_matches;
 use rstest::{fixture, rstest};
 use starknet_api::core::{
-    calculate_contract_address,
     ClassHash,
     ContractAddress,
     Nonce,
     PatriciaKey,
+    calculate_contract_address,
 };
 use starknet_api::transaction::{Calldata, ContractAddressSalt, DeprecatedResourceBoundsMapping};
 use starknet_api::{calldata, class_hash, contract_address, felt, patricia_key};
 
 use crate::abi::abi_utils::{get_fee_token_var_address, get_storage_var_address};
+use crate::concurrency::TxIndex;
 use crate::concurrency::test_utils::{
     class_hash,
     contract_address,
@@ -25,7 +26,6 @@ use crate::concurrency::versioned_state::{
     VersionedState,
     VersionedStateProxy,
 };
-use crate::concurrency::TxIndex;
 use crate::context::BlockContext;
 use crate::state::cached_state::{
     CachedState,
@@ -39,7 +39,7 @@ use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::deploy_account::deploy_account_tx;
 use crate::test_utils::dict_state_reader::DictStateReader;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{CairoVersion, NonceManager, BALANCE, DEFAULT_STRK_L1_GAS_PRICE};
+use crate::test_utils::{BALANCE, CairoVersion, DEFAULT_STRK_L1_GAS_PRICE, NonceManager};
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::objects::{HasRelatedFeeType, TransactionInfoCreator};
 use crate::transaction::test_utils::{l1_resource_bounds, max_resource_bounds};
@@ -212,11 +212,11 @@ fn test_run_parallel_txs(max_resource_bounds: DeprecatedResourceBoundsMapping) {
         FeatureContract::AccountWithoutValidations(CairoVersion::Cairo0);
 
     // Initiate States
-    let versioned_state = Arc::new(Mutex::new(VersionedState::new(test_state(
-        chain_info,
-        BALANCE,
-        &[(account_without_validation, 1), (grindy_account, 1)],
-    ))));
+    let versioned_state =
+        Arc::new(Mutex::new(VersionedState::new(test_state(chain_info, BALANCE, &[
+            (account_without_validation, 1),
+            (grindy_account, 1),
+        ]))));
 
     let safe_versioned_state = ThreadSafeVersionedState(Arc::clone(&versioned_state));
     let mut versioned_state_proxy_1 = safe_versioned_state.pin_version(1);

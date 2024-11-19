@@ -10,7 +10,7 @@ use crate::blockifier::transaction_executor::{
     TransactionExecutorError,
     TransactionExecutorResult,
 };
-use crate::bouncer::{verify_tx_weights_in_bounds, Bouncer, BouncerWeights, BuiltinCount};
+use crate::bouncer::{Bouncer, BouncerWeights, BuiltinCount, verify_tx_weights_in_bounds};
 use crate::context::BlockContext;
 use crate::execution::call_info::ExecutionSummary;
 use crate::state::cached_state::{StateChangesKeys, TransactionalState};

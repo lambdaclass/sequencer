@@ -16,10 +16,10 @@ use starknet_types_core::felt::Felt;
 use tracing::debug;
 
 use crate::compiled_class::CasmStorageReader;
-use crate::db::table_types::Table;
 use crate::db::RO;
+use crate::db::table_types::Table;
 use crate::state::StateStorageReader;
-use crate::{open_storage, StorageConfig, StorageError, StorageReader, StorageResult, StorageTxn};
+use crate::{StorageConfig, StorageError, StorageReader, StorageResult, StorageTxn, open_storage};
 
 #[derive(Serialize)]
 struct DumpDeclaredClass {
@@ -70,15 +70,12 @@ fn dump_declared_classes_table_by_block_range_internal(
                     if !first {
                         writer.write_all(b",")?;
                     }
-                    serde_json::to_writer(
-                        &mut writer,
-                        &DumpDeclaredClass {
-                            class_hash: *class_hash,
-                            compiled_class_hash: *compiled_class_hash,
-                            sierra_program: contract_class.sierra_program.clone(),
-                            entry_points_by_type: contract_class.entry_points_by_type.clone(),
-                        },
-                    )?;
+                    serde_json::to_writer(&mut writer, &DumpDeclaredClass {
+                        class_hash: *class_hash,
+                        compiled_class_hash: *compiled_class_hash,
+                        sierra_program: contract_class.sierra_program.clone(),
+                        entry_points_by_type: contract_class.entry_points_by_type.clone(),
+                    })?;
                     first = false;
                 }
             }
