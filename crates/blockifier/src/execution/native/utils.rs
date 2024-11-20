@@ -289,7 +289,7 @@ pub fn calculate_resource_bounds(
             ResourceBounds {
                 resource,
                 max_amount: resource_bound.max_amount,
-                max_price_per_unit: resource_bound.max_price_per_unit,
+                max_price_per_unit: resource_bound.max_price_per_unit.try_into().unwrap(),
             }
         })
         .collect())

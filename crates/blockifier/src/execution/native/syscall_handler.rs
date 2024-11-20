@@ -175,32 +175,6 @@ impl<'state> NativeSyscallHandler<'state> {
 
         Ok(())
     }
-
-    pub fn pre_execute_syscall_gasu64(
-        &mut self,
-        remaining_gas: &mut u64,
-        syscall_selector: SyscallSelector,
-        syscall_gas_cost: u64,
-    ) -> SyscallResult<()> {
-        // Increment the syscall counter. For Keccak syscall count is calculated by the number of
-        // steps
-        if syscall_selector != SyscallSelector::Keccak {
-            self.increment_syscall_count(&syscall_selector);
-        }
-
-        // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
-        let required_gas =
-            syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
-
-        if *remaining_gas < required_gas {
-            //  Out of gas failure.
-            return Err(vec![Felt::from_hex(OUT_OF_GAS_ERROR).unwrap()]);
-        }
-
-        *remaining_gas -= required_gas;
-
-        Ok(())
-    }
 }
 
 impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
@@ -708,8 +682,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
         // works.
         let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-        let gas_cost =
-            n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+        let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
         if gas_cost > *remaining_gas {
             // In VM this error is wrapped into `SyscallExecutionError::SyscallError`
@@ -1026,7 +999,7 @@ pub mod sierra_emu_impl {
         }
 
         fn get_execution_info(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfo> {
-            self.pre_execute_syscall_gasu64(
+            self.pre_execute_syscall(
                 remaining_gas,
                 SyscallSelector::GetExecutionInfo,
                 self.execution_context.gas_costs().get_execution_info_gas_cost,
@@ -1479,7 +1452,7 @@ pub mod sierra_emu_impl {
         }
 
         fn keccak(&mut self, input: Vec<u64>, remaining_gas: &mut u64) -> SyscallResult<U256> {
-            self.pre_execute_syscall_gasu64(
+            self.pre_execute_syscall(
                 remaining_gas,
                 SyscallSelector::Keccak,
                 self.execution_context.gas_costs().keccak_gas_cost,
@@ -1498,8 +1471,7 @@ pub mod sierra_emu_impl {
             // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
             // works.
             let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-            let gas_cost =
-                n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+            let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
             if gas_cost > *remaining_gas {
                 // In VM this error is wrapped into `SyscallExecutionError::SyscallError`

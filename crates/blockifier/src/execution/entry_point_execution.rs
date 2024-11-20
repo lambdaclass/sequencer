@@ -93,7 +93,7 @@ pub fn execute_entry_point_call(
     let pre_execution_instant = Instant::now();
     let result =
         run_entry_point(&mut runner, &mut syscall_handler, entry_point, args, program_segment_size);
-    let execution_time = pre_execution_instant.elapsed().as_millis();
+    let execution_time = pre_execution_instant.elapsed().as_nanos();
     tracing::info!(time = execution_time, "vm contract execution finished");
     result?;
 
