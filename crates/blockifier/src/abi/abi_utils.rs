@@ -2,8 +2,8 @@ use sha3::{Digest, Keccak256};
 use starknet_api::core::{
     ContractAddress,
     EntryPointSelector,
-    PatriciaKey,
     L2_ADDRESS_UPPER_BOUND,
+    PatriciaKey,
 };
 use starknet_api::state::StorageKey;
 use starknet_types_core::felt::{Felt, NonZeroFelt};

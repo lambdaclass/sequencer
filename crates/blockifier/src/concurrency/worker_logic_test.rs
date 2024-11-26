@@ -29,12 +29,12 @@ use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::declare::declare_tx;
 use crate::test_utils::initial_test_state::test_state;
 use crate::test_utils::{
-    create_calldata,
-    create_trivial_calldata,
+    BALANCE,
     CairoVersion,
     NonceManager,
-    BALANCE,
     TEST_ERC20_CONTRACT_ADDRESS2,
+    create_calldata,
+    create_trivial_calldata,
 };
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::constants::DEPLOY_CONTRACT_FUNCTION_ENTRY_POINT_NAME;

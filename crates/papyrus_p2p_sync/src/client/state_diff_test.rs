@@ -15,7 +15,7 @@ use papyrus_protobuf::sync::{
     StateDiffChunk,
 };
 use papyrus_storage::state::StateStorageReader;
-use papyrus_test_utils::{get_rng, GetTestInstance};
+use papyrus_test_utils::{GetTestInstance, get_rng};
 use rand::RngCore;
 use rand_chacha::ChaCha8Rng;
 use starknet_api::block::{BlockHeader, BlockNumber};
@@ -25,13 +25,13 @@ use starknet_types_core::felt::Felt;
 use static_assertions::const_assert;
 
 use super::test_utils::{
-    create_block_hashes_and_signatures,
-    setup,
-    TestArgs,
     HEADER_QUERY_LENGTH,
     SLEEP_DURATION_TO_LET_SYNC_ADVANCE,
     STATE_DIFF_QUERY_LENGTH,
+    TestArgs,
     WAIT_PERIOD_FOR_NEW_DATA,
+    create_block_hashes_and_signatures,
+    setup,
 };
 use super::{P2PSyncClientError, StateDiffQuery};
 

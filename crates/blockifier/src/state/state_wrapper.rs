@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use starknet_api::StarknetApiError;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::Felt;
 
 use crate::execution::contract_class::ContractClass;

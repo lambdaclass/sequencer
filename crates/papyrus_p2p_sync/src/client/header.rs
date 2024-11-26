@@ -11,7 +11,7 @@ use starknet_api::block::BlockNumber;
 use tracing::debug;
 
 use super::stream_builder::{BlockData, BlockNumberLimit, DataStreamBuilder};
-use super::{P2PSyncClientError, ALLOWED_SIGNATURES_LENGTH, NETWORK_DATA_TIMEOUT};
+use super::{ALLOWED_SIGNATURES_LENGTH, NETWORK_DATA_TIMEOUT, P2PSyncClientError};
 
 impl BlockData for SignedBlockHeader {
     fn write_to_storage(

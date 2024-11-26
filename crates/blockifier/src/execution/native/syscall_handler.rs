@@ -5,65 +5,38 @@ use std::sync::Arc;
 
 use ark_ec::short_weierstrass::{Affine, Projective, SWCurveConfig};
 use cairo_native::starknet::{
-    BlockInfo,
-    ExecutionInfo,
-    ExecutionInfoV2,
-    Secp256k1Point,
-    Secp256r1Point,
-    StarknetSyscallHandler,
-    SyscallResult,
-    TxInfo,
-    TxV2Info,
-    U256,
+    BlockInfo, ExecutionInfo, ExecutionInfoV2, Secp256k1Point, Secp256r1Point,
+    StarknetSyscallHandler, SyscallResult, TxInfo, TxV2Info, U256,
 };
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use num_traits::{ToPrimitive, Zero};
 use starknet_api::core::{
-    calculate_contract_address,
-    ClassHash,
-    ContractAddress,
-    EntryPointSelector,
-    EthAddress,
+    calculate_contract_address, ClassHash, ContractAddress, EntryPointSelector, EthAddress,
     PatriciaKey,
 };
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::{
-    Calldata,
-    ContractAddressSalt,
-    EventContent,
-    EventData,
-    EventKey,
-    L2ToL1Payload,
+    Calldata, ContractAddressSalt, EventContent, EventData, EventKey, L2ToL1Payload,
 };
 use starknet_types_core::felt::Felt;
 
 use super::utils::{
-    big4int_to_u256,
-    calculate_resource_bounds,
-    contract_address_to_native_felt,
-    default_tx_v2_info,
-    encode_str_as_felts,
-    u256_to_biguint,
+    big4int_to_u256, calculate_resource_bounds, contract_address_to_native_felt,
+    default_tx_v2_info, encode_str_as_felts, u256_to_biguint,
 };
 use crate::abi::constants;
 use crate::execution::call_info::{CallInfo, MessageToL1, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::common_hints::ExecutionMode;
 use crate::execution::contract_class::ContractClass;
 use crate::execution::entry_point::{
-    CallEntryPoint,
-    CallType,
-    ConstructorContext,
-    EntryPointExecutionContext,
+    CallEntryPoint, CallType, ConstructorContext, EntryPointExecutionContext,
 };
 use crate::execution::execution_utils::{execute_deployment, max_fee_for_execution_info};
 use crate::execution::syscalls::hint_processor::{
-    SyscallCounter,
-    SyscallExecutionError,
-    BLOCK_NUMBER_OUT_OF_RANGE_ERROR,
-    INVALID_INPUT_LENGTH_ERROR,
-    OUT_OF_GAS_ERROR,
+    SyscallCounter, SyscallExecutionError, BLOCK_NUMBER_OUT_OF_RANGE_ERROR,
+    INVALID_INPUT_LENGTH_ERROR, OUT_OF_GAS_ERROR,
 };
 use crate::execution::syscalls::{exceeds_event_size_limit, SyscallSelector};
 use crate::state::state_api::State;
@@ -131,16 +104,11 @@ impl<'state> NativeSyscallHandler<'state> {
             return Err(retdata);
         }
 
-        self.update_remaining_gas(remaining_gas, &call_info);
+        update_remaining_gas(remaining_gas, &call_info);
 
         self.inner_calls.push(call_info.clone());
 
         Ok(call_info)
-    }
-
-    pub fn update_remaining_gas(&mut self, remaining_gas: &mut u64, call_info: &CallInfo) {
-        // pass the reference to the function
-        update_remaining_gas(remaining_gas, call_info);
     }
 
     pub fn increment_syscall_count_by(&mut self, selector: &SyscallSelector, n: usize) {
@@ -168,7 +136,8 @@ impl<'state> NativeSyscallHandler<'state> {
         }
 
         // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
-        let required_gas = syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
+        let required_gas =
+            syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
 
         if *remaining_gas < required_gas {
             //  Out of gas failure.
@@ -295,10 +264,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         })
     }
 
-    fn get_execution_info_v2(
-        &mut self,
-        remaining_gas: &mut u64,
-    ) -> SyscallResult<ExecutionInfoV2> {
+    fn get_execution_info_v2(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfoV2> {
         self.pre_execute_syscall(
             remaining_gas,
             SyscallSelector::GetExecutionInfo,
@@ -439,7 +405,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         )
         .map_err(|error| encode_str_as_felts(&error.to_string()))?;
 
-        self.update_remaining_gas(remaining_gas, &call_info);
+        update_remaining_gas(remaining_gas, &call_info);
 
         let return_data = call_info.execution.retdata.0[..].to_vec();
         let contract_address_felt = Felt::from(calculated_contract_address);
@@ -689,7 +655,8 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
         // works.
         let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-        let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+        let gas_cost =
+            n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
         if gas_cost > *remaining_gas {
             // In VM this error is wrapped into `SyscallExecutionError::SyscallError`
@@ -885,6 +852,14 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         sha2::compress256(prev_state, &[data_as_bytes]);
         Ok(())
     }
+
+    fn get_class_hash_at(
+        &mut self,
+        _contract_address: Felt,
+        _remaining_gas: &mut u64,
+    ) -> SyscallResult<Felt> {
+        todo!()
+    }
 }
 
 pub mod sierra_emu_impl {
@@ -892,35 +867,18 @@ pub mod sierra_emu_impl {
 
     use num_traits::ToPrimitive;
     use sierra_emu::starknet::{
-        BlockInfo,
-        ExecutionInfo,
-        ExecutionInfoV2,
-        ResourceBounds,
-        Secp256k1Point,
-        Secp256r1Point,
-        SyscallResult,
-        TxInfo,
-        TxV2Info,
-        U256,
+        BlockInfo, ExecutionInfo, ExecutionInfoV2, ResourceBounds, Secp256k1Point, Secp256r1Point,
+        SyscallResult, TxInfo, TxV2Info, U256,
     };
     use starknet_api::core::{
-        calculate_contract_address,
-        ClassHash,
-        ContractAddress,
-        EntryPointSelector,
-        EthAddress,
+        calculate_contract_address, ClassHash, ContractAddress, EntryPointSelector, EthAddress,
         PatriciaKey,
     };
     use starknet_api::data_availability::DataAvailabilityMode;
     use starknet_api::deprecated_contract_class::EntryPointType;
     use starknet_api::state::StorageKey;
     use starknet_api::transaction::{
-        Calldata,
-        ContractAddressSalt,
-        EventContent,
-        EventData,
-        EventKey,
-        L2ToL1Payload,
+        Calldata, ContractAddressSalt, EventContent, EventData, EventKey, L2ToL1Payload,
     };
     use starknet_types_core::felt::Felt;
 
@@ -932,19 +890,16 @@ pub mod sierra_emu_impl {
     use crate::execution::entry_point::{CallEntryPoint, CallType, ConstructorContext};
     use crate::execution::execution_utils::{execute_deployment, max_fee_for_execution_info};
     use crate::execution::native::utils::{
-        calculate_resource_bounds,
-        contract_address_to_native_felt,
-        default_tx_v2_info_sierra_emu,
+        calculate_resource_bounds, contract_address_to_native_felt, default_tx_v2_info_sierra_emu,
         encode_str_as_felts,
     };
     use crate::execution::syscalls::hint_processor::{
-        SyscallExecutionError,
-        BLOCK_NUMBER_OUT_OF_RANGE_ERROR,
-        INVALID_INPUT_LENGTH_ERROR,
+        SyscallExecutionError, BLOCK_NUMBER_OUT_OF_RANGE_ERROR, INVALID_INPUT_LENGTH_ERROR,
         OUT_OF_GAS_ERROR,
     };
     use crate::execution::syscalls::{exceeds_event_size_limit, SyscallSelector};
     use crate::transaction::objects::TransactionInfo;
+    use crate::transaction::transaction_utils::update_remaining_gas;
 
     impl<'state> sierra_emu::starknet::StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         fn get_block_hash(
@@ -1131,7 +1086,7 @@ pub mod sierra_emu_impl {
                         .map(|x| ResourceBounds {
                             resource: x.resource,
                             max_amount: x.max_amount,
-                            max_price_per_unit: x.max_price_per_unit,
+                            max_price_per_unit: x.max_price_per_unit.try_into().unwrap(),
                         })
                         .collect(),
                     tip: context.tip.0.into(),
@@ -1215,7 +1170,7 @@ pub mod sierra_emu_impl {
             )
             .map_err(|error| encode_str_as_felts(&error.to_string()))?;
 
-            self.update_remaining_gas(remaining_gas, &call_info);
+            update_remaining_gas(remaining_gas, &call_info);
 
             let return_data = call_info.execution.retdata.0[..].to_vec();
             let contract_address_felt = Felt::from(calculated_contract_address);
@@ -1469,7 +1424,8 @@ pub mod sierra_emu_impl {
             // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
             // works.
             let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-            let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+            let gas_cost =
+                n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
             if gas_cost > *remaining_gas {
                 // In VM this error is wrapped into `SyscallExecutionError::SyscallError`

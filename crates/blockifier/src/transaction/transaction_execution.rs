@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
-use starknet_api::core::{calculate_contract_address, ContractAddress};
+use starknet_api::core::{ContractAddress, calculate_contract_address};
 use starknet_api::transaction::{Fee, Transaction as StarknetApiTransaction, TransactionHash};
 
 use crate::bouncer::verify_tx_weights_in_bounds;

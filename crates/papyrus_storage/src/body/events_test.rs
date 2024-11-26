@@ -12,7 +12,7 @@ use starknet_api::transaction::{
     TransactionOffsetInBlock,
 };
 
-use crate::body::events::{get_events_from_tx, EventIndex, EventsReader};
+use crate::body::events::{EventIndex, EventsReader, get_events_from_tx};
 use crate::body::{BodyStorageWriter, TransactionIndex};
 use crate::db::table_types::Table;
 use crate::header::HeaderStorageWriter;
@@ -235,10 +235,10 @@ fn get_events_from_tx_test() {
         ((ca1, EventIndex(tx_index, EventIndexInTransactionOutput(2))), e3.content.clone());
 
     // All events.
-    assert_eq!(
-        get_events_from_tx(events.clone(), tx_index, ca1, 0),
-        vec![e1_output.clone(), e3_output.clone()]
-    );
+    assert_eq!(get_events_from_tx(events.clone(), tx_index, ca1, 0), vec![
+        e1_output.clone(),
+        e3_output.clone()
+    ]);
     assert_eq!(get_events_from_tx(events.clone(), tx_index, ca2, 0), vec![e2_output.clone()]);
 
     // All events of starting from the second event.

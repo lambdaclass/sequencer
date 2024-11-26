@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::future::Future;
 
-use mockito::{mock, Matcher};
+use mockito::{Matcher, mock};
 use papyrus_test_utils::read_json_file;
 use serde::{Deserialize, Serialize};
 

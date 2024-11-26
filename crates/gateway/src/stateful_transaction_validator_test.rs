@@ -8,12 +8,12 @@ use blockifier::test_utils::CairoVersion;
 use blockifier::transaction::errors::{TransactionFeeError, TransactionPreValidationError};
 use mempool_test_utils::invoke_tx_args;
 use mempool_test_utils::starknet_api_test_utils::{
-    deploy_account_tx,
-    external_invoke_tx,
-    invoke_tx,
     TEST_SENDER_ADDRESS,
     VALID_L1_GAS_MAX_AMOUNT,
     VALID_L1_GAS_MAX_PRICE_PER_UNIT,
+    deploy_account_tx,
+    external_invoke_tx,
+    invoke_tx,
 };
 use mockall::predicate::eq;
 use num_bigint::BigUint;

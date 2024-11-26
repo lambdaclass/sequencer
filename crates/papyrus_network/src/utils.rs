@@ -6,8 +6,8 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
 use futures::stream::{Stream, StreamExt};
-use libp2p::core::multiaddr::Protocol;
 use libp2p::Multiaddr;
+use libp2p::core::multiaddr::Protocol;
 
 // This is an implementation of `StreamMap` from tokio_stream. The reason we're implementing it
 // ourselves is that the implementation in tokio_stream requires that the values implement the

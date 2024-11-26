@@ -3,11 +3,11 @@ use cairo_vm::vm::vm_core::VirtualMachine;
 use serde::Deserialize;
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use starknet_api::core::{
-    calculate_contract_address,
     ClassHash,
     ContractAddress,
     EntryPointSelector,
     EthAddress,
+    calculate_contract_address,
 };
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::state::StorageKey;
@@ -23,25 +23,25 @@ use starknet_types_core::felt::Felt;
 use strum_macros::EnumIter;
 
 use self::hint_processor::{
+    DeprecatedSyscallExecutionError,
+    DeprecatedSyscallHintProcessor,
     execute_inner_call,
     execute_library_call,
     felt_to_bool,
     read_call_params,
     read_calldata,
     read_felt_array,
-    DeprecatedSyscallExecutionError,
-    DeprecatedSyscallHintProcessor,
 };
 use super::syscalls::exceeds_event_size_limit;
 use crate::execution::call_info::{MessageToL1, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::common_hints::ExecutionMode;
 use crate::execution::entry_point::{CallEntryPoint, CallType, ConstructorContext};
 use crate::execution::execution_utils::{
+    ReadOnlySegment,
     execute_deployment,
     felt_from_ptr,
     write_felt,
     write_maybe_relocatable,
-    ReadOnlySegment,
 };
 
 #[cfg(test)]

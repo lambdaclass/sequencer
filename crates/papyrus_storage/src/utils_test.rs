@@ -16,7 +16,7 @@ use super::update_storage_metrics;
 use crate::class::ClassStorageWriter;
 use crate::state::StateStorageWriter;
 use crate::test_utils::get_test_storage;
-use crate::utils::{dump_declared_classes_table_by_block_range_internal, DumpDeclaredClass};
+use crate::utils::{DumpDeclaredClass, dump_declared_classes_table_by_block_range_internal};
 
 // TODO(yael): fix dump_table_to_file.
 #[test]
@@ -28,14 +28,11 @@ fn test_dump_declared_classes() {
     let ((reader, mut writer), _temp_dir) = get_test_storage();
     for i in 0..5 {
         let i_felt = Felt::from(i as u128);
-        declared_classes.push((
-            ClassHash(i_felt),
-            ContractClass {
-                sierra_program: vec![i_felt, i_felt],
-                entry_points_by_type: HashMap::new(),
-                abi: "".to_string(),
-            },
-        ));
+        declared_classes.push((ClassHash(i_felt), ContractClass {
+            sierra_program: vec![i_felt, i_felt],
+            entry_points_by_type: HashMap::new(),
+            abi: "".to_string(),
+        }));
         state_diffs.push(ThinStateDiff {
             deployed_contracts: indexmap!(),
             storage_diffs: indexmap!(),

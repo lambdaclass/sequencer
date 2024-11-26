@@ -12,7 +12,7 @@
 //! use std::path::Path;
 //!
 //! use clap::Command;
-//! use papyrus_config::dumping::{ser_param, SerializeConfig};
+//! use papyrus_config::dumping::{SerializeConfig, ser_param};
 //! use papyrus_config::loading::load_and_process_config;
 //! use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 //! use serde::{Deserialize, Serialize};
@@ -38,12 +38,13 @@
 //! let file_path = dir.path().join("config.json");
 //! ConfigExample { key: 42 }.dump_to_file(&vec![], file_path.to_str().unwrap());
 //! let file = File::open(file_path).unwrap();
-//! let loaded_config = load_and_process_config::<ConfigExample>(
-//!     file,
-//!     Command::new("Program"),
-//!     vec!["Program".to_owned(), "--key".to_owned(), "770".to_owned()],
-//! )
-//! .unwrap();
+//! let loaded_config =
+//!     load_and_process_config::<ConfigExample>(file, Command::new("Program"), vec![
+//!         "Program".to_owned(),
+//!         "--key".to_owned(),
+//!         "770".to_owned(),
+//!     ])
+//!     .unwrap();
 //! assert_eq!(loaded_config.key, 770);
 //! ```
 

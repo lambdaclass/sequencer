@@ -16,7 +16,7 @@ use starknet_mempool_types::communication::{
     MempoolRequestAndResponseSender,
     SharedMempoolClient,
 };
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::config::MempoolNodeConfig;
 

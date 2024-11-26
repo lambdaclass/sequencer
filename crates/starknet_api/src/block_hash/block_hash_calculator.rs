@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::Poseidon;
 
-use super::event_commitment::{calculate_event_commitment, EventLeafElement};
-use super::receipt_commitment::{calculate_receipt_commitment, ReceiptElement};
+use super::event_commitment::{EventLeafElement, calculate_event_commitment};
+use super::receipt_commitment::{ReceiptElement, calculate_receipt_commitment};
 use super::state_diff_hash::calculate_state_diff_hash;
-use super::transaction_commitment::{calculate_transaction_commitment, TransactionLeafElement};
+use super::transaction_commitment::{TransactionLeafElement, calculate_transaction_commitment};
 use crate::block::{BlockHash, BlockHeaderWithoutHash};
 use crate::core::{EventCommitment, ReceiptCommitment, StateDiffCommitment, TransactionCommitment};
 use crate::crypto::utils::HashChain;

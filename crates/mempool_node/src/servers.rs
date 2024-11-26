@@ -2,13 +2,13 @@ use std::future::pending;
 use std::pin::Pin;
 
 use futures::{Future, FutureExt};
-use starknet_batcher::communication::{create_local_batcher_server, LocalBatcherServer};
+use starknet_batcher::communication::{LocalBatcherServer, create_local_batcher_server};
 use starknet_consensus_manager::communication::{
-    create_local_consensus_manager_server,
     LocalConsensusManagerServer,
+    create_local_consensus_manager_server,
 };
-use starknet_gateway::communication::{create_gateway_server, GatewayServer};
-use starknet_mempool::communication::{create_mempool_server, MempoolServer};
+use starknet_gateway::communication::{GatewayServer, create_gateway_server};
+use starknet_mempool::communication::{MempoolServer, create_mempool_server};
 use starknet_mempool_infra::component_server::ComponentServerStarter;
 use tracing::error;
 

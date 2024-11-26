@@ -11,8 +11,8 @@ use blockifier::transaction::transaction_execution::Transaction;
 use blockifier::transaction::transaction_types::TransactionType;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use starknet_api::transaction::{Resource, ResourceBounds};
 use starknet_api::StarknetApiError;
+use starknet_api::transaction::{Resource, ResourceBounds};
 
 use crate::errors::{NativeBlockifierInputError, NativeBlockifierResult};
 use crate::py_declare::py_declare;

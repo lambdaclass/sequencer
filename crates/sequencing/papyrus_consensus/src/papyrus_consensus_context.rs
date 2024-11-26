@@ -6,9 +6,9 @@ use core::panic;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures::channel::{mpsc, oneshot};
 use futures::sink::SinkExt;
-use futures::StreamExt;
 use papyrus_network::network_manager::BroadcastTopicSender;
 use papyrus_protobuf::consensus::{ConsensusMessage, Proposal, Vote};
 use papyrus_storage::body::BodyStorageReader;
@@ -17,8 +17,9 @@ use papyrus_storage::{StorageError, StorageReader};
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::core::ContractAddress;
 use starknet_api::transaction::Transaction;
-use tracing::{debug, debug_span, info, warn, Instrument};
+use tracing::{Instrument, debug, debug_span, info, warn};
 
+use crate::ProposalWrapper;
 use crate::types::{
     ConsensusBlock,
     ConsensusContext,
@@ -27,7 +28,6 @@ use crate::types::{
     Round,
     ValidatorId,
 };
-use crate::ProposalWrapper;
 
 // TODO: add debug messages and span to the tasks.
 

@@ -7,12 +7,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
 
+use crate::StarknetApiError;
 use crate::core::{
-    calculate_contract_address,
     ClassHash,
     CompiledClassHash,
     ContractAddress,
     Nonce,
+    calculate_contract_address,
 };
 use crate::data_availability::DataAvailabilityMode;
 use crate::state::EntryPoint;
@@ -26,7 +27,6 @@ use crate::transaction::{
     Tip,
     TransactionSignature,
 };
-use crate::StarknetApiError;
 
 /// Transactions that are ready to be broadcasted to the network through RPC and are not included in
 /// a block.

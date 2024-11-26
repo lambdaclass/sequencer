@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
-use indexmap::{indexmap, IndexMap};
+use indexmap::{IndexMap, indexmap};
 use papyrus_test_utils::get_test_state_diff;
 use pretty_assertions::assert_eq;
 use starknet_api::block::BlockNumber;
@@ -11,11 +11,11 @@ use starknet_api::state::{ContractClass, StateNumber, StorageKey, ThinStateDiff}
 use starknet_api::{felt, patricia_key};
 use starknet_types_core::felt::Felt;
 
+use crate::StorageWriter;
 use crate::class::{ClassStorageReader, ClassStorageWriter};
 use crate::compiled_class::{CasmStorageReader, CasmStorageWriter};
 use crate::state::{StateStorageReader, StateStorageWriter};
 use crate::test_utils::get_test_storage;
-use crate::StorageWriter;
 
 #[test]
 fn get_class_definition_at() {
@@ -44,11 +44,10 @@ fn get_class_definition_at() {
     txn = txn.append_state_diff(BlockNumber(0), diff0).unwrap();
     txn = txn.append_state_diff(BlockNumber(1), diff1).unwrap();
     txn = txn
-        .append_classes(
-            BlockNumber(0),
-            &[(nc0, &new_class)],
-            &[(dc0, &dep_class), (dc1, &dep_class)],
-        )
+        .append_classes(BlockNumber(0), &[(nc0, &new_class)], &[
+            (dc0, &dep_class),
+            (dc1, &dep_class),
+        ])
         .unwrap();
     txn = txn.append_classes(BlockNumber(1), &[(nc1, &new_class)], &[(dc0, &dep_class)]).unwrap();
     txn.commit().unwrap();
@@ -272,14 +271,11 @@ fn test_get_class_after_append_thin_state_diff() {
     let mut txn = writer.begin_rw_txn().unwrap();
     // Append an empty state diff.
     txn = txn
-        .append_state_diff(
-            BlockNumber(0),
-            ThinStateDiff {
-                declared_classes: indexmap! { CLASS_HASH => CompiledClassHash::default() },
-                deprecated_declared_classes: vec![DEPRECATED_CLASS_HASH],
-                ..Default::default()
-            },
-        )
+        .append_state_diff(BlockNumber(0), ThinStateDiff {
+            declared_classes: indexmap! { CLASS_HASH => CompiledClassHash::default() },
+            deprecated_declared_classes: vec![DEPRECATED_CLASS_HASH],
+            ..Default::default()
+        })
         .unwrap();
     assert_eq!(txn.get_class_marker().unwrap(), BlockNumber(0));
 
@@ -486,11 +482,10 @@ fn revert_state() {
                 .collect::<Vec<_>>(),
         )
         .unwrap()
-        .append_classes(
-            BlockNumber(1),
-            &[(class2, &ContractClass::default())],
-            &[(class1, &DeprecatedContractClass::default())],
-        )
+        .append_classes(BlockNumber(1), &[(class2, &ContractClass::default())], &[(
+            class1,
+            &DeprecatedContractClass::default(),
+        )])
         .unwrap()
         .append_casm(&class2, &compiled_class2)
         .unwrap()
@@ -710,11 +705,10 @@ fn declare_revert_declare_scenario() {
         .unwrap()
         .append_state_diff(BlockNumber(0), diff0.clone())
         .unwrap()
-        .append_classes(
-            BlockNumber(0),
-            &[(class_hash, &class)],
-            &[(deprecated_class_hash, &deprecated_class)],
-        )
+        .append_classes(BlockNumber(0), &[(class_hash, &class)], &[(
+            deprecated_class_hash,
+            &deprecated_class,
+        )])
         .unwrap()
         .commit()
         .unwrap();
@@ -750,11 +744,10 @@ fn declare_revert_declare_scenario() {
         .unwrap()
         .append_state_diff(BlockNumber(0), diff0.clone())
         .unwrap()
-        .append_classes(
-            BlockNumber(0),
-            &[(class_hash, &class)],
-            &[(deprecated_class_hash, &deprecated_class)],
-        )
+        .append_classes(BlockNumber(0), &[(class_hash, &class)], &[(
+            deprecated_class_hash,
+            &deprecated_class,
+        )])
         .unwrap()
         .commit()
         .unwrap();

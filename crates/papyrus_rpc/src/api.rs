@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use jsonrpsee::{Methods, RpcModule};
-use papyrus_common::pending_classes::PendingClasses;
 use papyrus_common::BlockHashAndNumber;
+use papyrus_common::pending_classes::PendingClasses;
 use papyrus_execution::ExecutionConfig;
 use papyrus_storage::StorageReader;
 use serde::{Deserialize, Serialize};

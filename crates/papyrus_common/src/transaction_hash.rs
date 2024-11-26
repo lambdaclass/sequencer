@@ -3,8 +3,9 @@
 mod transaction_hash_test;
 
 use lazy_static::lazy_static;
+use starknet_api::StarknetApiError;
 use starknet_api::block::BlockNumber;
-use starknet_api::core::{calculate_contract_address, ChainId, ContractAddress};
+use starknet_api::core::{ChainId, ContractAddress, calculate_contract_address};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::hash::StarkHash;
 use starknet_api::transaction::{
@@ -29,7 +30,6 @@ use starknet_api::transaction::{
     TransactionHash,
     TransactionVersion,
 };
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::{Pedersen, Poseidon, StarkHash as CoreStarkHash};
 

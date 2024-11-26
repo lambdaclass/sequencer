@@ -3,8 +3,8 @@ use std::env;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
-use papyrus_common::transaction_hash::get_transaction_hash;
 use papyrus_common::TransactionOptions;
+use papyrus_common::transaction_hash::get_transaction_hash;
 use papyrus_rpc::{
     AddInvokeOkResultRPC0_6,
     InvokeTransactionRPC0_6,

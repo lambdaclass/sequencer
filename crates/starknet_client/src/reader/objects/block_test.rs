@@ -9,6 +9,7 @@ use starknet_api::transaction::{TransactionHash, TransactionOffsetInBlock};
 use starknet_api::{felt, patricia_key};
 
 use super::{Block, GlobalRoot, TransactionReceiptsError};
+use crate::reader::ReaderClientError;
 use crate::reader::objects::block::BlockPostV0_13_1;
 use crate::reader::objects::state::{
     DeclaredClassHashEntry,
@@ -19,7 +20,6 @@ use crate::reader::objects::state::{
     StorageEntry,
 };
 use crate::reader::objects::transaction::TransactionReceipt;
-use crate::reader::ReaderClientError;
 use crate::test_utils::read_resource::read_resource_file;
 
 #[test]

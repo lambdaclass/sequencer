@@ -17,6 +17,7 @@ use validator::Validate;
 use crate::command::{get_command_matches, update_config_map_by_command_args};
 use crate::converters::deserialize_milliseconds_to_duration;
 use crate::dumping::{
+    SerializeConfig,
     append_sub_config_name,
     combine_config_map_and_pointers,
     ser_generated_param,
@@ -25,7 +26,6 @@ use crate::dumping::{
     ser_param,
     ser_pointer_target_param,
     ser_required_param,
-    SerializeConfig,
 };
 use crate::loading::{
     load,
@@ -254,10 +254,11 @@ fn test_pointers_flow() {
         ser_param("a1", &json!(5), "This is a.", ParamPrivacyInput::Public),
         ser_param("a2", &json!(5), "This is a.", ParamPrivacyInput::Private),
     ]);
-    let pointers = vec![(
-        ser_pointer_target_param("common_a", &json!(10), "This is common a"),
-        vec!["a1".to_owned(), "a2".to_owned()],
-    )];
+    let pointers =
+        vec![(ser_pointer_target_param("common_a", &json!(10), "This is common a"), vec![
+            "a1".to_owned(),
+            "a2".to_owned(),
+        ])];
     let stored_map = combine_config_map_and_pointers(config_map, &pointers).unwrap();
     assert_eq!(
         stored_map["a1"],
@@ -543,10 +544,10 @@ fn deeply_nested_optionals() {
         vec!["Testing".to_owned(), "--level1.#is_none".to_owned(), "false".to_owned()],
     )
     .unwrap();
-    assert_eq!(
-        l1,
-        Level0 { level0_value: 1, level1: Some(Level1 { level1_value: 0, level2: None }) }
-    );
+    assert_eq!(l1, Level0 {
+        level0_value: 1,
+        level1: Some(Level1 { level1_value: 0, level2: None })
+    });
 
     let l2 = load_and_process_config::<Level0>(
         File::open(file_path.clone()).unwrap(),
@@ -560,13 +561,10 @@ fn deeply_nested_optionals() {
         ],
     )
     .unwrap();
-    assert_eq!(
-        l2,
-        Level0 {
-            level0_value: 1,
-            level1: Some(Level1 { level1_value: 0, level2: Some(Level2 { level2_value: None }) }),
-        }
-    );
+    assert_eq!(l2, Level0 {
+        level0_value: 1,
+        level1: Some(Level1 { level1_value: 0, level2: Some(Level2 { level2_value: None }) }),
+    });
 
     let l2_value = load_and_process_config::<Level0>(
         File::open(file_path).unwrap(),
@@ -582,14 +580,8 @@ fn deeply_nested_optionals() {
         ],
     )
     .unwrap();
-    assert_eq!(
-        l2_value,
-        Level0 {
-            level0_value: 1,
-            level1: Some(Level1 {
-                level1_value: 0,
-                level2: Some(Level2 { level2_value: Some(1) }),
-            }),
-        }
-    );
+    assert_eq!(l2_value, Level0 {
+        level0_value: 1,
+        level1: Some(Level1 { level1_value: 0, level2: Some(Level2 { level2_value: Some(1) }) }),
+    });
 }

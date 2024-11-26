@@ -13,7 +13,7 @@ use crate::execution::errors::EntryPointExecutionError;
 use crate::execution::syscalls::hint_processor::EmitEventError;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{trivial_external_entry_point_new, CairoVersion, BALANCE};
+use crate::test_utils::{BALANCE, CairoVersion, trivial_external_entry_point_new};
 use crate::versioned_constants::VersionedConstants;
 
 const KEYS: [Felt; 2] = [Felt::from_hex_unchecked("0x2019"), Felt::from_hex_unchecked("0x2020")];
@@ -35,14 +35,11 @@ fn positive_flow(test_contract: FeatureContract, expected_gas: u64) {
         data: EventData(DATA.to_vec()),
     };
 
-    assert_eq!(
-        call_info.execution,
-        CallExecution {
-            events: vec![OrderedEvent { order: 0, event }],
-            gas_consumed: expected_gas,
-            ..Default::default()
-        }
-    );
+    assert_eq!(call_info.execution, CallExecution {
+        events: vec![OrderedEvent { order: 0, event }],
+        gas_consumed: expected_gas,
+        ..Default::default()
+    });
 }
 
 #[test_case(FeatureContract::TestContract(CairoVersion::Native); "Native")]

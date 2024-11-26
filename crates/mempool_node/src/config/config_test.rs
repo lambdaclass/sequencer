@@ -17,9 +17,9 @@ use validator::{Validate, ValidationErrors};
 use crate::config::{
     ComponentConfig,
     ComponentExecutionConfig,
+    DEFAULT_CONFIG_PATH,
     LocationType,
     MempoolNodeConfig,
-    DEFAULT_CONFIG_PATH,
 };
 
 fn check_validation_error(

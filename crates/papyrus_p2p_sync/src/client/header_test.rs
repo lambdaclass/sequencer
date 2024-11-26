@@ -12,13 +12,13 @@ use starknet_api::block::{BlockHeader, BlockNumber};
 use tokio::time::timeout;
 
 use super::test_utils::{
-    create_block_hashes_and_signatures,
-    setup,
-    TestArgs,
     HEADER_QUERY_LENGTH,
     SLEEP_DURATION_TO_LET_SYNC_ADVANCE,
     TIMEOUT_FOR_NEW_QUERY_AFTER_PARTIAL_RESPONSE,
+    TestArgs,
     WAIT_PERIOD_FOR_NEW_DATA,
+    create_block_hashes_and_signatures,
+    setup,
 };
 
 #[tokio::test]

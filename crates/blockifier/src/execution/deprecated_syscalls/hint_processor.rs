@@ -17,11 +17,11 @@ use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ExecutionResources, ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
 use num_bigint::{BigUint, TryFromBigIntError};
+use starknet_api::StarknetApiError;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::deprecated_contract_class::EntryPointType;
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::Calldata;
-use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
@@ -29,11 +29,17 @@ use crate::blockifier::block::BlockInfo;
 use crate::context::TransactionContext;
 use crate::execution::call_info::{CallInfo, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::common_hints::{
-    extended_builtin_hint_processor,
     ExecutionMode,
     HintExecutionResult,
+    extended_builtin_hint_processor,
 };
 use crate::execution::deprecated_syscalls::{
+    DeprecatedSyscallResult,
+    DeprecatedSyscallSelector,
+    StorageReadResponse,
+    StorageWriteResponse,
+    SyscallRequest,
+    SyscallResponse,
     call_contract,
     delegate_call,
     delegate_l1_handler,
@@ -52,21 +58,15 @@ use crate::execution::deprecated_syscalls::{
     send_message_to_l1,
     storage_read,
     storage_write,
-    DeprecatedSyscallResult,
-    DeprecatedSyscallSelector,
-    StorageReadResponse,
-    StorageWriteResponse,
-    SyscallRequest,
-    SyscallResponse,
 };
 use crate::execution::entry_point::{CallEntryPoint, CallType, EntryPointExecutionContext};
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
+    ReadOnlySegment,
+    ReadOnlySegments,
     felt_from_ptr,
     felt_range_from_ptr,
     max_fee_for_execution_info,
-    ReadOnlySegment,
-    ReadOnlySegments,
 };
 use crate::execution::hint_code;
 use crate::execution::syscalls::hint_processor::EmitEventError;

@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use jsonschema::JSONSchema;
 use lazy_static::lazy_static;
 use papyrus_test_utils::{
+    GetTestInstance,
     auto_impl_get_test_instance,
     get_number_of_variants,
     get_rng,
-    GetTestInstance,
 };
 use starknet_api::core::{CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
@@ -39,7 +39,7 @@ use super::{
     DeclareType,
     ResourceBoundsMapping,
 };
-use crate::test_utils::{get_starknet_spec_api_schema_for_components, SpecFile};
+use crate::test_utils::{SpecFile, get_starknet_spec_api_schema_for_components};
 use crate::version_config::VERSION_0_6 as Version;
 
 fn validate_tx_fits_rpc(tx: BroadcastedDeclareTransaction) {
@@ -139,18 +139,15 @@ fn declare_v1_fits_rpc() {
             contract_class: DeprecatedContractClass {
                 abi,
                 entry_points_by_type: HashMap::from([
-                    (
-                        DeprecatedEntryPointType::Constructor,
-                        vec![DeprecatedEntryPoint::get_test_instance(&mut rng)],
-                    ),
-                    (
-                        DeprecatedEntryPointType::External,
-                        vec![DeprecatedEntryPoint::get_test_instance(&mut rng)],
-                    ),
-                    (
-                        DeprecatedEntryPointType::L1Handler,
-                        vec![DeprecatedEntryPoint::get_test_instance(&mut rng)],
-                    ),
+                    (DeprecatedEntryPointType::Constructor, vec![
+                        DeprecatedEntryPoint::get_test_instance(&mut rng),
+                    ]),
+                    (DeprecatedEntryPointType::External, vec![
+                        DeprecatedEntryPoint::get_test_instance(&mut rng),
+                    ]),
+                    (DeprecatedEntryPointType::L1Handler, vec![
+                        DeprecatedEntryPoint::get_test_instance(&mut rng),
+                    ]),
                 ]),
                 ..GetTestInstance::get_test_instance(&mut rng)
             },

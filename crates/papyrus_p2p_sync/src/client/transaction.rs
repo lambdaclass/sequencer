@@ -9,7 +9,7 @@ use starknet_api::block::{BlockBody, BlockNumber};
 use starknet_api::transaction::FullTransaction;
 
 use super::stream_builder::{BlockData, BlockNumberLimit, DataStreamBuilder};
-use super::{P2PSyncClientError, NETWORK_DATA_TIMEOUT};
+use super::{NETWORK_DATA_TIMEOUT, P2PSyncClientError};
 
 impl BlockData for (BlockBody, BlockNumber) {
     fn write_to_storage(

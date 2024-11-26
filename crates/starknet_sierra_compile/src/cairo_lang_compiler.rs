@@ -4,9 +4,9 @@ use cairo_lang_starknet_classes::allowed_libfuncs::ListSelector;
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use cairo_lang_starknet_classes::contract_class::ContractClass;
 
+use crate::SierraToCasmCompiler;
 use crate::config::SierraToCasmCompilationConfig;
 use crate::errors::CompilationUtilError;
-use crate::SierraToCasmCompiler;
 
 /// A compiler that compiles Sierra programs to Casm. Uses the code from the
 /// `cairo_lang_starknet_classes` crate.

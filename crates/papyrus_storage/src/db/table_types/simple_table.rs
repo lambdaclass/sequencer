@@ -19,10 +19,10 @@ use crate::db::{
     DbValueType,
     DbWriter,
     KeyAlreadyExistsError,
+    RW,
     TableHandle,
     TableIdentifier,
     TransactionKind,
-    RW,
 };
 
 // A simple mapping between key and value.

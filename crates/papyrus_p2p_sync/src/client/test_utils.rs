@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use lazy_static::lazy_static;
-use papyrus_network::network_manager::test_utils::{
-    mock_register_sqmr_protocol_client,
-    MockClientResponsesManager,
-};
 use papyrus_network::network_manager::GenericReceiver;
+use papyrus_network::network_manager::test_utils::{
+    MockClientResponsesManager,
+    mock_register_sqmr_protocol_client,
+};
 use papyrus_protobuf::sync::{
     DataOrFin,
     HeaderQuery,
@@ -14,8 +14,8 @@ use papyrus_protobuf::sync::{
     StateDiffQuery,
     TransactionQuery,
 };
-use papyrus_storage::test_utils::get_test_storage;
 use papyrus_storage::StorageReader;
+use papyrus_storage::test_utils::get_test_storage;
 use starknet_api::block::{BlockHash, BlockSignature};
 use starknet_api::crypto::utils::Signature;
 use starknet_api::hash::StarkHash;

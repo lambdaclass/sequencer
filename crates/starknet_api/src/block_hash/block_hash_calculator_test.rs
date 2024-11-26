@@ -11,10 +11,10 @@ use crate::block::{
     StarknetVersion,
 };
 use crate::block_hash::block_hash_calculator::{
-    calculate_block_commitments,
-    calculate_block_hash,
     BlockHeaderCommitments,
     TransactionHashingData,
+    calculate_block_commitments,
+    calculate_block_hash,
 };
 use crate::block_hash::test_utils::{get_state_diff, get_transaction_output};
 use crate::core::{

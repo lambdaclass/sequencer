@@ -23,8 +23,8 @@ use starknet_api::core::{
 use starknet_api::crypto::utils::Signature;
 use starknet_api::hash::PoseidonHash;
 
-use super::common::{enum_int_to_l1_data_availability_mode, l1_data_availability_mode_to_enum_int};
 use super::ProtobufConversionError;
+use super::common::{enum_int_to_l1_data_availability_mode, l1_data_availability_mode_to_enum_int};
 use crate::sync::{DataOrFin, HeaderQuery, Query, SignedBlockHeader};
 use crate::{auto_impl_into_and_try_from_vec_u8, protobuf};
 

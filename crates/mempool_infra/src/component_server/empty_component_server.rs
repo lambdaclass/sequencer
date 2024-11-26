@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::definitions::{start_component, ComponentServerStarter};
+use super::definitions::{ComponentServerStarter, start_component};
 use crate::component_runner::ComponentStarter;
 
 pub struct EmptyServer<T: ComponentStarter + Send + Sync> {

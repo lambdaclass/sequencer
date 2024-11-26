@@ -24,9 +24,9 @@ use rstest::rstest;
 use serde::Serialize;
 use starknet_mempool_infra::component_client::{ClientError, ClientResult, RemoteComponentClient};
 use starknet_mempool_infra::component_definitions::{
+    APPLICATION_OCTET_STREAM,
     ComponentRequestHandler,
     ServerError,
-    APPLICATION_OCTET_STREAM,
 };
 use starknet_mempool_infra::component_server::{ComponentServerStarter, RemoteComponentServer};
 use tokio::sync::Mutex;
@@ -35,7 +35,7 @@ use tokio::task;
 type ComponentAClient = RemoteComponentClient<ComponentARequest, ComponentAResponse>;
 type ComponentBClient = RemoteComponentClient<ComponentBRequest, ComponentBResponse>;
 
-use crate::common::{test_a_b_functionality, ComponentA, ComponentB, ValueB};
+use crate::common::{ComponentA, ComponentB, ValueB, test_a_b_functionality};
 
 const LOCAL_IP: IpAddr = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
 const MAX_RETRIES: usize = 0;

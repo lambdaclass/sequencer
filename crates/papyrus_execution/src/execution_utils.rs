@@ -16,7 +16,7 @@ use cairo_vm::types::errors::program_errors::ProgramError;
 use indexmap::IndexMap;
 use papyrus_common::state::{DeployedContract, ReplacedClass, StorageEntry};
 use papyrus_storage::compiled_class::CasmStorageReader;
-use papyrus_storage::db::{TransactionKind, RO};
+use papyrus_storage::db::{RO, TransactionKind};
 use papyrus_storage::state::StateStorageReader;
 use papyrus_storage::{StorageError, StorageResult, StorageTxn};
 use starknet_api::core::{ClassHash, ContractAddress, Nonce};

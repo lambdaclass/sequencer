@@ -8,9 +8,6 @@ use reqwest::{Client, Url};
 use serde_json::Value as jsonVal;
 
 use crate::{
-    get_last_block_number,
-    get_random_block_number,
-    path_in_resources,
     GET_BLOCK_TRANSACTION_COUNT_BY_HASH_WEIGHT,
     GET_BLOCK_TRANSACTION_COUNT_BY_NUMBER_WEIGHT,
     GET_BLOCK_WITH_FULL_TRANSACTIONS_BY_HASH_WEIGHT,
@@ -23,8 +20,8 @@ use crate::{
     GET_CLASS_BY_NUMBER_WEIGHT,
     GET_CLASS_HASH_AT_BY_HASH_WEIGHT,
     GET_CLASS_HASH_AT_BY_NUMBER_WEIGHT,
-    GET_EVENTS_WITHOUT_ADDRESS_WEIGHT,
     GET_EVENTS_WITH_ADDRESS_WEIGHT,
+    GET_EVENTS_WITHOUT_ADDRESS_WEIGHT,
     GET_NONCE_BY_HASH_WEIGHT,
     GET_NONCE_BY_NUMBER_WEIGHT,
     GET_STATE_UPDATE_BY_HASH_WEIGHT,
@@ -35,6 +32,9 @@ use crate::{
     GET_TRANSACTION_BY_BLOCK_ID_AND_INDEX_BY_NUMBER_WEIGHT,
     GET_TRANSACTION_BY_HASH_WEIGHT,
     GET_TRANSACTION_RECEIPT_WEIGHT,
+    get_last_block_number,
+    get_random_block_number,
+    path_in_resources,
 };
 
 // The limit on the storage size for request arguments.

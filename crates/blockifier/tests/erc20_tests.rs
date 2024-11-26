@@ -57,33 +57,34 @@ mod transfer_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![total_supply, Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            total_supply,
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "transfer",
-                vec![address_to.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("transfer", vec![
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(balance_after_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (balance_after_transfer),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![(balance_to_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            (balance_to_transfer),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -96,35 +97,36 @@ mod transfer_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
             &context
-                .call_entry_point_raw(
-                    "transfer",
-                    vec![address_to.into(), balance_to_transfer, Felt::from(0u128)],
-                )
+                .call_entry_point_raw("transfer", vec![
+                    address_to.into(),
+                    balance_to_transfer,
+                    Felt::from(0u128)
+                ],)
                 .unwrap_err(),
             U256_SUB_OVERFLOW,
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -138,33 +140,34 @@ mod transfer_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "transfer",
-                vec![address_to.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("transfer", vec![
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(balance_after_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (balance_after_transfer),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![(balance_to_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            (balance_to_transfer),
+            Felt::from(0u128)
+        ]);
 
         let event = context.get_event(0).unwrap();
         let event = (event.keys[1], event.keys[2], event.data[0]);
@@ -192,10 +195,11 @@ mod allowance_tests {
         );
 
         assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_to.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -220,10 +224,11 @@ mod allowance_tests {
         );
 
         assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_to.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -255,48 +260,46 @@ mod transfer_from_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_spender.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_spender.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
         let mut context = context.with_caller(address_spender.into());
 
         assert_eq!(
-            context.call_entry_point(
-                "transfer_from",
-                vec![
-                    address_from.into(),
-                    address_to.into(),
-                    balance_to_transfer,
-                    Felt::from(0u128)
-                ],
-            ),
+            context.call_entry_point("transfer_from", vec![
+                address_from.into(),
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(balance_after_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (balance_after_transfer),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![(balance_to_transfer), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            (balance_to_transfer),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -310,21 +313,22 @@ mod transfer_from_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_spender.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_spender.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -332,28 +336,25 @@ mod transfer_from_tests {
 
         assert_eq!(
             &context
-                .call_entry_point_raw(
-                    "transfer_from",
-                    vec![
-                        address_from.into(),
-                        address_to.into(),
-                        (Felt::from(BALANCE_TO_TRANSFER + 1)),
-                        Felt::from(0u128)
-                    ],
-                )
+                .call_entry_point_raw("transfer_from", vec![
+                    address_from.into(),
+                    address_to.into(),
+                    (Felt::from(BALANCE_TO_TRANSFER + 1)),
+                    Felt::from(0u128)
+                ],)
                 .unwrap_err(),
             U256_SUB_OVERFLOW,
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -367,21 +368,22 @@ mod transfer_from_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_spender.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_spender.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -389,28 +391,25 @@ mod transfer_from_tests {
 
         assert_eq!(
             &context
-                .call_entry_point_raw(
-                    "transfer_from",
-                    vec![
-                        address_from.into(),
-                        address_to.into(),
-                        balance_to_transfer,
-                        Felt::from(0u128)
-                    ],
-                )
+                .call_entry_point_raw("transfer_from", vec![
+                    address_from.into(),
+                    address_to.into(),
+                    balance_to_transfer,
+                    Felt::from(0u128)
+                ],)
                 .unwrap_err(),
             U256_SUB_OVERFLOW,
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -424,21 +423,22 @@ mod transfer_from_tests {
 
         let mut context = TestContext::new().with_caller(address_from.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_from.into()]),
-            vec![(total_supply), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_from.into()]), vec![
+            (total_supply),
+            Felt::from(0u128)
+        ]);
+
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
-
-        assert_eq!(
-            context.call_entry_point(
-                "approve",
-                vec![address_spender.into(), balance_to_transfer, Felt::from(0u128)],
-            ),
+            context.call_entry_point("approve", vec![
+                address_spender.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -451,15 +451,12 @@ mod transfer_from_tests {
         let mut context = context.with_caller(address_spender.into());
 
         assert_eq!(
-            context.call_entry_point(
-                "transfer_from",
-                vec![
-                    address_from.into(),
-                    address_to.into(),
-                    balance_to_transfer,
-                    Felt::from(0u128)
-                ],
-            ),
+            context.call_entry_point("transfer_from", vec![
+                address_from.into(),
+                address_to.into(),
+                balance_to_transfer,
+                Felt::from(0u128)
+            ],),
             vec![Felt::from(true)]
         );
 
@@ -480,10 +477,11 @@ mod metadata_tests {
         let mut context = TestContext::new();
         let result = context.call_entry_point("name", vec![]);
 
-        assert_eq!(
-            result,
-            vec![Felt::from(0), Felt::from_bytes_be_slice(NAME.as_bytes()), Felt::from(NAME.len())]
-        );
+        assert_eq!(result, vec![
+            Felt::from(0),
+            Felt::from_bytes_be_slice(NAME.as_bytes()),
+            Felt::from(NAME.len())
+        ]);
     }
 
     #[test]
@@ -491,14 +489,11 @@ mod metadata_tests {
         let mut context = TestContext::new();
         let result = context.call_entry_point("symbol", vec![]);
 
-        assert_eq!(
-            result,
-            vec![
-                Felt::from(0),
-                Felt::from_bytes_be_slice(SYMBOL.as_bytes()),
-                Felt::from(SYMBOL.len())
-            ]
-        );
+        assert_eq!(result, vec![
+            Felt::from(0),
+            Felt::from_bytes_be_slice(SYMBOL.as_bytes()),
+            Felt::from(SYMBOL.len())
+        ]);
     }
 
     #[test]
@@ -520,32 +515,29 @@ pub mod mintable_tests {
 
         let mut context = TestContext::new().with_caller(Signers::Alice.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to_mint_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to_mint_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
-            context.call_entry_point(
-                "mint",
-                vec![
-                    address_to_mint_to.into(),
-                    Felt::from(BALANCE_TO_TRANSFER),
-                    Felt::from(0u128),
-                ],
-            ),
+            context.call_entry_point("mint", vec![
+                address_to_mint_to.into(),
+                Felt::from(BALANCE_TO_TRANSFER),
+                Felt::from(0u128),
+            ],),
             vec![]
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to_mint_to.into()]),
-            vec![Felt::from(BALANCE_TO_TRANSFER), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to_mint_to.into()]), vec![
+            Felt::from(BALANCE_TO_TRANSFER),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("total_supply", vec![]),
-            vec![Felt::from(TOTAL_SUPPLY + BALANCE_TO_TRANSFER), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("total_supply", vec![]), vec![
+            Felt::from(TOTAL_SUPPLY + BALANCE_TO_TRANSFER),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -555,34 +547,31 @@ pub mod mintable_tests {
 
         let mut context = TestContext::new().with_caller(address_of_minter.into());
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to_mint_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to_mint_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
         assert_eq!(
             &context
-                .call_entry_point_raw(
-                    "mint",
-                    vec![
-                        address_to_mint_to.into(),
-                        Felt::from(BALANCE_TO_TRANSFER),
-                        Felt::from(0u128)
-                    ]
-                )
+                .call_entry_point_raw("mint", vec![
+                    address_to_mint_to.into(),
+                    Felt::from(BALANCE_TO_TRANSFER),
+                    Felt::from(0u128)
+                ])
                 .unwrap_err(),
             CALLER_IS_NOT_THE_OWNER,
         );
 
-        assert_eq!(
-            context.call_entry_point("balance_of", vec![address_to_mint_to.into()]),
-            vec![Felt::from(0u128), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("balance_of", vec![address_to_mint_to.into()]), vec![
+            Felt::from(0u128),
+            Felt::from(0u128)
+        ]);
 
-        assert_eq!(
-            context.call_entry_point("total_supply", vec![]),
-            vec![Felt::from(TOTAL_SUPPLY), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("total_supply", vec![]), vec![
+            Felt::from(TOTAL_SUPPLY),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -593,14 +582,11 @@ pub mod mintable_tests {
         let mut context = TestContext::new().with_caller(owner.into());
 
         assert_eq!(
-            context.call_entry_point(
-                "mint",
-                vec![
-                    address_to_mint_to.into(),
-                    Felt::from(BALANCE_TO_TRANSFER),
-                    Felt::from(0u128),
-                ],
-            ),
+            context.call_entry_point("mint", vec![
+                address_to_mint_to.into(),
+                Felt::from(BALANCE_TO_TRANSFER),
+                Felt::from(0u128),
+            ],),
             vec![]
         );
 
@@ -647,10 +633,10 @@ pub mod burnable_tests {
             vec![Felt::from(TOTAL_SUPPLY - BALANCE_TO_TRANSFER), Felt::from(0u128)]
         );
 
-        assert_eq!(
-            context.call_entry_point("total_supply", vec![]),
-            vec![Felt::from(TOTAL_SUPPLY - BALANCE_TO_TRANSFER), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("total_supply", vec![]), vec![
+            Felt::from(TOTAL_SUPPLY - BALANCE_TO_TRANSFER),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]
@@ -664,10 +650,10 @@ pub mod burnable_tests {
             U256_SUB_OVERFLOW,
         );
 
-        assert_eq!(
-            context.call_entry_point("total_supply", vec![]),
-            vec![Felt::from(TOTAL_SUPPLY), Felt::from(0u128)]
-        );
+        assert_eq!(context.call_entry_point("total_supply", vec![]), vec![
+            Felt::from(TOTAL_SUPPLY),
+            Felt::from(0u128)
+        ]);
     }
 
     #[test]

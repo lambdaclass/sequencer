@@ -5,7 +5,7 @@ use blockifier::transaction::transactions::{
     DeployAccountTransaction as BlockifierDeployAccountTransaction,
     InvokeTransaction as BlockifierInvokeTransaction,
 };
-use starknet_api::core::{calculate_contract_address, ChainId, ClassHash, ContractAddress};
+use starknet_api::core::{ChainId, ClassHash, ContractAddress, calculate_contract_address};
 use starknet_api::rpc_transaction::{
     RpcDeclareTransaction,
     RpcDeployAccountTransaction,

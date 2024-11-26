@@ -8,7 +8,7 @@ use crate::execution::entry_point::CallEntryPoint;
 use crate::retdata;
 use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{trivial_external_entry_point_new, CairoVersion, BALANCE};
+use crate::test_utils::{BALANCE, CairoVersion, trivial_external_entry_point_new};
 
 #[test_case(FeatureContract::TestContract(CairoVersion::Native), 902520; "Native")]
 #[test_case(FeatureContract::TestContract(CairoVersion::Cairo1), 893890; "VM")]

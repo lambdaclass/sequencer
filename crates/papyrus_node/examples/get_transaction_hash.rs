@@ -5,13 +5,13 @@ use std::sync::Mutex;
 use clap::{Arg, Command};
 use futures::future::join_all;
 use once_cell::sync::OnceCell;
-use papyrus_common::transaction_hash::{
-    get_transaction_hash,
-    MAINNET_TRANSACTION_HASH_WITH_VERSION,
-};
 use papyrus_common::TransactionOptions;
+use papyrus_common::transaction_hash::{
+    MAINNET_TRANSACTION_HASH_WITH_VERSION,
+    get_transaction_hash,
+};
 use reqwest::Client;
-use serde_json::{json, to_writer_pretty, Map, Value};
+use serde_json::{Map, Value, json, to_writer_pretty};
 use starknet_api::core::ChainId;
 use starknet_api::transaction::{self, Transaction};
 use starknet_client::reader::objects::transaction::TransactionType;
@@ -252,11 +252,9 @@ fn create_map_of_transaction(
         transaction_info.insert(
             "only_query_transaction_hash".to_string(),
             json!(
-                get_transaction_hash(
-                    transaction,
-                    &chain_id,
-                    &TransactionOptions { only_query: true }
-                )
+                get_transaction_hash(transaction, &chain_id, &TransactionOptions {
+                    only_query: true
+                })
                 .expect("Couldn't get only query transaction hash")
             ),
         );

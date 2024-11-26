@@ -17,8 +17,8 @@ use starknet_sierra_compile::config::SierraToCasmCompilationConfig;
 
 use crate::compilation::GatewayCompiler;
 use crate::config::{StatefulTransactionValidatorConfig, StatelessTransactionValidatorConfig};
-use crate::gateway::{add_tx, AppState, SharedMempoolClient};
-use crate::state_reader_test_utils::{local_test_state_reader_factory, TestStateReaderFactory};
+use crate::gateway::{AppState, SharedMempoolClient, add_tx};
+use crate::state_reader_test_utils::{TestStateReaderFactory, local_test_state_reader_factory};
 use crate::stateful_transaction_validator::StatefulTransactionValidator;
 use crate::stateless_transaction_validator::StatelessTransactionValidator;
 use crate::utils::rpc_tx_to_account_tx;

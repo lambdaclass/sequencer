@@ -1,9 +1,6 @@
 use starknet_client::starknet_error::{KnownStarknetErrorCode, StarknetError, StarknetErrorCode};
 
 use super::error::{
-    unexpected_error,
-    validation_failure,
-    JsonRpcError,
     CLASS_ALREADY_DECLARED,
     CLASS_HASH_NOT_FOUND,
     COMPILATION_FAILED,
@@ -13,9 +10,12 @@ use super::error::{
     INSUFFICIENT_ACCOUNT_BALANCE,
     INSUFFICIENT_MAX_FEE,
     INVALID_TRANSACTION_NONCE,
+    JsonRpcError,
     NON_ACCOUNT,
     UNSUPPORTED_CONTRACT_CLASS_VERSION,
     UNSUPPORTED_TX_VERSION,
+    unexpected_error,
+    validation_failure,
 };
 
 #[cfg(test)]

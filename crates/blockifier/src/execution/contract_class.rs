@@ -5,13 +5,13 @@ use std::sync::Arc;
 use cairo_lang_casm;
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_sierra::ids::FunctionId;
+use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_starknet_classes::casm_contract_class::{CasmContractClass, CasmContractEntryPoint};
 use cairo_lang_starknet_classes::contract_class::{
     ContractClass as SierraContractClass,
     ContractEntryPoint,
     ContractEntryPoints as SierraContractEntryPoints,
 };
-use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cairo_native::executor::AotContractExecutor;
 use cairo_vm::serde::deserialize_program::{
@@ -636,7 +636,7 @@ pub struct NativeContractClassV1Inner {
     pub program: cairo_lang_sierra::program::Program, // for sierra emu
     // Used for PartialEq
     sierra_program_hash: starknet_api::hash::StarkHash,
-    sierra_raw_program: Vec<BigUintAsHex>
+    sierra_raw_program: Vec<BigUintAsHex>,
 }
 
 impl std::fmt::Debug for NativeContractClassV1Inner {
@@ -678,7 +678,7 @@ impl NativeContractClassV1Inner {
             sierra_program_hash: calculate_sierra_program_hash(
                 sierra_contract_class.sierra_program,
             ),
-            sierra_raw_program: bytecode
+            sierra_raw_program: bytecode,
         })
     }
 }

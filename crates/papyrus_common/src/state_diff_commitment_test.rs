@@ -11,7 +11,7 @@ use starknet_api::hash::PoseidonHash;
 use starknet_api::state::{StateDiff, StorageKey, ThinStateDiff};
 use starknet_api::{class_hash, contract_address, felt, patricia_key};
 
-use crate::state_diff_commitment::{calculate_state_diff_commitment, StateDiffVersion};
+use crate::state_diff_commitment::{StateDiffVersion, calculate_state_diff_commitment};
 
 #[test]
 fn state_diff_commitment() {

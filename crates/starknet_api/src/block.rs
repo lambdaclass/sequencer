@@ -17,7 +17,7 @@ use crate::core::{
     StateDiffCommitment,
     TransactionCommitment,
 };
-use crate::crypto::utils::{verify_message_hash_signature, CryptoError, Signature};
+use crate::crypto::utils::{CryptoError, Signature, verify_message_hash_signature};
 use crate::data_availability::L1DataAvailabilityMode;
 use crate::hash::StarkHash;
 use crate::serde_utils::{BytesAsHex, PrefixedBytesAsHex};

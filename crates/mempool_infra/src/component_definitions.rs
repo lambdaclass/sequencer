@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 
 use async_trait::async_trait;
-use papyrus_config::dumping::{ser_param, SerializeConfig};
+use papyrus_config::dumping::{SerializeConfig, ser_param};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

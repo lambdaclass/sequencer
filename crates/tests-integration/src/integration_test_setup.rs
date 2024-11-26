@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::CairoVersion;
+use blockifier::test_utils::contracts::FeatureContract;
 use starknet_api::executable_transaction::Transaction;
 use starknet_api::rpc_transaction::RpcTransaction;
 use starknet_api::transaction::TransactionHash;
@@ -14,7 +14,7 @@ use starknet_task_executor::tokio_executor::TokioExecutor;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
-use crate::integration_test_utils::{create_config, GatewayClient};
+use crate::integration_test_utils::{GatewayClient, create_config};
 use crate::mock_batcher::MockBatcher;
 use crate::state_reader::spawn_test_rpc_state_reader;
 
