@@ -55,7 +55,7 @@ pub fn run_native_executor(
     let execution_result = native_executor.run(
         selector,
         &call.calldata.0,
-        Some(call.initial_gas),
+        call.initial_gas,
         None,
         &mut syscall_handler,
     );
