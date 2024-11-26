@@ -632,11 +632,12 @@ impl NativeContractClassV1 {
 
 pub struct NativeContractClassV1Inner {
     pub executor: Arc<AotContractExecutor>,
-    entry_points_by_type: NativeContractEntryPoints,
+    pub entry_points_by_type: NativeContractEntryPoints,
+    pub contract: cairo_lang_starknet_classes::contract_class::ContractClass,
     pub program: cairo_lang_sierra::program::Program, // for sierra emu
     // Used for PartialEq
     sierra_program_hash: starknet_api::hash::StarkHash,
-    sierra_raw_program: Vec<BigUintAsHex>
+    sierra_raw_program: Vec<BigUintAsHex>,
 }
 
 impl std::fmt::Debug for NativeContractClassV1Inner {
@@ -674,11 +675,12 @@ impl NativeContractClassV1Inner {
                 &lookup_fid,
                 &sierra_contract_class.entry_points_by_type,
             )?,
+            contract: sierra_contract_class.clone(),
             program: sierra_program.clone(),
             sierra_program_hash: calculate_sierra_program_hash(
                 sierra_contract_class.sierra_program,
             ),
-            sierra_raw_program: bytecode
+            sierra_raw_program: bytecode,
         })
     }
 }
@@ -702,10 +704,10 @@ impl PartialEq for NativeContractClassV1Inner {
 /// Modelled after [SierraContractEntryPoints]
 /// and enriched with information for the Cairo Native ABI.
 /// See Note [Cairo Native ABI]
-struct NativeContractEntryPoints {
-    constructor: Vec<NativeEntryPoint>,
-    external: Vec<NativeEntryPoint>,
-    l1_handler: Vec<NativeEntryPoint>,
+pub struct NativeContractEntryPoints {
+    pub constructor: Vec<NativeEntryPoint>,
+    pub external: Vec<NativeEntryPoint>,
+    pub l1_handler: Vec<NativeEntryPoint>,
 }
 
 impl NativeContractEntryPoints {
@@ -751,11 +753,11 @@ impl Index<EntryPointType> for NativeContractEntryPoints {
 
 #[derive(Debug, PartialEq)]
 /// Provides a relation between a function in a contract and a compiled contract
-struct NativeEntryPoint {
+pub struct NativeEntryPoint {
     /// The selector is the key to find the function in the contract
-    selector: EntryPointSelector,
+    pub selector: EntryPointSelector,
     /// and the function_id is the key to find the function in the compiled contract
-    function_id: FunctionId,
+    pub function_id: FunctionId,
 }
 
 impl NativeEntryPoint {

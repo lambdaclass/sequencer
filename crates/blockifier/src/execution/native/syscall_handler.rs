@@ -139,7 +139,6 @@ impl<'state> NativeSyscallHandler<'state> {
     }
 
     pub fn update_remaining_gas(&mut self, remaining_gas: &mut u64, call_info: &CallInfo) {
-        // pass the reference to the function
         update_remaining_gas(remaining_gas, call_info);
     }
 
@@ -168,7 +167,8 @@ impl<'state> NativeSyscallHandler<'state> {
         }
 
         // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
-        let required_gas = syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
+        let required_gas =
+            syscall_gas_cost - self.execution_context.gas_costs().syscall_base_gas_cost;
 
         if *remaining_gas < required_gas {
             //  Out of gas failure.
@@ -229,6 +229,14 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
             Ok(value) => Ok(value),
             Err(e) => Err(encode_str_as_felts(&e.to_string())),
         }
+    }
+
+    fn get_class_hash_at(
+        &mut self,
+        _contract_address: Felt,
+        _remaining_gas: &mut u64,
+    ) -> SyscallResult<Felt> {
+        todo!()
     }
 
     fn get_execution_info(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfo> {
@@ -295,10 +303,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         })
     }
 
-    fn get_execution_info_v2(
-        &mut self,
-        remaining_gas: &mut u64,
-    ) -> SyscallResult<ExecutionInfoV2> {
+    fn get_execution_info_v2(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfoV2> {
         self.pre_execute_syscall(
             remaining_gas,
             SyscallSelector::GetExecutionInfo,
@@ -423,7 +428,7 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
             // Warning: converting of reference would create a new reference to different data,
             // example:
             //     let mut a: u128 = 1;
-            //     let a_ref: &mut u64 = &mut a;
+            //     let a_ref: &mut u128 = &mut a;
             //
             //     let mut b: u64 = u64::try_from(*a_ref).unwrap();
             //
@@ -689,7 +694,8 @@ impl<'state> StarknetSyscallHandler for &mut NativeSyscallHandler<'state> {
         // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
         // works.
         let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-        let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+        let gas_cost =
+            n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
         if gas_cost > *remaining_gas {
             // In VM this error is wrapped into `SyscallExecutionError::SyscallError`
@@ -1199,7 +1205,7 @@ pub mod sierra_emu_impl {
                 // Warning: converting of reference would create a new reference to different data,
                 // example:
                 //     let mut a: u128 = 1;
-                //     let a_ref: &mut u64 = &mut a;
+                //     let a_ref: &mut u128 = &mut a;
                 //
                 //     let mut b: u64 = u64::try_from(*a_ref).unwrap();
                 //
@@ -1469,7 +1475,8 @@ pub mod sierra_emu_impl {
             // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion
             // works.
             let n_rounds_as_u64 = u64::try_from(n_rounds).expect("Failed to convert usize to u64.");
-            let gas_cost = n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
+            let gas_cost =
+                n_rounds_as_u64 * self.execution_context.gas_costs().keccak_round_cost_gas_cost;
 
             if gas_cost > *remaining_gas {
                 // In VM this error is wrapped into `SyscallExecutionError::SyscallError`

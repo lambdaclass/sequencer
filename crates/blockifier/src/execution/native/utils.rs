@@ -51,14 +51,42 @@ pub fn run_native_executor(
     selector: Felt,
     call: CallEntryPoint,
     mut syscall_handler: NativeSyscallHandler<'_>,
+    #[cfg(feature = "with-trace-dump")] trace_id: usize,
 ) -> EntryPointExecutionResult<CallInfo> {
     let execution_result = native_executor.run(
         selector,
         &call.calldata.0,
-        Some(call.initial_gas),
+        call.initial_gas,
         None,
         &mut syscall_handler,
     );
+
+    #[cfg(feature = "with-trace-dump")]
+    #[allow(warnings)]
+    {
+        use std::sync::Mutex;
+
+        use cairo_native::runtime::trace_dump::TraceDump;
+
+        let trace = serde_json::to_string_pretty(&{
+            let trace_dump = unsafe {
+                let fn_ptr = native_executor
+                    .library
+                    .get::<extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(
+                        b"get_trace_dump_ptr\0",
+                    )
+                    .unwrap();
+
+                fn_ptr()
+            };
+            let mut trace_dump = trace_dump.lock().unwrap();
+
+            trace_dump.remove(&u64::try_from(trace_id).unwrap()).unwrap().trace
+        })
+        .unwrap();
+        std::fs::create_dir_all("traces/native/").unwrap();
+        std::fs::write(&format!("traces/native/trace_{}.json", trace_id), trace).unwrap();
+    }
 
     let run_result = match execution_result {
         Ok(res) if res.failure_flag => Err(EntryPointExecutionError::NativeExecutionError {
@@ -101,6 +129,9 @@ pub fn run_sierra_emu_executor(
     std::fs::create_dir_all("traces/emu/").unwrap();
     std::fs::write(format!("traces/emu/trace_{}.json", counter_value), trace).unwrap();
 
+    std::fs::write(format!("traces/program_{}.sierra", counter_value), format!("{}", vm.program))
+        .unwrap();
+
     if execution_result.failure_flag {
         Err(EntryPointExecutionError::NativeExecutionError {
             info: if !execution_result.return_values.is_empty() {
@@ -129,9 +160,7 @@ fn create_callinfo(
     run_result: ContractExecutionResult,
     syscall_handler: NativeSyscallHandler<'_>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
-    let gas_consumed = {
-        call.initial_gas - run_result.remaining_gas
-    };
+    let gas_consumed = call.initial_gas - run_result.remaining_gas;
 
     Ok(CallInfo {
         call,
@@ -162,9 +191,7 @@ pub fn create_callinfo_emu(
     storage_read_values: Vec<Felt>,
     accessed_storage_keys: HashSet<StorageKey, RandomState>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
-    let gas_consumed = {
-        call.initial_gas - run_result.remaining_gas
-    };
+    let gas_consumed = call.initial_gas - run_result.remaining_gas;
 
     Ok(CallInfo {
         call,
@@ -293,7 +320,7 @@ pub fn calculate_resource_bounds(
             ResourceBounds {
                 resource,
                 max_amount: resource_bound.max_amount,
-                max_price_per_unit: resource_bound.max_price_per_unit.try_into().unwrap(),
+                max_price_per_unit: resource_bound.max_price_per_unit,
             }
         })
         .collect())
