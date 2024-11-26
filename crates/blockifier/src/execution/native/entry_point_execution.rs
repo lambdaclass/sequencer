@@ -43,6 +43,7 @@ pub fn execute_entry_point_call(
     let result = if cfg!(feature = "use-sierra-emu") {
         let vm = sierra_emu::VirtualMachine::new_starknet(
             Arc::new(contract_class.program.clone()),
+            &contract_class.contract.entry_points_by_type,
             &mut syscall_handler,
         );
         run_sierra_emu_executor(vm, function_id, call.clone())

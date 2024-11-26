@@ -298,8 +298,9 @@ impl StarknetReader for StarknetFeederGatewayClient {
         ]
         .contains(&class_hash)
         {
-            debug!("Using default compiled class for class hash {}.", class_hash);
-            return Ok(Some(CasmContractClass::default()));
+            // debug!("Using default compiled class for class hash {}.", class_hash);
+            // return Ok(Some(CasmContractClass::default()));
+            todo!();
         }
 
         let mut url = self.urls.get_compiled_class_by_class_hash.clone();

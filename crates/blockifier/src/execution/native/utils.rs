@@ -56,7 +56,7 @@ pub fn run_native_executor(
     let execution_result = native_executor.run(
         selector,
         &call.calldata.0,
-        Some(call.initial_gas),
+        call.initial_gas,
         None,
         &mut syscall_handler,
     );
@@ -160,9 +160,7 @@ fn create_callinfo(
     run_result: ContractExecutionResult,
     syscall_handler: NativeSyscallHandler<'_>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
-    let gas_consumed = {
-        call.initial_gas - run_result.remaining_gas
-    };
+    let gas_consumed = call.initial_gas - run_result.remaining_gas;
 
     Ok(CallInfo {
         call,
@@ -193,9 +191,7 @@ pub fn create_callinfo_emu(
     storage_read_values: Vec<Felt>,
     accessed_storage_keys: HashSet<StorageKey, RandomState>,
 ) -> Result<CallInfo, EntryPointExecutionError> {
-    let gas_consumed = {
-        call.initial_gas - run_result.remaining_gas
-    };
+    let gas_consumed = call.initial_gas - run_result.remaining_gas;
 
     Ok(CallInfo {
         call,
@@ -324,7 +320,7 @@ pub fn calculate_resource_bounds(
             ResourceBounds {
                 resource,
                 max_amount: resource_bound.max_amount,
-                max_price_per_unit: resource_bound.max_price_per_unit.try_into().unwrap(),
+                max_price_per_unit: resource_bound.max_price_per_unit,
             }
         })
         .collect())
