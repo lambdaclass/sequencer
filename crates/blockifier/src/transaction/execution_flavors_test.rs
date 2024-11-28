@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
+use starknet_api::block::FeeType;
 use starknet_api::core::ContractAddress;
 use starknet_api::execution_resources::{GasAmount, GasVector};
 use starknet_api::test_utils::invoke::InvokeTxArgs;
@@ -41,7 +42,7 @@ use crate::transaction::errors::{
     TransactionFeeError,
     TransactionPreValidationError,
 };
-use crate::transaction::objects::{FeeType, TransactionExecutionInfo, TransactionExecutionResult};
+use crate::transaction::objects::{TransactionExecutionInfo, TransactionExecutionResult};
 use crate::transaction::test_utils::{
     account_invoke_tx,
     default_l1_resource_bounds,
@@ -291,7 +292,7 @@ fn test_simulate_validate_pre_validate_with_charge_fee(
     }
 
     // Second scenario: resource bounds greater than balance.
-    let gas_price = block_context.block_info.gas_prices.get_l1_gas_price_by_fee_type(&fee_type);
+    let gas_price = block_context.block_info.gas_prices.l1_gas_price(&fee_type);
     let balance_over_gas_price = BALANCE.checked_div(gas_price).unwrap();
     let result = account_invoke_tx(invoke_tx_args! {
         max_fee: Fee(BALANCE.0 + 1),
@@ -409,7 +410,7 @@ fn test_simulate_validate_pre_validate_not_charge_fee(
     execute_and_check_gas_and_fee!(Fee(10), l1_resource_bounds(10_u8.into(), 10_u8.into()));
 
     // Second scenario: resource bounds greater than balance.
-    let gas_price = block_context.block_info.gas_prices.get_l1_gas_price_by_fee_type(&fee_type);
+    let gas_price = block_context.block_info.gas_prices.l1_gas_price(&fee_type);
     let balance_over_gas_price = BALANCE.checked_div(gas_price).unwrap();
     execute_and_check_gas_and_fee!(
         Fee(BALANCE.0 + 1),
@@ -548,7 +549,7 @@ fn test_simulate_validate_charge_fee_mid_execution(
 ) {
     let block_context = BlockContext::create_for_account_testing();
     let chain_info = &block_context.chain_info;
-    let gas_price = block_context.block_info.gas_prices.get_l1_gas_price_by_fee_type(&fee_type);
+    let gas_price = block_context.block_info.gas_prices.l1_gas_price(&fee_type);
     let FlavorTestInitialState {
         mut state,
         account_address,
@@ -714,7 +715,7 @@ fn test_simulate_validate_charge_fee_post_execution(
     #[case] is_deprecated: bool,
 ) {
     let block_context = BlockContext::create_for_account_testing();
-    let gas_price = block_context.block_info.gas_prices.get_l1_gas_price_by_fee_type(&fee_type);
+    let gas_price = block_context.block_info.gas_prices.l1_gas_price(&fee_type);
     let chain_info = &block_context.chain_info;
     let fee_token_address = chain_info.fee_token_address(&fee_type);
 

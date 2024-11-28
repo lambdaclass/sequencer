@@ -2,9 +2,9 @@ use log::warn;
 use starknet_api::block::{
     BlockHashAndNumber,
     BlockNumber,
-    BlockTimestamp,
     GasPrice,
     GasPriceVector,
+    GasPrices,
     NonzeroGasPrice,
 };
 use starknet_api::core::ContractAddress;
@@ -13,93 +13,60 @@ use starknet_api::state::StorageKey;
 use crate::abi::constants;
 use crate::state::errors::StateError;
 use crate::state::state_api::{State, StateResult};
-use crate::transaction::objects::FeeType;
 use crate::versioned_constants::VersionedConstants;
 
 #[cfg(test)]
 #[path = "block_test.rs"]
 pub mod block_test;
 
-#[cfg_attr(feature = "transaction_serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Debug)]
-pub struct BlockInfo {
-    pub block_number: BlockNumber,
-    pub block_timestamp: BlockTimestamp,
-
-    // Fee-related.
-    pub sequencer_address: ContractAddress,
-    pub gas_prices: GasPrices,
-    pub use_kzg_da: bool,
+/// Warns if the submitted gas prices do not match the expected gas prices.
+fn validate_l2_gas_price(gas_prices: &GasPrices) {
+    // TODO(Aner): fix backwards compatibility.
+    let eth_l2_gas_price = gas_prices.eth_gas_prices.l2_gas_price;
+    let expected_eth_l2_gas_price = VersionedConstants::latest_constants()
+        .convert_l1_to_l2_gas_price_round_up(gas_prices.eth_gas_prices.l1_gas_price.into());
+    if GasPrice::from(eth_l2_gas_price) != expected_eth_l2_gas_price {
+        // TODO!(Aner): change to panic! Requires fixing several tests.
+        warn!(
+            "eth_l2_gas_price {} does not match expected eth_l2_gas_price {}.",
+            eth_l2_gas_price, expected_eth_l2_gas_price
+        )
+    }
+    let strk_l2_gas_price = gas_prices.strk_gas_prices.l2_gas_price;
+    let expected_strk_l2_gas_price = VersionedConstants::latest_constants()
+        .convert_l1_to_l2_gas_price_round_up(gas_prices.strk_gas_prices.l1_gas_price.into());
+    if GasPrice::from(strk_l2_gas_price) != expected_strk_l2_gas_price {
+        // TODO!(Aner): change to panic! Requires fixing test_discounted_gas_overdraft
+        warn!(
+            "strk_l2_gas_price {} does not match expected strk_l2_gas_price {}.",
+            strk_l2_gas_price, expected_strk_l2_gas_price
+        )
+    }
 }
 
-#[cfg_attr(feature = "transaction_serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Debug)]
-pub struct GasPrices {
-    eth_gas_prices: GasPriceVector,  // In wei.
-    strk_gas_prices: GasPriceVector, // In fri.
-}
+pub fn validated_gas_prices(
+    eth_l1_gas_price: NonzeroGasPrice,
+    strk_l1_gas_price: NonzeroGasPrice,
+    eth_l1_data_gas_price: NonzeroGasPrice,
+    strk_l1_data_gas_price: NonzeroGasPrice,
+    eth_l2_gas_price: NonzeroGasPrice,
+    strk_l2_gas_price: NonzeroGasPrice,
+) -> GasPrices {
+    let gas_prices = GasPrices {
+        eth_gas_prices: GasPriceVector {
+            l1_gas_price: eth_l1_gas_price,
+            l1_data_gas_price: eth_l1_data_gas_price,
+            l2_gas_price: eth_l2_gas_price,
+        },
+        strk_gas_prices: GasPriceVector {
+            l1_gas_price: strk_l1_gas_price,
+            l1_data_gas_price: strk_l1_data_gas_price,
+            l2_gas_price: strk_l2_gas_price,
+        },
+    };
+    validate_l2_gas_price(&gas_prices);
 
-impl GasPrices {
-    pub fn new(
-        eth_l1_gas_price: NonzeroGasPrice,
-        strk_l1_gas_price: NonzeroGasPrice,
-        eth_l1_data_gas_price: NonzeroGasPrice,
-        strk_l1_data_gas_price: NonzeroGasPrice,
-        eth_l2_gas_price: NonzeroGasPrice,
-        strk_l2_gas_price: NonzeroGasPrice,
-    ) -> Self {
-        // TODO(Aner): fix backwards compatibility.
-        let expected_eth_l2_gas_price = VersionedConstants::latest_constants()
-            .convert_l1_to_l2_gas_price_round_up(eth_l1_gas_price.into());
-        if GasPrice::from(eth_l2_gas_price) != expected_eth_l2_gas_price {
-            // TODO!(Aner): change to panic! Requires fixing several tests.
-            warn!(
-                "eth_l2_gas_price {eth_l2_gas_price} does not match expected eth_l2_gas_price \
-                 {expected_eth_l2_gas_price}."
-            )
-        }
-        let expected_strk_l2_gas_price = VersionedConstants::latest_constants()
-            .convert_l1_to_l2_gas_price_round_up(strk_l1_gas_price.into());
-        if GasPrice::from(strk_l2_gas_price) != expected_strk_l2_gas_price {
-            // TODO!(Aner): change to panic! Requires fixing test_discounted_gas_overdraft
-            warn!(
-                "strk_l2_gas_price {strk_l2_gas_price} does not match expected strk_l2_gas_price \
-                 {expected_strk_l2_gas_price}."
-            )
-        }
-
-        Self {
-            eth_gas_prices: GasPriceVector {
-                l1_gas_price: eth_l1_gas_price,
-                l1_data_gas_price: eth_l1_data_gas_price,
-                l2_gas_price: eth_l2_gas_price,
-            },
-            strk_gas_prices: GasPriceVector {
-                l1_gas_price: strk_l1_gas_price,
-                l1_data_gas_price: strk_l1_data_gas_price,
-                l2_gas_price: strk_l2_gas_price,
-            },
-        }
-    }
-
-    pub fn get_l1_gas_price_by_fee_type(&self, fee_type: &FeeType) -> NonzeroGasPrice {
-        self.get_gas_prices_by_fee_type(fee_type).l1_gas_price
-    }
-
-    pub fn get_l1_data_gas_price_by_fee_type(&self, fee_type: &FeeType) -> NonzeroGasPrice {
-        self.get_gas_prices_by_fee_type(fee_type).l1_data_gas_price
-    }
-
-    pub fn get_l2_gas_price_by_fee_type(&self, fee_type: &FeeType) -> NonzeroGasPrice {
-        self.get_gas_prices_by_fee_type(fee_type).l2_gas_price
-    }
-
-    pub fn get_gas_prices_by_fee_type(&self, fee_type: &FeeType) -> &GasPriceVector {
-        match fee_type {
-            FeeType::Strk => &self.strk_gas_prices,
-            FeeType::Eth => &self.eth_gas_prices,
-        }
-    }
+    gas_prices
 }
 
 // Block pre-processing.

@@ -23,7 +23,7 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use blockifier::blockifier::block::{pre_process_block, BlockInfo, GasPrices};
+use blockifier::blockifier::block::{pre_process_block, validated_gas_prices};
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
 use blockifier::execution::call_info::CallExecution;
@@ -51,7 +51,13 @@ use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::{StorageError, StorageReader};
 use serde::{Deserialize, Serialize};
-use starknet_api::block::{BlockHashAndNumber, BlockNumber, NonzeroGasPrice, StarknetVersion};
+use starknet_api::block::{
+    BlockHashAndNumber,
+    BlockInfo,
+    BlockNumber,
+    NonzeroGasPrice,
+    StarknetVersion,
+};
 use starknet_api::contract_class::{ClassInfo, EntryPointType};
 use starknet_api::core::{ChainId, ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::data_availability::L1DataAvailabilityMode;
@@ -369,7 +375,7 @@ fn create_block_context(
         use_kzg_da,
         block_number,
         // TODO(yair): What to do about blocks pre 0.13.1 where the data gas price were 0?
-        gas_prices: GasPrices::new(
+        gas_prices: validated_gas_prices(
             NonzeroGasPrice::new(l1_gas_price.price_in_wei).unwrap_or(NonzeroGasPrice::MIN),
             NonzeroGasPrice::new(l1_gas_price.price_in_fri).unwrap_or(NonzeroGasPrice::MIN),
             NonzeroGasPrice::new(l1_data_gas_price.price_in_wei).unwrap_or(NonzeroGasPrice::MIN),

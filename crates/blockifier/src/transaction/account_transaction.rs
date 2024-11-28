@@ -28,7 +28,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::context::{BlockContext, TransactionContext};
 use crate::execution::call_info::CallInfo;
-use crate::execution::contract_class::RunnableContractClass;
+use crate::execution::contract_class::RunnableCompiledClass;
 use crate::execution::entry_point::{CallEntryPoint, CallType, EntryPointExecutionContext};
 use crate::execution::stack_trace::{
     extract_trailing_cairo1_revert_trace,
@@ -288,7 +288,7 @@ impl AccountTransaction {
                         L1Gas,
                         l1_gas_resource_bounds,
                         minimal_gas_amount_vector.to_discounted_l1_gas(tx_context.get_gas_prices()),
-                        block_info.gas_prices.get_l1_gas_price_by_fee_type(fee_type),
+                        block_info.gas_prices.l1_gas_price(fee_type),
                     )],
                     ValidResourceBounds::AllResources(AllResourceBounds {
                         l1_gas: l1_gas_resource_bounds,
@@ -296,7 +296,7 @@ impl AccountTransaction {
                         l1_data_gas: l1_data_gas_resource_bounds,
                     }) => {
                         let GasPriceVector { l1_gas_price, l1_data_gas_price, l2_gas_price } =
-                            block_info.gas_prices.get_gas_prices_by_fee_type(fee_type);
+                            block_info.gas_prices.gas_price_vector(fee_type);
                         vec![
                             (
                                 L1Gas,
@@ -885,8 +885,8 @@ impl ValidatableTransaction for AccountTransaction {
             })?;
 
         // Validate return data.
-        let contract_class = state.get_compiled_contract_class(class_hash)?;
-        if is_cairo1(&contract_class) {
+        let compiled_class = state.get_compiled_class(class_hash)?;
+        if is_cairo1(&compiled_class) {
             // The account contract class is a Cairo 1.0 contract; the `validate` entry point should
             // return `VALID`.
             let expected_retdata = retdata![*constants::VALIDATE_RETDATA];
@@ -910,11 +910,11 @@ impl ValidatableTransaction for AccountTransaction {
     }
 }
 
-pub fn is_cairo1(contract_class: &RunnableContractClass) -> bool {
-    match contract_class {
-        RunnableContractClass::V0(_) => false,
-        RunnableContractClass::V1(_) => true,
+pub fn is_cairo1(compiled_class: &RunnableCompiledClass) -> bool {
+    match compiled_class {
+        RunnableCompiledClass::V0(_) => false,
+        RunnableCompiledClass::V1(_) => true,
         #[cfg(feature = "cairo_native")]
-        RunnableContractClass::V1Native(_) => true,
+        RunnableCompiledClass::V1Native(_) => true,
     }
 }
