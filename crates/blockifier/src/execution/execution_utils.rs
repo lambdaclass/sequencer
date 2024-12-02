@@ -143,7 +143,7 @@ pub fn execute_entry_point_call(
             //     // resouorce).
             //     entry_point_execution::execute_entry_point_call(
             //         call,
-            //         contract_class.casm(),
+            //         compiled_class.casm(),
             //         state,
             //         context,
             //     )
