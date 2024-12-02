@@ -29,7 +29,13 @@ pub trait ConsensusContext {
     /// The chunks of content returned when iterating the proposal.
     // In practice I expect this to match the type sent to the network
     // (papyrus_protobuf::ConsensusMessage), and not to be specific to just the block's content.
-    type ProposalChunk;
+    type ProposalChunk; // TODO(guyn): deprecate this (and replace by ProposalPart)
+    type ProposalPart: TryFrom<Vec<u8>, Error = ProtobufConversionError>
+        + Into<Vec<u8>>
+        + TryInto<ProposalInit, Error = ProtobufConversionError>
+        + From<ProposalInit>
+        + Clone
+        + Send;
 
     // TODO(matan): The oneshot for receiving the build block could be generalized to just be some
     // future which returns a block.
@@ -59,6 +65,7 @@ pub trait ConsensusContext {
     /// Params:
     /// - `height`: The height of the block to be built. Specifically this indicates the initial
     ///   state of the block.
+    /// - `round`: The round of the block to be built.
     /// - `timeout`: The maximum time to wait for the block to be built.
     /// - `content`: A receiver for the stream of the block's content.
     ///
@@ -68,6 +75,7 @@ pub trait ConsensusContext {
     async fn validate_proposal(
         &mut self,
         height: BlockNumber,
+        round: Round,
         timeout: Duration,
         content: mpsc::Receiver<Self::ProposalChunk>,
     ) -> oneshot::Receiver<ProposalContentId>;
@@ -101,6 +109,10 @@ pub trait ConsensusContext {
         block: ProposalContentId,
         precommits: Vec<Vote>,
     ) -> Result<(), ConsensusError>;
+
+    /// Update the context with the current height and round.
+    /// Must be called at the beginning of each height.
+    async fn set_height_and_round(&mut self, height: BlockNumber, round: Round);
 }
 
 #[derive(PartialEq)]

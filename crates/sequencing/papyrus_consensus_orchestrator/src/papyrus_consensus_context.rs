@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use papyrus_consensus::types::{
     ConsensusContext,
     ConsensusError,
@@ -23,7 +23,15 @@ use papyrus_consensus::types::{
     ValidatorId,
 };
 use papyrus_network::network_manager::{BroadcastTopicClient, BroadcastTopicClientTrait};
-use papyrus_protobuf::consensus::{ConsensusMessage, Proposal, ProposalInit, Vote};
+use papyrus_protobuf::consensus::{
+    ConsensusMessage,
+    Proposal,
+    ProposalFin,
+    ProposalInit,
+    ProposalPart,
+    TransactionBatch,
+    Vote,
+};
 use papyrus_storage::body::BodyStorageReader;
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::{StorageError, StorageReader};
@@ -36,9 +44,12 @@ use tracing::{debug, debug_span, info, warn, Instrument};
 
 type HeightToIdToContent = BTreeMap<BlockNumber, HashMap<ProposalContentId, Vec<Transaction>>>;
 
+const CHANNEL_SIZE: usize = 100;
+
 pub struct PapyrusConsensusContext {
     storage_reader: StorageReader,
     network_broadcast_client: BroadcastTopicClient<ConsensusMessage>,
+    network_proposal_sender: mpsc::Sender<(u64, mpsc::Receiver<ProposalPart>)>,
     validators: Vec<ValidatorId>,
     sync_broadcast_sender: Option<BroadcastTopicClient<Vote>>,
     // Proposal building/validating returns immediately, leaving the actual processing to a spawned
@@ -51,12 +62,14 @@ impl PapyrusConsensusContext {
     pub fn new(
         storage_reader: StorageReader,
         network_broadcast_client: BroadcastTopicClient<ConsensusMessage>,
+        network_proposal_sender: mpsc::Sender<(u64, mpsc::Receiver<ProposalPart>)>,
         num_validators: u64,
         sync_broadcast_sender: Option<BroadcastTopicClient<Vote>>,
     ) -> Self {
         Self {
             storage_reader,
             network_broadcast_client,
+            network_proposal_sender,
             validators: (0..num_validators).map(ContractAddress::from).collect(),
             sync_broadcast_sender,
             valid_proposals: Arc::new(Mutex::new(BTreeMap::new())),
@@ -67,13 +80,14 @@ impl PapyrusConsensusContext {
 #[async_trait]
 impl ConsensusContext for PapyrusConsensusContext {
     type ProposalChunk = Transaction;
+    type ProposalPart = ProposalPart;
 
     async fn build_proposal(
         &mut self,
-        init: ProposalInit,
+        proposal_init: ProposalInit,
         _timeout: Duration,
     ) -> oneshot::Receiver<ProposalContentId> {
-        let mut network_broadcast_sender = self.network_broadcast_client.clone();
+        let mut proposal_sender_sender = self.network_proposal_sender.clone();
         let (fin_sender, fin_receiver) = oneshot::channel();
 
         let storage_reader = self.storage_reader.clone();
@@ -83,49 +97,61 @@ impl ConsensusContext for PapyrusConsensusContext {
                 // TODO(dvir): consider fix this for the case of reverts. If between the check that
                 // the block in storage and to getting the transaction was a revert
                 // this flow will fail.
-                wait_for_block(&storage_reader, init.height)
+                wait_for_block(&storage_reader, proposal_init.height)
                     .await
                     .expect("Failed to wait to block");
 
                 let txn = storage_reader.begin_ro_txn().expect("Failed to begin ro txn");
                 let transactions = txn
-                    .get_block_transactions(init.height)
+                    .get_block_transactions(proposal_init.height)
                     .expect("Get transactions from storage failed")
                     .unwrap_or_else(|| {
                         panic!(
                             "Block in {} was not found in storage despite waiting for it",
-                            init.height
+                            proposal_init.height
                         )
                     });
 
                 let block_hash = txn
-                    .get_block_header(init.height)
+                    .get_block_header(proposal_init.height)
                     .expect("Get header from storage failed")
                     .unwrap_or_else(|| {
                         panic!(
                             "Block in {} was not found in storage despite waiting for it",
-                            init.height
+                            proposal_init.height
                         )
                     })
                     .block_hash;
 
-                let proposal = Proposal {
-                    height: init.height.0,
-                    round: init.round,
-                    proposer: init.proposer,
-                    transactions: transactions.clone(),
-                    block_hash,
-                    valid_round: init.valid_round,
-                };
-                network_broadcast_sender
-                    .broadcast_message(ConsensusMessage::Proposal(proposal))
+                let (mut proposal_sender, proposal_receiver) = mpsc::channel(CHANNEL_SIZE);
+                let stream_id = proposal_init.height.0;
+                proposal_sender_sender
+                    .send((stream_id, proposal_receiver))
                     .await
-                    .expect("Failed to send proposal");
+                    .expect("Failed to send proposal receiver");
+                proposal_sender
+                    .send(Self::ProposalPart::Init(proposal_init.clone()))
+                    .await
+                    .expect("Failed to send proposal init");
+                proposal_sender
+                    .send(ProposalPart::Transactions(TransactionBatch {
+                        transactions: transactions.clone(),
+                        tx_hashes: vec![],
+                    }))
+                    .await
+                    .expect("Failed to send transactions");
+                proposal_sender
+                    .send(ProposalPart::Fin(ProposalFin { proposal_content_id: block_hash }))
+                    .await
+                    .expect("Failed to send fin");
                 {
                     let mut proposals = valid_proposals
                         .lock()
                         .expect("Lock on active proposals was poisoned due to a previous panic");
-                    proposals.entry(init.height).or_default().insert(block_hash, transactions);
+                    proposals
+                        .entry(proposal_init.height)
+                        .or_default()
+                        .insert(block_hash, transactions);
                 }
                 // Done after inserting the proposal into the map to avoid race conditions between
                 // insertion and calls to `repropose`.
@@ -140,6 +166,7 @@ impl ConsensusContext for PapyrusConsensusContext {
     async fn validate_proposal(
         &mut self,
         height: BlockNumber,
+        _round: Round,
         _timeout: Duration,
         mut content: mpsc::Receiver<Transaction>,
     ) -> oneshot::Receiver<ProposalContentId> {
@@ -258,6 +285,10 @@ impl ConsensusContext for PapyrusConsensusContext {
             .expect("Lock on active proposals was poisoned due to a previous panic");
         proposals.retain(|&h, _| h > BlockNumber(height));
         Ok(())
+    }
+
+    async fn set_height_and_round(&mut self, _height: BlockNumber, _round: Round) {
+        // No-op
     }
 }
 

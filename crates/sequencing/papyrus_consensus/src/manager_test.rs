@@ -13,7 +13,7 @@ use papyrus_network::network_manager::test_utils::{
     TestSubscriberChannels,
 };
 use papyrus_network_types::network_types::BroadcastedMessageMetadata;
-use papyrus_protobuf::consensus::{ConsensusMessage, ProposalInit, Vote};
+use papyrus_protobuf::consensus::{ConsensusMessage, ProposalInit, ProposalPart, Vote};
 use papyrus_test_utils::{get_rng, GetTestInstance};
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::transaction::Transaction;
@@ -32,12 +32,15 @@ lazy_static! {
     static ref TIMEOUTS: TimeoutsConfig = TimeoutsConfig::default();
 }
 
+const CHANNEL_SIZE: usize = 10;
+
 mock! {
     pub TestContext {}
 
     #[async_trait]
     impl ConsensusContext for TestContext {
         type ProposalChunk = Transaction;
+        type ProposalPart = ProposalPart;
 
         async fn build_proposal(
             &mut self,
@@ -48,6 +51,7 @@ mock! {
         async fn validate_proposal(
             &mut self,
             height: BlockNumber,
+            round: Round,
             timeout: Duration,
             content: mpsc::Receiver<Transaction>
         ) -> oneshot::Receiver<ProposalContentId>;
@@ -69,6 +73,9 @@ mock! {
             block: ProposalContentId,
             precommits: Vec<Vote>,
         ) -> Result<(), ConsensusError>;
+
+        async fn set_height_and_round(&mut self, height: BlockNumber, round: Round);
+
     }
 }
 
@@ -83,6 +90,11 @@ async fn manager_multiple_heights_unordered() {
     let TestSubscriberChannels { mock_network, subscriber_channels } =
         mock_register_broadcast_topic().unwrap();
     let mut sender = mock_network.broadcasted_messages_sender;
+
+    // TODO(guyn): refactor this test to pass proposals through the correct channels.
+    let (mut _proposal_receiver_sender, mut proposal_receiver_receiver) =
+        mpsc::channel(CHANNEL_SIZE);
+
     // Send messages for height 2 followed by those for height 1.
     send(&mut sender, proposal(Felt::TWO, 2, 0, *PROPOSER_ID)).await;
     send(&mut sender, prevote(Some(Felt::TWO), 2, 0, *PROPOSER_ID)).await;
@@ -95,7 +107,7 @@ async fn manager_multiple_heights_unordered() {
     // Run the manager for height 1.
     context
         .expect_validate_proposal()
-        .return_once(move |_, _, _| {
+        .return_once(move |_, _, _, _| {
             let (block_sender, block_receiver) = oneshot::channel();
             block_sender.send(BlockHash(Felt::ONE)).unwrap();
             block_receiver
@@ -103,25 +115,40 @@ async fn manager_multiple_heights_unordered() {
         .times(1);
     context.expect_validators().returning(move |_| vec![*PROPOSER_ID, *VALIDATOR_ID]);
     context.expect_proposer().returning(move |_, _| *PROPOSER_ID);
+    context.expect_set_height_and_round().returning(move |_, _| ());
     context.expect_broadcast().returning(move |_| Ok(()));
 
     let mut manager = MultiHeightManager::new(*VALIDATOR_ID, TIMEOUTS.clone());
     let mut subscriber_channels = subscriber_channels.into();
-    let decision =
-        manager.run_height(&mut context, BlockNumber(1), &mut subscriber_channels).await.unwrap();
+    let decision = manager
+        .run_height(
+            &mut context,
+            BlockNumber(1),
+            &mut subscriber_channels,
+            &mut proposal_receiver_receiver,
+        )
+        .await
+        .unwrap();
     assert_eq!(decision.block, BlockHash(Felt::ONE));
 
     // Run the manager for height 2.
     context
         .expect_validate_proposal()
-        .return_once(move |_, _, _| {
+        .return_once(move |_, _, _, _| {
             let (block_sender, block_receiver) = oneshot::channel();
             block_sender.send(BlockHash(Felt::TWO)).unwrap();
             block_receiver
         })
         .times(1);
-    let decision =
-        manager.run_height(&mut context, BlockNumber(2), &mut subscriber_channels).await.unwrap();
+    let decision = manager
+        .run_height(
+            &mut context,
+            BlockNumber(2),
+            &mut subscriber_channels,
+            &mut proposal_receiver_receiver,
+        )
+        .await
+        .unwrap();
     assert_eq!(decision.block, BlockHash(Felt::TWO));
 }
 
@@ -131,13 +158,17 @@ async fn run_consensus_sync() {
     let mut context = MockTestContext::new();
     let (decision_tx, decision_rx) = oneshot::channel();
 
-    context.expect_validate_proposal().return_once(move |_, _, _| {
+    // TODO(guyn): refactor this test to pass proposals through the correct channels.
+    let (mut _proposal_receiver_sender, proposal_receiver_receiver) = mpsc::channel(CHANNEL_SIZE);
+
+    context.expect_validate_proposal().return_once(move |_, _, _, _| {
         let (block_sender, block_receiver) = oneshot::channel();
         block_sender.send(BlockHash(Felt::TWO)).unwrap();
         block_receiver
     });
     context.expect_validators().returning(move |_| vec![*PROPOSER_ID, *VALIDATOR_ID]);
     context.expect_proposer().returning(move |_, _| *PROPOSER_ID);
+    context.expect_set_height_and_round().returning(move |_, _| ());
     context.expect_broadcast().returning(move |_| Ok(()));
     context.expect_decision_reached().return_once(move |block, votes| {
         assert_eq!(block, BlockHash(Felt::TWO));
@@ -164,6 +195,7 @@ async fn run_consensus_sync() {
             Duration::ZERO,
             TIMEOUTS.clone(),
             subscriber_channels.into(),
+            proposal_receiver_receiver,
             &mut sync_receiver,
         )
         .await
@@ -190,13 +222,17 @@ async fn run_consensus_sync_cancellation_safety() {
     let (proposal_handled_tx, proposal_handled_rx) = oneshot::channel();
     let (decision_tx, decision_rx) = oneshot::channel();
 
-    context.expect_validate_proposal().return_once(move |_, _, _| {
+    // TODO(guyn): refactor this test to pass proposals through the correct channels.
+    let (mut _proposal_receiver_sender, proposal_receiver_receiver) = mpsc::channel(CHANNEL_SIZE);
+
+    context.expect_validate_proposal().return_once(move |_, _, _, _| {
         let (block_sender, block_receiver) = oneshot::channel();
         block_sender.send(BlockHash(Felt::ONE)).unwrap();
         block_receiver
     });
     context.expect_validators().returning(move |_| vec![*PROPOSER_ID, *VALIDATOR_ID]);
     context.expect_proposer().returning(move |_, _| *PROPOSER_ID);
+    context.expect_set_height_and_round().returning(move |_, _| ());
     context.expect_broadcast().with(eq(prevote(Some(Felt::ONE), 1, 0, *VALIDATOR_ID))).return_once(
         move |_| {
             proposal_handled_tx.send(()).unwrap();
@@ -223,6 +259,7 @@ async fn run_consensus_sync_cancellation_safety() {
             Duration::ZERO,
             TIMEOUTS.clone(),
             subscriber_channels.into(),
+            proposal_receiver_receiver,
             &mut sync_receiver,
         )
         .await
@@ -253,6 +290,11 @@ async fn test_timeouts() {
     let TestSubscriberChannels { mock_network, subscriber_channels } =
         mock_register_broadcast_topic().unwrap();
     let mut sender = mock_network.broadcasted_messages_sender;
+
+    // TODO(guyn): refactor this test to pass proposals through the correct channels.
+    let (mut _proposal_receiver_sender, mut proposal_receiver_receiver) =
+        mpsc::channel(CHANNEL_SIZE);
+
     send(&mut sender, proposal(Felt::ONE, 1, 0, *PROPOSER_ID)).await;
     send(&mut sender, prevote(None, 1, 0, *VALIDATOR_ID_2)).await;
     send(&mut sender, prevote(None, 1, 0, *VALIDATOR_ID_3)).await;
@@ -260,7 +302,8 @@ async fn test_timeouts() {
     send(&mut sender, precommit(None, 1, 0, *VALIDATOR_ID_3)).await;
 
     let mut context = MockTestContext::new();
-    context.expect_validate_proposal().returning(move |_, _, _| {
+    context.expect_set_height_and_round().returning(move |_, _| ());
+    context.expect_validate_proposal().returning(move |_, _, _, _| {
         let (block_sender, block_receiver) = oneshot::channel();
         block_sender.send(BlockHash(Felt::ONE)).unwrap();
         block_receiver
@@ -285,7 +328,12 @@ async fn test_timeouts() {
     let mut manager = MultiHeightManager::new(*VALIDATOR_ID, TIMEOUTS.clone());
     let manager_handle = tokio::spawn(async move {
         let decision = manager
-            .run_height(&mut context, BlockNumber(1), &mut subscriber_channels.into())
+            .run_height(
+                &mut context,
+                BlockNumber(1),
+                &mut subscriber_channels.into(),
+                &mut proposal_receiver_receiver,
+            )
             .await
             .unwrap();
         assert_eq!(decision.block, BlockHash(Felt::ONE));

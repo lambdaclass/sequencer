@@ -3,7 +3,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
 use mockall::mock;
-use papyrus_protobuf::consensus::{ConsensusMessage, Proposal, ProposalInit, Vote, VoteType};
+use papyrus_protobuf::consensus::{
+    ConsensusMessage,
+    Proposal,
+    ProposalInit,
+    ProposalPart,
+    Vote,
+    VoteType,
+};
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_types_core::felt::Felt;
 
@@ -23,6 +30,7 @@ mock! {
     #[async_trait]
     impl ConsensusContext for TestContext {
         type ProposalChunk = u32;
+        type ProposalPart = ProposalPart;
 
         async fn build_proposal(
             &mut self,
@@ -33,6 +41,7 @@ mock! {
         async fn validate_proposal(
             &mut self,
             height: BlockNumber,
+            round: Round,
             timeout: Duration,
             content: mpsc::Receiver<u32>
         ) -> oneshot::Receiver<ProposalContentId>;
@@ -54,6 +63,8 @@ mock! {
             block: ProposalContentId,
             precommits: Vec<Vote>,
         ) -> Result<(), ConsensusError>;
+
+        async fn set_height_and_round(&mut self, height: BlockNumber, round: Round);
     }
 }
 

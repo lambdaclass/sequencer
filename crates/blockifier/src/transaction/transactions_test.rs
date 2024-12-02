@@ -13,7 +13,7 @@ use starknet_api::abi::abi_utils::{
     selector_from_name,
 };
 use starknet_api::abi::constants::CONSTRUCTOR_ENTRY_POINT_NAME;
-use starknet_api::block::GasPriceVector;
+use starknet_api::block::{FeeType, GasPriceVector};
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{ChainId, ClassHash, ContractAddress, EthAddress, Nonce};
 use starknet_api::executable_transaction::AccountTransaction as ApiExecutableTransaction;
@@ -123,7 +123,6 @@ use crate::transaction::errors::{
     TransactionPreValidationError,
 };
 use crate::transaction::objects::{
-    FeeType,
     HasRelatedFeeType,
     TransactionExecutionInfo,
     TransactionInfo,
@@ -1083,7 +1082,7 @@ fn test_insufficient_new_resource_bounds_pre_validation(
         l1_gas_price: actual_strk_l1_gas_price,
         l1_data_gas_price: actual_strk_l1_data_gas_price,
         l2_gas_price: actual_strk_l2_gas_price,
-    } = block_context.block_info.gas_prices.get_gas_prices_by_fee_type(&FeeType::Strk);
+    } = block_context.block_info.gas_prices.strk_gas_prices;
 
     let minimal_gas_vector =
         estimate_minimal_gas_vector(block_context, tx, &GasVectorComputationMode::All);
@@ -1217,9 +1216,8 @@ fn test_insufficient_deprecated_resource_bounds_pre_validation(
 
     let gas_prices = &block_context.block_info.gas_prices;
     // TODO(Aner, 21/01/24) change to linear combination.
-    let minimal_fee = minimal_l1_gas
-        .checked_mul(gas_prices.get_l1_gas_price_by_fee_type(&FeeType::Eth).into())
-        .unwrap();
+    let minimal_fee =
+        minimal_l1_gas.checked_mul(gas_prices.eth_gas_prices.l1_gas_price.get()).unwrap();
     // Max fee too low (lower than minimal estimated fee).
     let invalid_max_fee = Fee(minimal_fee.0 - 1);
     let invalid_v1_tx = account_invoke_tx(
@@ -1237,7 +1235,7 @@ fn test_insufficient_deprecated_resource_bounds_pre_validation(
     );
 
     // Test V3 transaction.
-    let actual_strk_l1_gas_price = gas_prices.get_l1_gas_price_by_fee_type(&FeeType::Strk);
+    let actual_strk_l1_gas_price = gas_prices.strk_gas_prices.l1_gas_price;
 
     // Max L1 gas amount too low, old resource bounds.
     // TODO(Ori, 1/2/2024): Write an indicative expect message explaining why the conversion works.
@@ -1291,7 +1289,7 @@ fn test_actual_fee_gt_resource_bounds(
     block_context.block_info.use_kzg_da = true;
     let mut nonce_manager = NonceManager::default();
     let gas_mode = resource_bounds.get_gas_vector_computation_mode();
-    let gas_prices = block_context.block_info.gas_prices.get_gas_prices_by_fee_type(&FeeType::Strk);
+    let gas_prices = &block_context.block_info.gas_prices.strk_gas_prices;
     let account_contract = FeatureContract::AccountWithoutValidations(account_cairo_version);
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let state = &mut test_state(
@@ -1524,7 +1522,7 @@ fn test_declare_tx(
 
     // Check state before transaction application.
     assert_matches!(
-        state.get_compiled_contract_class(class_hash).unwrap_err(),
+        state.get_compiled_class(class_hash).unwrap_err(),
         StateError::UndeclaredClassHash(undeclared_class_hash) if
         undeclared_class_hash == class_hash
     );
@@ -1626,7 +1624,7 @@ fn test_declare_tx(
     );
 
     // Verify class declaration.
-    let contract_class_from_state = state.get_compiled_contract_class(class_hash).unwrap();
+    let contract_class_from_state = state.get_compiled_class(class_hash).unwrap();
     assert_eq!(contract_class_from_state, class_info.contract_class().try_into().unwrap());
 
     // Checks that redeclaring the same contract fails.

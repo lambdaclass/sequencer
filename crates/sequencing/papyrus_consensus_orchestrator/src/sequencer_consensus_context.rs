@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use papyrus_consensus::types::{
     ConsensusContext,
     ConsensusError,
@@ -19,7 +19,7 @@ use papyrus_consensus::types::{
     Round,
     ValidatorId,
 };
-use papyrus_network::network_manager::{BroadcastTopicClient, BroadcastTopicClientTrait};
+use papyrus_network::network_manager::BroadcastTopicClient;
 use papyrus_protobuf::consensus::{
     ConsensusMessage,
     ProposalFin,
@@ -28,7 +28,7 @@ use papyrus_protobuf::consensus::{
     TransactionBatch,
     Vote,
 };
-use starknet_api::block::{BlockHash, BlockHashAndNumber, BlockNumber};
+use starknet_api::block::{BlockHash, BlockHashAndNumber, BlockInfo, BlockNumber, BlockTimestamp};
 use starknet_api::executable_transaction::Transaction;
 use starknet_batcher_types::batcher_types::{
     DecisionReachedInput,
@@ -43,6 +43,8 @@ use starknet_batcher_types::batcher_types::{
     ValidateBlockInput,
 };
 use starknet_batcher_types::communication::BatcherClient;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 
 // {height: {proposal_id: (content, [proposal_ids])}}
@@ -50,6 +52,9 @@ use tracing::{debug, debug_span, error, info, trace, warn, Instrument};
 // store one of them.
 type HeightToIdToContent =
     BTreeMap<BlockNumber, HashMap<ProposalContentId, (Vec<Transaction>, ProposalId)>>;
+type ValidationParams = (BlockNumber, Duration, mpsc::Receiver<Vec<Transaction>>);
+
+const CHANNEL_SIZE: usize = 100;
 
 pub struct SequencerConsensusContext {
     batcher: Arc<dyn BatcherClient>,
@@ -63,36 +68,55 @@ pub struct SequencerConsensusContext {
     // restarting.
     proposal_id: u64,
     current_height: Option<BlockNumber>,
-    network_broadcast_client: BroadcastTopicClient<ProposalPart>,
+    current_round: Round,
+    // Used to broadcast proposals to other consensus nodes.
+    // TODO(Guy) switch to the actual streaming struct.
+    _proposal_streaming_client: BroadcastTopicClient<ProposalPart>,
+    // The active proposal refers to the proposal being validated at the current height/round.
+    // Building proposals are not tracked as active, as consensus can't move on to the next
+    // height/round until building is done. Context only works on proposals for the
+    // current round.
+    active_proposal: Option<(Arc<Notify>, JoinHandle<()>)>,
+    // Stores proposals for future rounds until the round is reached.
+    queued_proposals: BTreeMap<Round, (ValidationParams, oneshot::Sender<ProposalContentId>)>,
+    outbound_proposal_sender: mpsc::Sender<(u64, mpsc::Receiver<ProposalPart>)>,
 }
 
 impl SequencerConsensusContext {
     pub fn new(
         batcher: Arc<dyn BatcherClient>,
-        network_broadcast_client: BroadcastTopicClient<ProposalPart>,
+        _proposal_streaming_client: BroadcastTopicClient<ProposalPart>,
+        outbound_proposal_sender: mpsc::Sender<(u64, mpsc::Receiver<ProposalPart>)>,
         num_validators: u64,
     ) -> Self {
         Self {
             batcher,
-            network_broadcast_client,
+            _proposal_streaming_client,
+            outbound_proposal_sender,
             validators: (0..num_validators).map(ValidatorId::from).collect(),
             valid_proposals: Arc::new(Mutex::new(HeightToIdToContent::new())),
             proposal_id: 0,
             current_height: None,
+            current_round: 0,
+            active_proposal: None,
+            queued_proposals: BTreeMap::new(),
         }
     }
 }
 
 #[async_trait]
 impl ConsensusContext for SequencerConsensusContext {
-    // TODO: Switch to ProposalPart when Guy merges the PR.
+    // TODO(guyn): Switch to ProposalPart when done with the streaming integration.
     type ProposalChunk = Vec<Transaction>;
+    type ProposalPart = ProposalPart;
 
     async fn build_proposal(
         &mut self,
         proposal_init: ProposalInit,
         timeout: Duration,
     ) -> oneshot::Receiver<ProposalContentId> {
+        // Handles interrupting an active proposal from a previous height/round
+        self.set_height_and_round(proposal_init.height, proposal_init.round).await;
         debug!(
             "Building proposal for height: {} with timeout: {:?}",
             proposal_init.height, timeout
@@ -106,17 +130,25 @@ impl ConsensusContext for SequencerConsensusContext {
         self.proposal_id += 1;
         let timeout =
             chrono::Duration::from_std(timeout).expect("Can't convert timeout to chrono::Duration");
+        let now = chrono::Utc::now();
         let build_proposal_input = ProposeBlockInput {
             proposal_id,
             // TODO: Discuss with batcher team passing std Duration instead.
-            deadline: chrono::Utc::now() + timeout,
+            deadline: now + timeout,
             // TODO: This is not part of Milestone 1.
             retrospective_block_hash: Some(BlockHashAndNumber {
                 number: BlockNumber::default(),
                 hash: BlockHash::default(),
             }),
+            // TODO(Dan, Matan): Fill block info.
+            block_info: BlockInfo {
+                block_number: proposal_init.height,
+                block_timestamp: BlockTimestamp(
+                    now.timestamp().try_into().expect("Failed to convert timestamp"),
+                ),
+                ..Default::default()
+            },
         };
-        self.maybe_start_height(proposal_init.height).await;
         // TODO: Should we be returning an error?
         // I think this implies defining an error type in this crate and moving the trait definition
         // here also.
@@ -126,11 +158,16 @@ impl ConsensusContext for SequencerConsensusContext {
             .await
             .expect("Failed to initiate proposal build");
         debug!("Broadcasting proposal init: {proposal_init:?}");
-        self.network_broadcast_client
-            .broadcast_message(ProposalPart::Init(proposal_init.clone()))
+        let (mut proposal_sender, proposal_receiver) = mpsc::channel(CHANNEL_SIZE);
+        let stream_id = proposal_init.height.0;
+        self.outbound_proposal_sender
+            .send((stream_id, proposal_receiver))
             .await
-            .expect("Failed to broadcast proposal init");
-        let broadcast_client = self.network_broadcast_client.clone();
+            .expect("Failed to send proposal receiver");
+        proposal_sender
+            .send(ProposalPart::Init(proposal_init.clone()))
+            .await
+            .expect("Failed to send proposal init");
         tokio::spawn(
             async move {
                 stream_build_proposal(
@@ -138,7 +175,7 @@ impl ConsensusContext for SequencerConsensusContext {
                     proposal_id,
                     batcher,
                     valid_proposals,
-                    broadcast_client,
+                    proposal_sender,
                     fin_sender,
                 )
                 .await;
@@ -152,47 +189,23 @@ impl ConsensusContext for SequencerConsensusContext {
     async fn validate_proposal(
         &mut self,
         height: BlockNumber,
+        round: Round,
         timeout: Duration,
         content: mpsc::Receiver<Self::ProposalChunk>,
     ) -> oneshot::Receiver<ProposalContentId> {
-        debug!("Validating proposal for height: {height} with timeout: {timeout:?}");
+        assert_eq!(Some(height), self.current_height);
         let (fin_sender, fin_receiver) = oneshot::channel();
-        let batcher = Arc::clone(&self.batcher);
-        let valid_proposals = Arc::clone(&self.valid_proposals);
-        let proposal_id = ProposalId(self.proposal_id);
-        self.proposal_id += 1;
-
-        let chrono_timeout =
-            chrono::Duration::from_std(timeout).expect("Can't convert timeout to chrono::Duration");
-        let input = ValidateBlockInput {
-            proposal_id,
-            deadline: chrono::Utc::now() + chrono_timeout,
-            // TODO(Matan 3/11/2024): Add the real value of the retrospective block hash.
-            retrospective_block_hash: Some(BlockHashAndNumber {
-                number: BlockNumber::default(),
-                hash: BlockHash::default(),
-            }),
-        };
-        self.maybe_start_height(height).await;
-        batcher.validate_block(input).await.expect("Failed to initiate proposal validation");
-        tokio::spawn(
-            async move {
-                let validate_fut = stream_validate_proposal(
-                    height,
-                    proposal_id,
-                    batcher,
-                    valid_proposals,
-                    content,
-                    fin_sender,
-                );
-                if let Err(e) = tokio::time::timeout(timeout, validate_fut).await {
-                    error!("Validation timed out. {e:?}");
-                }
+        match round.cmp(&self.current_round) {
+            std::cmp::Ordering::Less => fin_receiver,
+            std::cmp::Ordering::Greater => {
+                self.queued_proposals.insert(round, ((height, timeout, content), fin_sender));
+                fin_receiver
             }
-            .instrument(debug_span!("consensus_validate_proposal")),
-        );
-
-        fin_receiver
+            std::cmp::Ordering::Equal => {
+                self.validate_current_round_proposal(height, timeout, content, fin_sender).await;
+                fin_receiver
+            }
+        }
     }
 
     async fn repropose(&mut self, id: ProposalContentId, init: ProposalInit) {
@@ -245,37 +258,135 @@ impl ConsensusContext for SequencerConsensusContext {
 
         Ok(())
     }
+
+    async fn set_height_and_round(&mut self, height: BlockNumber, round: Round) {
+        if self.current_height.map(|h| height > h).unwrap_or(true) {
+            self.current_height = Some(height);
+            assert_eq!(round, 0);
+            self.current_round = round;
+            self.interrupt_active_proposal();
+            self.queued_proposals.clear();
+            self.active_proposal = None;
+            // The Batcher must be told when we begin to work on a new height. The implicit model is
+            // that consensus works on a given height until it is done (either a decision is reached
+            // or sync causes us to move on) and then moves on to a different height, never to
+            // return to the old height.
+            self.batcher
+                .start_height(StartHeightInput { height })
+                .await
+                .expect("Batcher should be ready to start the next height");
+            return;
+        }
+        assert_eq!(Some(height), self.current_height);
+        if round == self.current_round {
+            return;
+        }
+        assert!(round > self.current_round);
+        self.interrupt_active_proposal();
+        self.current_round = round;
+        let mut to_process = None;
+        while let Some(entry) = self.queued_proposals.first_entry() {
+            match self.current_round.cmp(entry.key()) {
+                std::cmp::Ordering::Less => {
+                    entry.remove();
+                }
+                std::cmp::Ordering::Equal => {
+                    to_process = Some(entry.remove());
+                    break;
+                }
+                std::cmp::Ordering::Greater => return,
+            }
+        }
+        // Validate the proposal for the current round if exists.
+        let Some(((height, timeout, content), fin_sender)) = to_process else {
+            return;
+        };
+        self.validate_current_round_proposal(height, timeout, content, fin_sender).await;
+    }
 }
 
 impl SequencerConsensusContext {
-    // The Batcher must be told when we begin to work on a new height. The implicit model is that
-    // consensus works on a given height until it is done (either a decision is reached or sync
-    // causes us to move on) and then moves on to a different height, never to return to the old
-    // height.
-    async fn maybe_start_height(&mut self, height: BlockNumber) {
-        if self.current_height == Some(height) {
-            return;
+    async fn validate_current_round_proposal(
+        &mut self,
+        height: BlockNumber,
+        timeout: Duration,
+        content: mpsc::Receiver<Vec<Transaction>>,
+        fin_sender: oneshot::Sender<ProposalContentId>,
+    ) {
+        debug!("Validating proposal for height: {height} with timeout: {timeout:?}");
+        let batcher = Arc::clone(&self.batcher);
+        let valid_proposals = Arc::clone(&self.valid_proposals);
+        let proposal_id = ProposalId(self.proposal_id);
+        self.proposal_id += 1;
+
+        let chrono_timeout =
+            chrono::Duration::from_std(timeout).expect("Can't convert timeout to chrono::Duration");
+        let now = chrono::Utc::now();
+        let input = ValidateBlockInput {
+            proposal_id,
+            deadline: now + chrono_timeout,
+            // TODO(Matan 3/11/2024): Add the real value of the retrospective block hash.
+            retrospective_block_hash: Some(BlockHashAndNumber {
+                number: BlockNumber::default(),
+                hash: BlockHash::default(),
+            }),
+            // TODO(Dan, Matan): Fill block info.
+            block_info: BlockInfo {
+                block_number: height,
+                block_timestamp: BlockTimestamp(
+                    now.timestamp().try_into().expect("Failed to convert timestamp"),
+                ),
+                ..Default::default()
+            },
+        };
+        batcher.validate_block(input).await.expect("Failed to initiate proposal validation");
+
+        let notify = Arc::new(Notify::new());
+        let notify_clone = Arc::clone(&notify);
+
+        let handle = tokio::spawn(
+            async move {
+                let validate_fut = stream_validate_proposal(
+                    height,
+                    proposal_id,
+                    batcher,
+                    valid_proposals,
+                    content,
+                    fin_sender,
+                );
+                tokio::select! {
+                    _ = notify_clone.notified() => {}
+                    result = tokio::time::timeout(timeout, validate_fut) =>{
+                        if let Err(e) = result {
+                            error!("Validation timed out. {e:?}");
+                        }
+                    }
+                }
+            }
+            .instrument(debug_span!("consensus_validate_proposal")),
+        );
+        self.active_proposal = Some((notify, handle));
+    }
+
+    fn interrupt_active_proposal(&self) {
+        if let Some((notify, _)) = &self.active_proposal {
+            notify.notify_one();
         }
-        self.batcher
-            .start_height(StartHeightInput { height })
-            .await
-            .expect("Batcher should be ready to start the next height");
-        self.current_height = Some(height);
     }
 }
 
 // Handles building a new proposal without blocking consensus:
 // 1. Receive chunks of content from the batcher.
-// 2. Forward these to consensus to be streamed out to the network.
+// 2. Forward these to the stream handler to be streamed out to the network.
 // 3. Once finished, receive the commitment from the batcher.
 // 4. Store the proposal for re-proposal.
-// 5. Send the commitment to consensus.
+// 5. Send the commitment to the stream handler (to send fin).
 async fn stream_build_proposal(
     height: BlockNumber,
     proposal_id: ProposalId,
     batcher: Arc<dyn BatcherClient>,
     valid_proposals: Arc<Mutex<HeightToIdToContent>>,
-    mut broadcast_client: BroadcastTopicClient<ProposalPart>,
+    mut proposal_sender: mpsc::Sender<ProposalPart>,
     fin_sender: oneshot::Sender<ProposalContentId>,
 ) {
     let mut content = Vec::new();
@@ -302,8 +413,8 @@ async fn stream_build_proposal(
                 }
                 debug!("Broadcasting proposal content: {transaction_hashes:?}");
                 trace!("Broadcasting proposal content: {transactions:?}");
-                broadcast_client
-                    .broadcast_message(ProposalPart::Transactions(TransactionBatch {
+                proposal_sender
+                    .send(ProposalPart::Transactions(TransactionBatch {
                         transactions,
                         tx_hashes: transaction_hashes,
                     }))
@@ -321,8 +432,8 @@ async fn stream_build_proposal(
                     height
                 );
                 debug!("Broadcasting proposal fin: {proposal_content_id:?}");
-                broadcast_client
-                    .broadcast_message(ProposalPart::Fin(ProposalFin { proposal_content_id }))
+                proposal_sender
+                    .send(ProposalPart::Fin(ProposalFin { proposal_content_id }))
                     .await
                     .expect("Failed to broadcast proposal fin");
                 // Update valid_proposals before sending fin to avoid a race condition

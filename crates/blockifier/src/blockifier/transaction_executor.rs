@@ -68,6 +68,7 @@ impl<S: StateReader> TransactionExecutor<S> {
             &mut block_state,
             old_block_number_and_hash,
             block_context.block_info().block_number,
+            &block_context.versioned_constants.os_constants,
         )?;
         Ok(Self::new(block_state, block_context, config))
     }
@@ -161,7 +162,7 @@ impl<S: StateReader> TransactionExecutor<S> {
                     .block_state
                     .as_ref()
                     .expect(BLOCK_STATE_ACCESS_ERR)
-                    .get_compiled_contract_class(*class_hash)?;
+                    .get_compiled_class(*class_hash)?;
                 Ok((*class_hash, contract_class.get_visited_segments(class_visited_pcs)?))
             })
             .collect::<TransactionExecutorResult<_>>()?;

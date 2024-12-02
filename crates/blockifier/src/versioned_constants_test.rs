@@ -78,6 +78,10 @@ fn check_constants_serde_error(json_data: &str, expected_error_message: &str) {
     let mut json_data_raw: IndexMap<String, Value> = serde_json::from_str(json_data).unwrap();
     json_data_raw.insert("validate_block_number_rounding".to_string(), 0.into());
     json_data_raw.insert("validate_timestamp_rounding".to_string(), 0.into());
+    json_data_raw.insert(
+        "os_contract_addresses".to_string(),
+        serde_json::to_value(OsContractAddresses::default()).unwrap(),
+    );
 
     let json_data = &serde_json::to_string(&json_data_raw).unwrap();
 
@@ -166,4 +170,26 @@ fn test_all_jsons_in_enum() {
 #[test]
 fn test_latest_no_panic() {
     VersionedConstants::latest_constants();
+}
+
+#[test]
+fn test_syscall_gas_cost_calculation() {
+    const EXPECTED_CALL_CONTRACT_GAS_COST: u64 = 87650;
+    const EXPECTED_SECP256K1MUL_GAS_COST: u64 = 8143650;
+    const EXPECTED_SHA256PROCESSBLOCK_GAS_COST: u64 = 841095;
+
+    let versioned_constants = VersionedConstants::latest_constants().clone();
+
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::CallContract),
+        EXPECTED_CALL_CONTRACT_GAS_COST
+    );
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::Secp256k1Mul),
+        EXPECTED_SECP256K1MUL_GAS_COST
+    );
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::Sha256ProcessBlock),
+        EXPECTED_SHA256PROCESSBLOCK_GAS_COST
+    );
 }

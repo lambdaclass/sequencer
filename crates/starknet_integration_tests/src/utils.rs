@@ -2,21 +2,15 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use axum::body::Body;
 use blockifier::context::ChainInfo;
 use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::CairoVersion;
-use mempool_test_utils::starknet_api_test_utils::{
-    rpc_tx_to_json,
-    AccountId,
-    MultiAccountTransactionGenerator,
-};
+use mempool_test_utils::starknet_api_test_utils::{AccountId, MultiAccountTransactionGenerator};
 use papyrus_consensus::config::ConsensusConfig;
-use papyrus_network::network_manager::test_utils::create_network_config_connected_to_broadcast_channels;
+use papyrus_network::network_manager::test_utils::create_network_configs_connected_to_broadcast_channels;
 use papyrus_network::network_manager::BroadcastTopicChannels;
-use papyrus_protobuf::consensus::ProposalPart;
+use papyrus_protobuf::consensus::{ProposalPart, StreamMessage};
 use papyrus_storage::StorageConfig;
-use reqwest::{Client, Response};
 use starknet_api::block::BlockNumber;
 use starknet_api::contract_address;
 use starknet_api::core::ContractAddress;
@@ -31,7 +25,6 @@ use starknet_gateway::config::{
     StatefulTransactionValidatorConfig,
     StatelessTransactionValidatorConfig,
 };
-use starknet_gateway_types::errors::GatewaySpecError;
 use starknet_http_server::config::HttpServerConfig;
 use starknet_sequencer_infra::test_utils::get_available_socket;
 use starknet_sequencer_node::config::node_config::SequencerNodeConfig;
@@ -49,14 +42,15 @@ pub async fn create_config(
     chain_info: ChainInfo,
     rpc_server_addr: SocketAddr,
     batcher_storage_config: StorageConfig,
-) -> (SequencerNodeConfig, RequiredParams, BroadcastTopicChannels<ProposalPart>) {
+) -> (SequencerNodeConfig, RequiredParams, BroadcastTopicChannels<StreamMessage<ProposalPart>>) {
     let fee_token_addresses = chain_info.fee_token_addresses.clone();
     let batcher_config = create_batcher_config(batcher_storage_config, chain_info.clone());
     let gateway_config = create_gateway_config(chain_info.clone()).await;
     let http_server_config = create_http_server_config().await;
     let rpc_state_reader_config = test_rpc_state_reader_config(rpc_server_addr);
-    let (consensus_manager_config, consensus_proposals_channels) =
-        create_consensus_manager_config_and_channels();
+    let (mut consensus_manager_configs, consensus_proposals_channels) =
+        create_consensus_manager_configs_and_channels(1);
+    let consensus_manager_config = consensus_manager_configs.pop().unwrap();
     (
         SequencerNodeConfig {
             batcher_config,
@@ -76,23 +70,32 @@ pub async fn create_config(
     )
 }
 
-fn create_consensus_manager_config_and_channels()
--> (ConsensusManagerConfig, BroadcastTopicChannels<ProposalPart>) {
-    let (network_config, broadcast_channels) =
-        create_network_config_connected_to_broadcast_channels(
+fn create_consensus_manager_configs_and_channels(
+    n_managers: usize,
+) -> (Vec<ConsensusManagerConfig>, BroadcastTopicChannels<StreamMessage<ProposalPart>>) {
+    let (network_configs, broadcast_channels) =
+        create_network_configs_connected_to_broadcast_channels(
+            n_managers,
             papyrus_network::gossipsub_impl::Topic::new(
-                starknet_consensus_manager::consensus_manager::NETWORK_TOPIC,
+                // TODO(guyn): return this to NETWORK_TOPIC once we have integrated streaming.
+                starknet_consensus_manager::consensus_manager::NETWORK_TOPIC2,
             ),
         );
-    let consensus_manager_config = ConsensusManagerConfig {
-        consensus_config: ConsensusConfig {
-            start_height: BlockNumber(1),
-            consensus_delay: Duration::from_secs(1),
-            network_config,
-            ..Default::default()
-        },
-    };
-    (consensus_manager_config, broadcast_channels)
+    // TODO: Need to also add a channel for votes, in addition to the proposals channel.
+
+    let consensus_manager_configs = network_configs
+        .into_iter()
+        .map(|network_config| ConsensusManagerConfig {
+            consensus_config: ConsensusConfig {
+                start_height: BlockNumber(1),
+                consensus_delay: Duration::from_secs(1),
+                network_config,
+                ..Default::default()
+            },
+        })
+        .collect();
+
+    (consensus_manager_configs, broadcast_channels)
 }
 
 pub fn test_rpc_state_reader_config(rpc_server_addr: SocketAddr) -> RpcStateReaderConfig {
@@ -102,44 +105,6 @@ pub fn test_rpc_state_reader_config(rpc_server_addr: SocketAddr) -> RpcStateRead
     RpcStateReaderConfig {
         url: format!("http://{rpc_server_addr:?}/rpc/{RPC_SPEC_VERSION}"),
         json_rpc_version: JSON_RPC_VERSION.to_string(),
-    }
-}
-
-/// A test utility client for interacting with an http server.
-pub struct HttpTestClient {
-    socket: SocketAddr,
-    client: Client,
-}
-
-impl HttpTestClient {
-    pub fn new(socket: SocketAddr) -> Self {
-        let client = Client::new();
-        Self { socket, client }
-    }
-
-    pub async fn assert_add_tx_success(&self, rpc_tx: RpcTransaction) -> TransactionHash {
-        let response = self.add_tx(rpc_tx).await;
-        assert!(response.status().is_success());
-
-        response.json().await.unwrap()
-    }
-
-    // TODO: implement when usage eventually arises.
-    pub async fn assert_add_tx_error(&self, _tx: RpcTransaction) -> GatewaySpecError {
-        todo!()
-    }
-
-    // Prefer using assert_add_tx_success or other higher level methods of this client, to ensure
-    // tests are boilerplate and implementation-detail free.
-    pub async fn add_tx(&self, rpc_tx: RpcTransaction) -> Response {
-        let tx_json = rpc_tx_to_json(&rpc_tx);
-        self.client
-            .post(format!("http://{}/add_tx", self.socket))
-            .header("content-type", "application/json")
-            .body(Body::from(tx_json))
-            .send()
-            .await
-            .unwrap()
     }
 }
 
