@@ -15,6 +15,9 @@ jobs:
       CAIRO_NATIVE_RUNTIME_LIBRARY: libcairo_native_runtime.a
     steps:
       - uses: actions/checkout@v4
+        with:
+          # required to clone native as a git submodule
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@1.82.0
         with:
           components: clippy
