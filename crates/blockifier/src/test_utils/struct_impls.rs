@@ -27,8 +27,6 @@ use crate::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionCont
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::common_hints::ExecutionMode;
 use crate::execution::contract_class::{CompiledClassV0, CompiledClassV1};
-#[cfg(feature = "cairo_native")]
-use crate::execution::contract_class::CompiledClassV1;
 use crate::execution::entry_point::{
     CallEntryPoint,
     EntryPointExecutionContext,
