@@ -34,8 +34,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.82.0
+      - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2023-10-19
           components: rustfmt
       - name: Run cargo fmt
-        run: cargo fmt --all -- --check
+        run:  cargo +nightly-2023-10-19 fmt --all -- --check
