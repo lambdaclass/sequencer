@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Index};
 use std::sync::Arc;
 
+use serde::de::Error;
 use cairo_lang_casm;
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_starknet_classes::casm_contract_class::{CasmContractClass, CasmContractEntryPoint};
@@ -21,7 +22,7 @@ use itertools::Itertools;
 use num_traits::Num;
 
 use semver::Version;
-use serde::de::Error as DeserializationError;
+use serde::de::{Error as DeserializationError, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use starknet_api::contract_class::{ContractClass, EntryPointType};
 use starknet_api::core::EntryPointSelector;
@@ -63,12 +64,65 @@ pub enum TrackedResource {
 
 /// Represents a runnable Starknet compiled class.
 /// Meaning, the program is runnable by the VM (or natively).
-#[derive(Clone, Debug, Eq, PartialEq, derive_more::From, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, derive_more::From)]
 pub enum RunnableCompiledClass {
     V0(CompiledClassV0),
     V1(CompiledClassV1),
     #[cfg(feature = "cairo_native")]
     V1Native(NativeCompiledClassV1),
+}
+
+
+//TODO: implement proper serialization for Native ?
+impl Serialize for RunnableCompiledClass {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            RunnableCompiledClass::V0(v0) => v0.serialize(serializer),
+            RunnableCompiledClass::V1(v1) => v1.serialize(serializer),
+            RunnableCompiledClass::V1Native(_) => serializer.serialize_none(),
+        }
+    }
+}
+
+//TODO: implement proper deserialization for Native ?
+impl<'de> Deserialize<'de> for RunnableCompiledClass {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct RunnableCompiledClassVisitor;
+
+        impl<'de> Visitor<'de> for RunnableCompiledClassVisitor {
+            type Value = RunnableCompiledClass;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct ContractClass")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                // Try to deserialize as V0
+                if let Ok(v0) = CompiledClassV0::deserialize(serde::de::value::MapAccessDeserializer::new(&mut map)) {
+                    return Ok(RunnableCompiledClass::V0(v0));
+                }
+
+                // If that fails, try V1
+                if let Ok(v1) = CompiledClassV1::deserialize(serde::de::value::MapAccessDeserializer::new(&mut map)) {
+                    return Ok(RunnableCompiledClass::V1(v1));
+                }
+
+                // If both fail, return an error
+                Err(Error::custom("Failed to deserialize ContractClass"))
+            }
+        }
+
+        deserializer.deserialize_map(RunnableCompiledClassVisitor)
+    }
 }
 
 impl TryFrom<ContractClass> for RunnableCompiledClass {
@@ -100,7 +154,8 @@ impl RunnableCompiledClass {
             Self::V1(class) => class.estimate_casm_hash_computation_resources(),
             #[cfg(feature = "cairo_native")]
             Self::V1Native(_) => {
-                todo!("Use casm to estimate casm hash computation resources")
+                // todo!("Use casm to estimate casm hash computation resources")
+                Default::default()
             }
         }
     }
@@ -116,7 +171,8 @@ impl RunnableCompiledClass {
             Self::V1(class) => class.get_visited_segments(visited_pcs),
             #[cfg(feature = "cairo_native")]
             Self::V1Native(_) => {
-                panic!("get_visited_segments is not supported for native contracts.")
+                // panic!("get_visited_segments is not supported for native contracts.")
+                Ok(Default::default())
             }
         }
     }
@@ -127,7 +183,8 @@ impl RunnableCompiledClass {
             Self::V1(class) => class.bytecode_length(),
             #[cfg(feature = "cairo_native")]
             Self::V1Native(_) => {
-                todo!("implement bytecode_length for native contracts.")
+                // todo!("implement bytecode_length for native contracts.")
+                Default::default()
             }
         }
     }
