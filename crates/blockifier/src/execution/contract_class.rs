@@ -82,6 +82,7 @@ impl Serialize for RunnableCompiledClass {
         match self {
             RunnableCompiledClass::V0(v0) => v0.serialize(serializer),
             RunnableCompiledClass::V1(v1) => v1.serialize(serializer),
+            #[cfg(feature = "cairo_native")]
             RunnableCompiledClass::V1Native(_) => serializer.serialize_none(),
         }
     }
@@ -217,6 +218,7 @@ impl RunnableCompiledClass {
 // Note: when deserializing from a SN API class JSON string, the ABI field is ignored
 // by serde, since it is not required for execution.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(transparent)]
 pub struct CompiledClassV0(pub Arc<CompiledClassV0Inner>);
 impl Deref for CompiledClassV0 {
     type Target = CompiledClassV0Inner;
