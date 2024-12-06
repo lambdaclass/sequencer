@@ -124,17 +124,19 @@ pub fn execute_entry_point_call(
     state: &mut dyn State,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
-    match compiled_class {
+    let pre_time = std::time::Instant::now();
+
+    let mut result = match compiled_class {
         RunnableCompiledClass::V0(compiled_class) => {
             deprecated_entry_point_execution::execute_entry_point_call(
                 call,
                 compiled_class,
                 state,
                 context,
-            )
+            )?
         }
         RunnableCompiledClass::V1(compiled_class) => {
-            entry_point_execution::execute_entry_point_call(call, compiled_class, state, context)
+            entry_point_execution::execute_entry_point_call(call, compiled_class, state, context)?
         }
         #[cfg(feature = "cairo_native")]
         RunnableCompiledClass::V1Native(compiled_class) => {
@@ -153,10 +155,14 @@ pub fn execute_entry_point_call(
                 compiled_class,
                 state,
                 context,
-            )
+            )?
             // }
         }
-    }
+    };
+
+    result.time = pre_time.elapsed();
+
+    Ok(result)
 }
 
 pub fn update_remaining_gas(remaining_gas: &mut u64, call_info: &CallInfo) {
