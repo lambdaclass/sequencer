@@ -20,7 +20,9 @@ use starknet_api::executable_transaction::{
 use starknet_api::execution_resources::GasAmount;
 use starknet_api::hash::StarkHash;
 use starknet_api::state::StorageKey;
-use starknet_api::test_utils::invoke::InvokeTxArgs;
+use starknet_api::test_utils::declare::executable_declare_tx;
+use starknet_api::test_utils::deploy_account::executable_deploy_account_tx;
+use starknet_api::test_utils::invoke::{executable_invoke_tx, InvokeTxArgs};
 use starknet_api::test_utils::NonceManager;
 use starknet_api::transaction::constants::TRANSFER_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::{
@@ -63,10 +65,7 @@ use crate::fee::gas_usage::estimate_minimal_gas_vector;
 use crate::state::cached_state::{StateChangesCount, StateChangesCountForFee, TransactionalState};
 use crate::state::state_api::{State, StateReader};
 use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::declare::declare_tx;
-use crate::test_utils::deploy_account::deploy_account_tx;
 use crate::test_utils::initial_test_state::{fund_account, test_state};
-use crate::test_utils::invoke::invoke_tx;
 use crate::test_utils::syscall::build_recurse_calldata;
 use crate::test_utils::{
     create_calldata,
@@ -108,7 +107,7 @@ use crate::transaction::test_utils::{
     INVALID,
 };
 use crate::transaction::transaction_types::TransactionType;
-use crate::transaction::transactions::{ExecutableTransaction, ExecutionFlags};
+use crate::transaction::transactions::ExecutableTransaction;
 use crate::utils::u64_from_usize;
 
 #[rstest]
@@ -194,7 +193,7 @@ fn test_fee_enforcement(
 ) {
     let account = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo0);
     let state = &mut test_state(&block_context.chain_info, BALANCE, &[(account, 1)]);
-    let tx = deploy_account_tx(
+    let tx = executable_deploy_account_tx(
         deploy_account_tx_args! {
             class_hash: account.get_class_hash(),
             max_fee: Fee(if zero_bounds { 0 } else { MAX_FEE.0 }),
@@ -454,7 +453,7 @@ fn test_max_fee_limit_validate(
     let class_info = calculate_class_info_for_testing(grindy_validate_account.get_class());
 
     // Declare the grindy-validation account.
-    let tx = declare_tx(
+    let tx = executable_declare_tx(
         declare_tx_args! {
             class_hash: grindy_class_hash,
             sender_address: account_address,
@@ -1364,9 +1363,9 @@ fn test_count_actual_storage_changes(
         nonce: nonce_manager.next(account_address),
     };
     let account_tx = account_invoke_tx(invoke_args.clone());
-    let execution_flags = ExecutionFlags { concurrency_mode: false };
+    let concurrency_mode = false;
     let execution_info =
-        account_tx.execute_raw(&mut state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut state, &block_context, concurrency_mode).unwrap();
 
     let fee_1 = execution_info.receipt.fee;
     let state_changes_1 = state.get_actual_state_changes().unwrap();
@@ -1414,7 +1413,7 @@ fn test_count_actual_storage_changes(
         ..invoke_args.clone()
     });
     let execution_info =
-        account_tx.execute_raw(&mut state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut state, &block_context, concurrency_mode).unwrap();
 
     let fee_2 = execution_info.receipt.fee;
     let state_changes_2 = state.get_actual_state_changes().unwrap();
@@ -1455,7 +1454,7 @@ fn test_count_actual_storage_changes(
         ..invoke_args
     });
     let execution_info =
-        account_tx.execute_raw(&mut state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut state, &block_context, concurrency_mode).unwrap();
 
     let fee_transfer = execution_info.receipt.fee;
     let state_changes_transfer = state.get_actual_state_changes().unwrap();
@@ -1534,9 +1533,9 @@ fn test_concurrency_execute_fee_transfer(
     // Case 1: The transaction did not read form/ write to the sequenser balance before executing
     // fee transfer.
     let mut transactional_state = TransactionalState::create_transactional(state);
-    let execution_flags = ExecutionFlags { concurrency_mode: true };
+    let concurrency_mode = true;
     let result =
-        account_tx.execute_raw(&mut transactional_state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut transactional_state, &block_context, concurrency_mode).unwrap();
     assert!(!result.is_reverted());
     let transactional_cache = transactional_state.cache.borrow();
     for storage in [
@@ -1575,7 +1574,7 @@ fn test_concurrency_execute_fee_transfer(
     });
 
     let execution_result =
-        account_tx.execute_raw(&mut transactional_state, &block_context, execution_flags);
+        account_tx.execute_raw(&mut transactional_state, &block_context, concurrency_mode);
     let result = execution_result.unwrap();
     assert!(!result.is_reverted());
     // Check that the sequencer balance was not updated.
@@ -1629,9 +1628,9 @@ fn test_concurrent_fee_transfer_when_sender_is_sequencer(
     let fee_token_address = block_context.chain_info.fee_token_address(fee_type);
 
     let mut transactional_state = TransactionalState::create_transactional(state);
-    let execution_flags = ExecutionFlags { concurrency_mode: true };
+    let concurrency_mode = true;
     let result =
-        account_tx.execute_raw(&mut transactional_state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut transactional_state, &block_context, concurrency_mode).unwrap();
     assert!(!result.is_reverted());
     // Check that the sequencer balance was updated (in this case, was not changed).
     for (seq_key, seq_value) in
@@ -1756,7 +1755,7 @@ fn test_revert_in_execute(
 
     // Skip validate phase, as we want to test the revert in the execute phase.
     let validate = false;
-    let tx = invoke_tx(invoke_tx_args! {
+    let tx = executable_invoke_tx(invoke_tx_args! {
         resource_bounds: default_all_resource_bounds,
         ..tx_args
     });
