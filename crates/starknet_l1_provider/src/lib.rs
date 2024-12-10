@@ -38,6 +38,7 @@ impl L1Provider {
             ProviderState::Pending => Err(L1ProviderError::GetTransactionsInPendingState),
             ProviderState::Validate => Err(L1ProviderError::GetTransactionConsensusBug),
             ProviderState::Uninitialized => panic!("Uninitialized L1 provider"),
+            ProviderState::Uninitialized => panic!("Uninitialized L1 provider"),
         }
     }
 
@@ -48,6 +49,7 @@ impl L1Provider {
             ProviderState::Validate => Ok(self.tx_manager.tx_status(tx_hash)),
             ProviderState::Propose => Err(L1ProviderError::ValidateTransactionConsensusBug),
             ProviderState::Pending => Err(L1ProviderError::ValidateInPendingState),
+            ProviderState::Uninitialized => panic!("Uninitialized L1 provider"),
             ProviderState::Uninitialized => panic!("Uninitialized L1 provider"),
         }
     }
@@ -173,6 +175,7 @@ impl ProviderState {
         match self {
             ProviderState::Pending => "Pending",
             ProviderState::Propose => "Propose",
+            ProviderState::Uninitialized => "Uninitialized",
             ProviderState::Validate => "Validate",
             ProviderState::Uninitialized => "Validate",
         }

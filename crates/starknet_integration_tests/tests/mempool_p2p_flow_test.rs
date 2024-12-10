@@ -121,6 +121,7 @@ async fn test_mempool_sends_tx_to_other_peer(mut tx_generator: MultiAccountTrans
 
     // Create and send transactions.
     let _tx_hashes = run_integration_test_scenario(&mut tx_generator, &mut |tx: RpcTransaction| {
+    let _tx_hashes = run_integration_test_scenario(&mut tx_generator, &mut |tx: RpcTransaction| {
         expected_txs.insert(tx.clone()); // push the sent tx to the expected_txs list
         add_tx_http_client.assert_add_tx_success(tx)
     })

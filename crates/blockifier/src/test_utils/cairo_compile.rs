@@ -241,6 +241,10 @@ pub fn prepare_group_tag_compiler_deps(tag_and_toolchain: &TagAndToolchain) {
         "checkout",
         &tag,
     ]));
+}
+
+fn verify_cairo1_compiler_deps(git_tag_override: Option<String>) {
+    let (tag, cairo_repo_path) = get_tag_and_repo_file_path(git_tag_override);
 
     // Install the toolchain, if specified.
     if let Some(toolchain) = optional_toolchain {

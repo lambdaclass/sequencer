@@ -53,6 +53,40 @@ pub struct Cairo1FeatureContractMetadata {
     pub sierra_path: String,
 }
 
+pub enum FeatureContractMetadata {
+    Cairo0(Cairo0FeatureContractMetadata),
+    Cairo1(Cairo1FeatureContractMetadata),
+}
+
+impl FeatureContractMetadata {
+    pub fn compiled_path(&self) -> String {
+        match self {
+            FeatureContractMetadata::Cairo0(data) => data.compiled_path.clone(),
+            FeatureContractMetadata::Cairo1(data) => data.compiled_path.clone(),
+        }
+    }
+
+    pub fn sierra_path(&self) -> String {
+        match self {
+            FeatureContractMetadata::Cairo0(_) => panic!("No sierra path for Cairo0 contracts."),
+            FeatureContractMetadata::Cairo1(data) => data.sierra_path.clone(),
+        }
+    }
+}
+
+pub struct Cairo0FeatureContractMetadata {
+    pub source_path: String,
+    pub base_filename: String,
+    pub compiled_path: String,
+}
+
+pub struct Cairo1FeatureContractMetadata {
+    pub source_path: String,
+    pub base_filename: String,
+    pub compiled_path: String,
+    pub sierra_path: String,
+}
+
 // To fix Cairo0 feature contracts, first enter a python venv and install the requirements:
 // ```
 // python -m venv tmp_venv
@@ -202,7 +236,10 @@ fn verify_and_get_files(cairo_version: CairoVersion) -> Vec<FeatureContractMetad
             if let Some(dir_name) = path.file_name() {
                 assert!(
                     dir_name == COMPILED_CONTRACTS_SUBDIR || dir_name == SIERRA_CONTRACTS_SUBDIR,
+                assert!(
+                    dir_name == COMPILED_CONTRACTS_SUBDIR || dir_name == SIERRA_CONTRACTS_SUBDIR,
                     "Found directory '{}' in `{directory}`, which should contain only the \
+                     `{COMPILED_CONTRACTS_SUBDIR}` or `{SIERRA_CONTRACTS_SUBDIR}` directory.",
                      `{COMPILED_CONTRACTS_SUBDIR}` or `{SIERRA_CONTRACTS_SUBDIR}` directory.",
                     dir_name.to_string_lossy()
                 );
@@ -257,6 +294,7 @@ fn verify_feature_contracts_match_enum(
     cairo_version: CairoVersion,
 ) {
     let mut compiled_paths_from_enum: Vec<String> = FeatureContract::all_feature_contracts()
+        .filter(|contract| contract.cairo_version() == cairo_version)
         .filter(|contract| contract.cairo_version() == cairo_version)
         .map(|contract| contract.get_compiled_path())
         .collect();

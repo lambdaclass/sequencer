@@ -60,6 +60,10 @@ fn pending_state_errors() {
         .with_state(Pending)
         .with_txs([tx!(tx_hash: 1)])
         .build_into_l1_provider();
+    let mut l1_provider = L1ProviderContentBuilder::new()
+        .with_state(Pending)
+        .with_txs([tx!(tx_hash: 1)])
+        .build_into_l1_provider();
 
     // Test.
     assert_matches!(
@@ -96,6 +100,8 @@ fn proposal_start_errors() {
     // Setup.
     let mut l1_provider =
         L1ProviderContentBuilder::new().with_state(Pending).build_into_l1_provider();
+    let mut l1_provider =
+        L1ProviderContentBuilder::new().with_state(Pending).build_into_l1_provider();
     // Test.
     l1_provider.proposal_start().unwrap();
 
@@ -112,6 +118,8 @@ fn proposal_start_errors() {
 #[test]
 fn validation_start_errors() {
     // Setup.
+    let mut l1_provider =
+        L1ProviderContentBuilder::new().with_state(Pending).build_into_l1_provider();
     let mut l1_provider =
         L1ProviderContentBuilder::new().with_state(Pending).build_into_l1_provider();
 

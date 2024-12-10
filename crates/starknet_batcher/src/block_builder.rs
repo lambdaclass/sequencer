@@ -14,6 +14,7 @@ use blockifier::execution::contract_class::RunnableCompiledClass;
 use blockifier::state::cached_state::CommitmentStateDiff;
 use blockifier::state::errors::StateError;
 use blockifier::state::global_cache::GlobalContractCache;
+use blockifier::transaction::account_transaction::AccountTransaction;
 use blockifier::transaction::objects::TransactionExecutionInfo;
 use blockifier::transaction::transaction_execution::Transaction as BlockifierTransaction;
 use blockifier::versioned_constants::{VersionedConstants, VersionedConstantsOverrides};
@@ -25,6 +26,7 @@ use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_state_reader::papyrus_state::PapyrusReader;
 use papyrus_storage::StorageReader;
 use serde::{Deserialize, Serialize};
+use starknet_api::block::{BlockHashAndNumber, BlockInfo};
 use starknet_api::block::{BlockHashAndNumber, BlockInfo};
 use starknet_api::executable_transaction::Transaction;
 use starknet_api::transaction::TransactionHash;
@@ -215,6 +217,7 @@ async fn collect_execution_results_and_stream_txs(
 
 pub struct BlockMetadata {
     pub block_info: BlockInfo,
+    pub block_info: BlockInfo,
     pub retrospective_block_hash: Option<BlockHashAndNumber>,
 }
 
@@ -284,13 +287,16 @@ impl BlockBuilderFactory {
     fn preprocess_and_create_transaction_executor(
         &self,
         block_metadata: BlockMetadata,
+        block_metadata: BlockMetadata,
     ) -> BlockBuilderResult<TransactionExecutor<PapyrusReader>> {
+        let height = block_metadata.block_info.block_number;
         let height = block_metadata.block_info.block_number;
         let block_builder_config = self.block_builder_config.clone();
         let versioned_constants = VersionedConstants::get_versioned_constants(
             block_builder_config.versioned_constants_overrides,
         );
         let block_context = BlockContext::new(
+            block_metadata.block_info,
             block_metadata.block_info,
             block_builder_config.chain_info,
             versioned_constants,
@@ -299,6 +305,7 @@ impl BlockBuilderFactory {
 
         let state_reader = PapyrusReader::new(
             self.storage_reader.clone(),
+            height,
             height,
             self.global_class_hash_to_class.clone(),
         );
@@ -322,6 +329,7 @@ impl BlockBuilderFactoryTrait for BlockBuilderFactory {
         tx_provider: Box<dyn TransactionProvider>,
         output_content_sender: Option<tokio::sync::mpsc::UnboundedSender<Transaction>>,
     ) -> BlockBuilderResult<(Box<dyn BlockBuilderTrait>, AbortSignalSender)> {
+        let executor = self.preprocess_and_create_transaction_executor(block_metadata)?;
         let executor = self.preprocess_and_create_transaction_executor(block_metadata)?;
         let (abort_signal_sender, abort_signal_receiver) = tokio::sync::oneshot::channel();
         let block_builder = Box::new(BlockBuilder::new(

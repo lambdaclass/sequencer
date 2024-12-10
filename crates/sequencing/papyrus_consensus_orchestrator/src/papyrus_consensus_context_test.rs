@@ -13,9 +13,11 @@ use papyrus_network::network_manager::BroadcastTopicChannels;
 use papyrus_protobuf::consensus::{
     ConsensusMessage,
     ProposalFin,
+    ProposalFin,
     ProposalInit,
     ProposalPart,
     StreamMessage,
+    TransactionBatch,
     TransactionBatch,
     Vote,
 };
@@ -61,7 +63,14 @@ async fn validate_proposal_success() {
             tx_hashes: vec![],
         });
         validate_sender.try_send(tx_part).unwrap();
+        let tx_part = ProposalPart::Transactions(TransactionBatch {
+            transactions: vec![tx],
+            tx_hashes: vec![],
+        });
+        validate_sender.try_send(tx_part).unwrap();
     }
+    let fin_part = ProposalPart::Fin(ProposalFin { proposal_content_id: block.header.block_hash });
+    validate_sender.try_send(fin_part).unwrap();
     let fin_part = ProposalPart::Fin(ProposalFin { proposal_content_id: block.header.block_hash });
     validate_sender.try_send(fin_part).unwrap();
     validate_sender.close_channel();
@@ -79,6 +88,7 @@ async fn validate_proposal_success() {
         .unwrap();
 
     assert_eq!(fin.0, block.header.block_hash);
+    assert_eq!(fin.0, block.header.block_hash);
 }
 
 #[tokio::test]
@@ -89,6 +99,11 @@ async fn validate_proposal_fail() {
     let different_block = get_test_block(4, None, None, None);
     let (mut validate_sender, validate_receiver) = mpsc::channel(5000);
     for tx in different_block.body.transactions.clone() {
+        let tx_part = ProposalPart::Transactions(TransactionBatch {
+            transactions: vec![tx],
+            tx_hashes: vec![],
+        });
+        validate_sender.try_send(tx_part).unwrap();
         let tx_part = ProposalPart::Transactions(TransactionBatch {
             transactions: vec![tx],
             tx_hashes: vec![],

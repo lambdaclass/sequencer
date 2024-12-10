@@ -87,6 +87,7 @@ pub fn create_consensus_manager_configs_and_channels(
             n_managers,
             papyrus_network::gossipsub_impl::Topic::new(
                 starknet_consensus_manager::consensus_manager::CONSENSUS_PROPOSALS_TOPIC,
+                starknet_consensus_manager::consensus_manager::CONSENSUS_PROPOSALS_TOPIC,
             ),
         );
     // TODO: Need to also add a channel for votes, in addition to the proposals channel.
@@ -99,6 +100,7 @@ pub fn create_consensus_manager_configs_and_channels(
 
     let consensus_manager_configs = network_configs
         .into_iter()
+        // TODO(Matan): Get config from default config file.
         // TODO(Matan): Get config from default config file.
         .map(|network_config| ConsensusManagerConfig {
             consensus_config: ConsensusConfig {
@@ -142,6 +144,7 @@ pub fn create_integration_test_tx_generator() -> MultiAccountTransactionGenerato
 
 fn create_txs_for_integration_test(
     tx_generator: &mut MultiAccountTransactionGenerator,
+    tx_generator: &mut MultiAccountTransactionGenerator,
 ) -> Vec<RpcTransaction> {
     const ACCOUNT_ID_0: AccountId = 0;
     const ACCOUNT_ID_1: AccountId = 1;
@@ -184,6 +187,7 @@ where
 /// Creates and runs the integration test scenario for the sequencer integration test. Returns a
 /// list of transaction hashes, in the order they are expected to be in the mempool.
 pub async fn run_integration_test_scenario<'a, Fut>(
+    tx_generator: &mut MultiAccountTransactionGenerator,
     tx_generator: &mut MultiAccountTransactionGenerator,
     send_rpc_tx_fn: &'a mut dyn FnMut(RpcTransaction) -> Fut,
 ) -> Vec<TransactionHash>
@@ -244,6 +248,7 @@ pub fn create_batcher_config(
     // TODO(Arni): Create BlockBuilderConfig create for testing method and use here.
     BatcherConfig {
         storage: batcher_storage_config,
+        block_builder_config: BlockBuilderConfig { chain_info, ..Default::default() },
         block_builder_config: BlockBuilderConfig { chain_info, ..Default::default() },
         ..Default::default()
     }

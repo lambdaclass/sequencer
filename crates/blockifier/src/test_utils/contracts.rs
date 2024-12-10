@@ -219,6 +219,7 @@ impl FeatureContract {
     /// specific (old) compiler tag. To run the (old) compiler, older rust
     /// version is required.
     pub fn fixed_tag_and_rust_toolchain(&self) -> TagAndToolchain {
+    pub fn fixed_tag_and_rust_toolchain(&self) -> TagAndToolchain {
         match self {
             Self::LegacyTestContract => (
                 Some(LEGACY_CONTRACT_COMPILER_TAG.into()),
@@ -472,6 +473,13 @@ impl FeatureContract {
     pub fn all_feature_contracts() -> impl Iterator<Item = Self> {
         // ERC20 is a special case - not in the feature_contracts directory.
         Self::all_contracts().filter(|contract| !matches!(contract, Self::ERC20(_)))
+    }
+
+    pub fn cairo1_feature_contracts_by_tag() -> TagToContractsMapping {
+        Self::all_feature_contracts()
+            .filter(|contract| contract.cairo_version() != CairoVersion::Cairo0)
+            .map(|contract| (contract.fixed_tag_and_rust_toolchain(), contract))
+            .into_group_map()
     }
 
     pub fn cairo1_feature_contracts_by_tag() -> TagToContractsMapping {

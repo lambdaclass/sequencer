@@ -20,6 +20,9 @@ pub mod l1_handler;
 /// Returns the path to a file in the resources directory. This assumes the current working
 /// directory has a `resources` folder. The value for file_path should be the path to the required
 /// file in the folder "resources".
+/// Returns the path to a file in the resources directory. This assumes the current working
+/// directory has a `resources` folder. The value for file_path should be the path to the required
+/// file in the folder "resources".
 pub fn path_in_resources<P: AsRef<Path>>(file_path: P) -> PathBuf {
     current_dir().unwrap().join("resources").join(file_path)
 }

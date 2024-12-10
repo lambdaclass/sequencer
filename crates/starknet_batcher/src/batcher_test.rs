@@ -5,6 +5,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use blockifier::abi::constants;
 use blockifier::test_utils::struct_impls::BlockInfoExt;
+use blockifier::test_utils::struct_impls::BlockInfoExt;
 use chrono::Utc;
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -63,6 +64,10 @@ const INITIAL_HEIGHT: BlockNumber = BlockNumber(3);
 const STREAMING_CHUNK_SIZE: usize = 3;
 const BLOCK_GENERATION_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(1);
 const PROPOSAL_ID: ProposalId = ProposalId(0);
+
+fn initial_block_info() -> BlockInfo {
+    BlockInfo { block_number: INITIAL_HEIGHT, ..BlockInfo::create_for_testing() }
+}
 
 fn initial_block_info() -> BlockInfo {
     BlockInfo { block_number: INITIAL_HEIGHT, ..BlockInfo::create_for_testing() }

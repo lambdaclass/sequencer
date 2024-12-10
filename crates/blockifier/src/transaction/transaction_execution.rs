@@ -23,6 +23,10 @@ use crate::transaction::account_transaction::{
     AccountTransaction,
     ExecutionFlags as AccountExecutionFlags,
 };
+use crate::transaction::account_transaction::{
+    AccountTransaction,
+    ExecutionFlags as AccountExecutionFlags,
+};
 use crate::transaction::errors::TransactionFeeError;
 use crate::transaction::objects::{
     TransactionExecutionInfo,
@@ -30,6 +34,7 @@ use crate::transaction::objects::{
     TransactionInfo,
     TransactionInfoCreator,
 };
+use crate::transaction::transactions::{Executable, ExecutableTransaction};
 use crate::transaction::transactions::{Executable, ExecutableTransaction};
 
 // TODO: Move into transaction.rs, makes more sense to be defined there.
@@ -79,6 +84,7 @@ impl Transaction {
         paid_fee_on_l1: Option<Fee>,
         deployed_contract_address: Option<ContractAddress>,
         execution_flags: AccountExecutionFlags,
+        execution_flags: AccountExecutionFlags,
     ) -> TransactionExecutionResult<Self> {
         let executable_tx = match tx {
             StarknetApiTransaction::L1Handler(l1_handler) => {
@@ -121,6 +127,7 @@ impl Transaction {
             _ => unimplemented!(),
         };
         Ok(AccountTransaction { tx: executable_tx, execution_flags }.into())
+        Ok(AccountTransaction { tx: executable_tx, execution_flags }.into())
     }
 }
 
@@ -138,6 +145,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
+        _concurrency_mode: bool,
         _concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
         let tx_context = Arc::new(block_context.to_tx_context(self));
@@ -187,6 +195,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
         concurrency_mode: bool,
+        concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
         // TODO(Yoni, 1/8/2024): consider unimplementing the ExecutableTransaction trait for inner
         // types, since now running Transaction::execute_raw is not identical to
@@ -194,7 +203,9 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
         let tx_execution_info = match self {
             Self::Account(account_tx) => {
                 account_tx.execute_raw(state, block_context, concurrency_mode)?
+                account_tx.execute_raw(state, block_context, concurrency_mode)?
             }
+            Self::L1Handler(tx) => tx.execute_raw(state, block_context, concurrency_mode)?,
             Self::L1Handler(tx) => tx.execute_raw(state, block_context, concurrency_mode)?,
         };
 
