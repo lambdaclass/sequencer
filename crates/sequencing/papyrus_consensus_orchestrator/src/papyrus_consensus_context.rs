@@ -16,22 +16,11 @@ use async_trait::async_trait;
 use futures::channel::{mpsc, oneshot};
 use futures::{SinkExt, StreamExt};
 use papyrus_consensus::types::{
-    ConsensusContext,
-    ConsensusError,
-    ProposalContentId,
-    Round,
-    ValidatorId,
-    DEFAULT_VALIDATOR_ID,
+    ConsensusContext, ConsensusError, ProposalContentId, Round, ValidatorId, DEFAULT_VALIDATOR_ID,
 };
 use papyrus_network::network_manager::{BroadcastTopicClient, BroadcastTopicClientTrait};
 use papyrus_protobuf::consensus::{
-    ConsensusMessage,
-    Proposal,
-    ProposalFin,
-    ProposalInit,
-    ProposalPart,
-    TransactionBatch,
-    Vote,
+    ConsensusMessage, Proposal, ProposalFin, ProposalInit, ProposalPart, TransactionBatch, Vote,
 };
 use papyrus_storage::body::BodyStorageReader;
 use papyrus_storage::header::HeaderStorageReader;
@@ -171,10 +160,7 @@ impl ConsensusContext for PapyrusConsensusContext {
         height: BlockNumber,
         _round: Round,
         _proposer: ValidatorId,
-        _proposer: ValidatorId,
         _timeout: Duration,
-        mut content: mpsc::Receiver<ProposalPart>,
-    ) -> oneshot::Receiver<(ProposalContentId, ProposalFin)> {
         mut content: mpsc::Receiver<ProposalPart>,
     ) -> oneshot::Receiver<(ProposalContentId, ProposalFin)> {
         let (fin_sender, fin_receiver) = oneshot::channel();
@@ -217,35 +203,10 @@ impl ConsensusContext for PapyrusConsensusContext {
                     let received_tx = content_transactions
                         .pop()
                         .expect("Received less transactions than expected");
-                // First gather all the non-fin transactions.
-                let mut content_transactions: Vec<Transaction> = Vec::new();
-                let received_block_hash = loop {
-                    match content.next().await {
-                        Some(ProposalPart::Transactions(batch)) => {
-                            for tx in batch.transactions {
-                                content_transactions.push(tx);
-                            }
-                        }
-                        Some(ProposalPart::Fin(fin)) => {
-                            break fin.proposal_content_id;
-                        }
-                        msg => panic!("Unexpected message: {msg:?}"),
-                    }
-                };
-
-                // Check each transaction matches the transactions in the storage.
-                for tx in transactions.iter().rev() {
-                    let received_tx = content_transactions
-                        .pop()
-                        .expect("Received less transactions than expected");
                     if tx != &received_tx {
                         panic!("Transactions are not equal. In storage: {tx:?}, : {received_tx:?}");
                     }
                 }
-                assert!(
-                    content_transactions.is_empty(),
-                    "Received more transactions than expected"
-                );
                 assert!(
                     content_transactions.is_empty(),
                     "Received more transactions than expected"
@@ -267,11 +228,6 @@ impl ConsensusContext for PapyrusConsensusContext {
                 // Done after inserting the proposal into the map to avoid race conditions between
                 // insertion and calls to `repropose`.
                 // This can happen as a result of sync interrupting `run_height`.
-                fin_sender
-                    .send((block_hash, ProposalFin { proposal_content_id: received_block_hash }))
-                    .unwrap_or_else(|_| {
-                        warn!("Failed to send block to consensus. height={height}");
-                    })
                 fin_sender
                     .send((block_hash, ProposalFin { proposal_content_id: received_block_hash }))
                     .unwrap_or_else(|_| {

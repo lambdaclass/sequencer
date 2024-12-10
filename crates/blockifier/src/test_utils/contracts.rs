@@ -8,8 +8,7 @@ use starknet_api::abi::constants::CONSTRUCTOR_ENTRY_POINT_NAME;
 use starknet_api::contract_class::{ContractClass, EntryPointType};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::deprecated_contract_class::{
-    ContractClass as DeprecatedContractClass,
-    EntryPointOffset,
+    ContractClass as DeprecatedContractClass, EntryPointOffset,
 };
 use starknet_api::state::SierraContractClass;
 use starknet_api::{class_hash, contract_address, felt};
@@ -218,7 +217,6 @@ impl FeatureContract {
     /// Some contracts are designed to test behavior of code compiled with a
     /// specific (old) compiler tag. To run the (old) compiler, older rust
     /// version is required.
-    pub fn fixed_tag_and_rust_toolchain(&self) -> TagAndToolchain {
     pub fn fixed_tag_and_rust_toolchain(&self) -> TagAndToolchain {
         match self {
             Self::LegacyTestContract => (
@@ -473,13 +471,6 @@ impl FeatureContract {
     pub fn all_feature_contracts() -> impl Iterator<Item = Self> {
         // ERC20 is a special case - not in the feature_contracts directory.
         Self::all_contracts().filter(|contract| !matches!(contract, Self::ERC20(_)))
-    }
-
-    pub fn cairo1_feature_contracts_by_tag() -> TagToContractsMapping {
-        Self::all_feature_contracts()
-            .filter(|contract| contract.cairo_version() != CairoVersion::Cairo0)
-            .map(|contract| (contract.fixed_tag_and_rust_toolchain(), contract))
-            .into_group_map()
     }
 
     pub fn cairo1_feature_contracts_by_tag() -> TagToContractsMapping {

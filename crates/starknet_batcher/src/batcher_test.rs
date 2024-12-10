@@ -5,7 +5,6 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use blockifier::abi::constants;
 use blockifier::test_utils::struct_impls::BlockInfoExt;
-use blockifier::test_utils::struct_impls::BlockInfoExt;
 use chrono::Utc;
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -20,19 +19,9 @@ use starknet_api::state::ThinStateDiff;
 use starknet_api::transaction::TransactionHash;
 use starknet_api::{contract_address, felt, nonce, tx_hash};
 use starknet_batcher_types::batcher_types::{
-    DecisionReachedInput,
-    GetHeightResponse,
-    GetProposalContent,
-    GetProposalContentInput,
-    GetProposalContentResponse,
-    ProposalCommitment,
-    ProposalId,
-    ProposalStatus,
-    ProposeBlockInput,
-    SendProposalContent,
-    SendProposalContentInput,
-    SendProposalContentResponse,
-    StartHeightInput,
+    DecisionReachedInput, GetHeightResponse, GetProposalContent, GetProposalContentInput,
+    GetProposalContentResponse, ProposalCommitment, ProposalId, ProposalStatus, ProposeBlockInput,
+    SendProposalContent, SendProposalContentInput, SendProposalContentResponse, StartHeightInput,
     ValidateBlockInput,
 };
 use starknet_batcher_types::errors::BatcherError;
@@ -41,21 +30,13 @@ use starknet_mempool_types::mempool_types::CommitBlockArgs;
 
 use crate::batcher::{Batcher, MockBatcherStorageReaderTrait, MockBatcherStorageWriterTrait};
 use crate::block_builder::{
-    AbortSignalSender,
-    BlockBuilderError,
-    BlockBuilderTrait,
-    FailOnErrorCause,
-    MockBlockBuilderFactoryTrait,
-    MockBlockBuilderTrait,
+    AbortSignalSender, BlockBuilderError, BlockBuilderTrait, FailOnErrorCause,
+    MockBlockBuilderFactoryTrait, MockBlockBuilderTrait,
 };
 use crate::config::BatcherConfig;
 use crate::proposal_manager::{
-    GenerateProposalError,
-    InternalProposalStatus,
-    ProposalError,
-    ProposalManagerTrait,
-    ProposalOutput,
-    ProposalResult,
+    GenerateProposalError, InternalProposalStatus, ProposalError, ProposalManagerTrait,
+    ProposalOutput, ProposalResult,
 };
 use crate::test_utils::test_txs;
 use crate::transaction_provider::NextTxs;
@@ -64,10 +45,6 @@ const INITIAL_HEIGHT: BlockNumber = BlockNumber(3);
 const STREAMING_CHUNK_SIZE: usize = 3;
 const BLOCK_GENERATION_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(1);
 const PROPOSAL_ID: ProposalId = ProposalId(0);
-
-fn initial_block_info() -> BlockInfo {
-    BlockInfo { block_number: INITIAL_HEIGHT, ..BlockInfo::create_for_testing() }
-}
 
 fn initial_block_info() -> BlockInfo {
     BlockInfo { block_number: INITIAL_HEIGHT, ..BlockInfo::create_for_testing() }

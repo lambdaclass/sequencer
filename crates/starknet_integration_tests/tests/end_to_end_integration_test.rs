@@ -9,14 +9,11 @@ use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::state::StateNumber;
 use starknet_integration_tests::integration_test_setup::IntegrationTestSetup;
 use starknet_integration_tests::utils::{
-    create_integration_test_tx_generator,
-    run_integration_test,
-    send_account_txs,
+    create_integration_test_tx_generator, run_integration_test, send_account_txs,
 };
 use starknet_sequencer_infra::trace_util::configure_tracing;
 use starknet_sequencer_node::test_utils::compilation::spawn_run_node;
 use starknet_types_core::felt::Felt;
-use tracing::info;
 use tracing::info;
 
 #[fixture]
@@ -47,17 +44,9 @@ fn get_account_nonce(storage_reader: &StorageReader, contract_address: ContractA
 /// the given number of attempts the target block number has not been reached.
 async fn await_block(
     interval: u64,
-    interval: u64,
     target_block_number: BlockNumber,
     max_attempts: usize,
     storage_reader: &StorageReader,
-) -> Result<BlockNumber, ()> {
-    let condition = |&latest_block_number: &BlockNumber| latest_block_number >= target_block_number;
-    let get_latest_block_number_closure = || async move { get_latest_block_number(storage_reader) };
-
-    run_until(interval, max_attempts, get_latest_block_number_closure, condition, None)
-        .await
-        .ok_or(())
 ) -> Result<BlockNumber, ()> {
     let condition = |&latest_block_number: &BlockNumber| latest_block_number >= target_block_number;
     let get_latest_block_number_closure = || async move { get_latest_block_number(storage_reader) };
@@ -110,7 +99,6 @@ async fn test_end_to_end_integration(mut tx_generator: MultiAccountTransactionGe
         papyrus_storage::open_storage(integration_test_setup.batcher_storage_config)
             .expect("Failed to open batcher's storage");
 
-    match await_block(5000, EXPECTED_BLOCK_NUMBER, 15, &batcher_storage_reader).await {
     match await_block(5000, EXPECTED_BLOCK_NUMBER, 15, &batcher_storage_reader).await {
         Ok(_) => {}
         Err(_) => panic!("Did not reach expected block number."),

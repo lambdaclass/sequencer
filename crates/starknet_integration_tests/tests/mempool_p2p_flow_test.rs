@@ -11,29 +11,22 @@ use papyrus_protobuf::mempool::RpcTransactionWrapper;
 use rstest::{fixture, rstest};
 use starknet_api::executable_transaction::AccountTransaction;
 use starknet_api::rpc_transaction::{
-    RpcDeployAccountTransaction,
-    RpcInvokeTransaction,
-    RpcTransaction,
+    RpcDeployAccountTransaction, RpcInvokeTransaction, RpcTransaction,
 };
 use starknet_api::transaction::TransactionHash;
 use starknet_http_server::config::HttpServerConfig;
 use starknet_http_server::test_utils::HttpTestClient;
 use starknet_integration_tests::state_reader::{spawn_test_rpc_state_reader, StorageTestSetup};
 use starknet_integration_tests::utils::{
-    create_batcher_config,
-    create_chain_info,
-    create_gateway_config,
-    create_http_server_config,
-    create_integration_test_tx_generator,
-    run_integration_test_scenario,
+    create_batcher_config, create_chain_info, create_gateway_config, create_http_server_config,
+    create_integration_test_tx_generator, run_integration_test_scenario,
     test_rpc_state_reader_config,
 };
 use starknet_mempool_p2p::config::MempoolP2pConfig;
 use starknet_mempool_p2p::MEMPOOL_TOPIC;
 use starknet_sequencer_node::config::component_config::ComponentConfig;
 use starknet_sequencer_node::config::component_execution_config::{
-    ActiveComponentExecutionConfig,
-    ReactiveComponentExecutionConfig,
+    ActiveComponentExecutionConfig, ReactiveComponentExecutionConfig,
     ReactiveComponentExecutionMode,
 };
 use starknet_sequencer_node::config::node_config::SequencerNodeConfig;
@@ -120,7 +113,6 @@ async fn test_mempool_sends_tx_to_other_peer(mut tx_generator: MultiAccountTrans
     let mut expected_txs = HashSet::new();
 
     // Create and send transactions.
-    let _tx_hashes = run_integration_test_scenario(&mut tx_generator, &mut |tx: RpcTransaction| {
     let _tx_hashes = run_integration_test_scenario(&mut tx_generator, &mut |tx: RpcTransaction| {
         expected_txs.insert(tx.clone()); // push the sent tx to the expected_txs list
         add_tx_http_client.assert_add_tx_success(tx)

@@ -8,47 +8,21 @@ use lazy_static::lazy_static;
 use papyrus_consensus::stream_handler::StreamHandler;
 use papyrus_consensus::types::{ConsensusContext, ValidatorId, DEFAULT_VALIDATOR_ID};
 use papyrus_network::network_manager::test_utils::{
-    mock_register_broadcast_topic,
-    BroadcastNetworkMock,
-    TestSubscriberChannels,
+    mock_register_broadcast_topic, BroadcastNetworkMock, TestSubscriberChannels,
 };
 use papyrus_network::network_manager::BroadcastTopicChannels;
 use papyrus_protobuf::consensus::{
-    ConsensusMessage,
-    ProposalFin,
-    ProposalInit,
-    ProposalPart,
-    StreamMessage,
-    TransactionBatch,
-};
-use papyrus_protobuf::consensus::{
-    ConsensusMessage,
-    ProposalFin,
-    ProposalInit,
-    ProposalPart,
-    StreamMessage,
-    TransactionBatch,
+    ConsensusMessage, ProposalFin, ProposalInit, ProposalPart, StreamMessage, TransactionBatch,
 };
 use starknet_api::block::{BlockHash, BlockNumber};
-use starknet_api::core::StateDiffCommitment;
-use starknet_api::executable_transaction::Transaction as ExecutableTransaction;
 use starknet_api::core::StateDiffCommitment;
 use starknet_api::executable_transaction::Transaction as ExecutableTransaction;
 use starknet_api::hash::PoseidonHash;
 use starknet_api::test_utils::invoke::{executable_invoke_tx, invoke_tx, InvokeTxArgs};
 use starknet_api::transaction::{Transaction, TransactionHash};
-use starknet_api::test_utils::invoke::{executable_invoke_tx, invoke_tx, InvokeTxArgs};
-use starknet_api::transaction::{Transaction, TransactionHash};
 use starknet_batcher_types::batcher_types::{
-    GetProposalContent,
-    GetProposalContentResponse,
-    ProposalCommitment,
-    ProposalId,
-    ProposalStatus,
-    ProposeBlockInput,
-    SendProposalContent,
-    SendProposalContentInput,
-    SendProposalContentResponse,
+    GetProposalContent, GetProposalContentResponse, ProposalCommitment, ProposalId, ProposalStatus,
+    ProposeBlockInput, SendProposalContent, SendProposalContentInput, SendProposalContentResponse,
     ValidateBlockInput,
 };
 use starknet_batcher_types::communication::MockBatcherClient;
@@ -64,16 +38,8 @@ const STATE_DIFF_COMMITMENT: StateDiffCommitment = StateDiffCommitment(PoseidonH
 lazy_static! {
     static ref TX_BATCH: Vec<ExecutableTransaction> =
         vec![generate_executable_invoke_tx(Felt::THREE)];
-    static ref TX_BATCH: Vec<ExecutableTransaction> =
-        vec![generate_executable_invoke_tx(Felt::THREE)];
 }
 
-fn generate_invoke_tx() -> Transaction {
-    Transaction::Invoke(invoke_tx(InvokeTxArgs::default()))
-}
-
-fn generate_executable_invoke_tx(tx_hash: Felt) -> ExecutableTransaction {
-    ExecutableTransaction::Account(executable_invoke_tx(InvokeTxArgs {
 fn generate_invoke_tx() -> Transaction {
     Transaction::Invoke(invoke_tx(InvokeTxArgs::default()))
 }
@@ -93,44 +59,13 @@ struct NetworkDependencies {
 
 fn setup(batcher: MockBatcherClient) -> (SequencerConsensusContext, NetworkDependencies) {
     let TestSubscriberChannels { mock_network: mock_proposal_stream_network, subscriber_channels } =
-    }))
-}
-
-// Structs which aren't utilized but should not be dropped.
-struct NetworkDependencies {
-    _vote_network: BroadcastNetworkMock<ConsensusMessage>,
-    _new_proposal_network: BroadcastNetworkMock<StreamMessage<ProposalPart>>,
-}
-
-fn setup(batcher: MockBatcherClient) -> (SequencerConsensusContext, NetworkDependencies) {
-    let TestSubscriberChannels { mock_network: mock_proposal_stream_network, subscriber_channels } =
         mock_register_broadcast_topic().expect("Failed to create mock network");
     let BroadcastTopicChannels {
         broadcasted_messages_receiver: inbound_network_receiver,
         broadcast_topic_client: outbound_network_sender,
     } = subscriber_channels;
     let (outbound_proposal_stream_sender, _, _) =
-    let (outbound_proposal_stream_sender, _, _) =
         StreamHandler::get_channels(inbound_network_receiver, outbound_network_sender);
-
-    let TestSubscriberChannels { mock_network: mock_vote_network, subscriber_channels } =
-        mock_register_broadcast_topic().expect("Failed to create mock network");
-    let BroadcastTopicChannels { broadcast_topic_client: votes_topic_client, .. } =
-        subscriber_channels;
-
-    let context = SequencerConsensusContext::new(
-        Arc::new(batcher),
-        outbound_proposal_stream_sender,
-        votes_topic_client,
-        NUM_VALIDATORS,
-    );
-
-    let network_dependencies = NetworkDependencies {
-        _vote_network: mock_vote_network,
-        _new_proposal_network: mock_proposal_stream_network,
-    };
-
-    (context, network_dependencies)
 
     let TestSubscriberChannels { mock_network: mock_vote_network, subscriber_channels } =
         mock_register_broadcast_topic().expect("Failed to create mock network");
@@ -185,7 +120,7 @@ async fn build_proposal() {
         ProposalInit { proposer: ValidatorId::from(DEFAULT_VALIDATOR_ID), ..Default::default() };
     // TODO(Asmaa): Test proposal content.
     let fin_receiver = context.build_proposal(init, TIMEOUT).await;
-    assert_eq!(fin_receiver.await.unwrap().0, STATE_DIFF_COMMITMENT.0.0);
+    assert_eq!(fin_receiver.await.unwrap().0, STATE_DIFF_COMMITMENT.0 .0);
 }
 
 #[tokio::test]
@@ -226,8 +161,6 @@ async fn validate_proposal_success() {
     );
     let (mut context, _network) = setup(batcher);
 
-    let (mut context, _network) = setup(batcher);
-
     // Initialize the context for a specific height, starting with round 0.
     context.set_height_and_round(BlockNumber(0), 0).await;
 
@@ -244,7 +177,7 @@ async fn validate_proposal_success() {
         .unwrap();
     content_sender
         .send(ProposalPart::Fin(ProposalFin {
-            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0.0),
+            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0 .0),
         }))
         .await
         .unwrap();
@@ -258,8 +191,7 @@ async fn validate_proposal_success() {
         )
         .await;
     content_sender.close_channel();
-    assert_eq!(fin_receiver.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
-    assert_eq!(fin_receiver.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
+    assert_eq!(fin_receiver.await.unwrap().0 .0, STATE_DIFF_COMMITMENT.0 .0);
 }
 
 #[tokio::test]
@@ -289,8 +221,6 @@ async fn repropose() {
     );
     let (mut context, _network) = setup(batcher);
 
-    let (mut context, _network) = setup(batcher);
-
     // Initialize the context for a specific height, starting with round 0.
     context.set_height_and_round(BlockNumber(0), 0).await;
 
@@ -305,7 +235,7 @@ async fn repropose() {
         .unwrap();
     content_sender
         .send(ProposalPart::Fin(ProposalFin {
-            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0.0),
+            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0 .0),
         }))
         .await
         .unwrap();
@@ -319,13 +249,12 @@ async fn repropose() {
         )
         .await;
     content_sender.close_channel();
-    assert_eq!(fin_receiver.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
-    assert_eq!(fin_receiver.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
+    assert_eq!(fin_receiver.await.unwrap().0 .0, STATE_DIFF_COMMITMENT.0 .0);
 
     // Re-proposal: Just asserts this is a known valid proposal.
     context
         .repropose(
-            BlockHash(STATE_DIFF_COMMITMENT.0.0),
+            BlockHash(STATE_DIFF_COMMITMENT.0 .0),
             ProposalInit { height: BlockNumber(0), ..Default::default() },
         )
         .await;
@@ -368,7 +297,6 @@ async fn proposals_from_different_rounds() {
         },
     );
     let (mut context, _network) = setup(batcher);
-    let (mut context, _network) = setup(batcher);
     // Initialize the context for a specific height, starting with round 0.
     context.set_height_and_round(BlockNumber(0), 0).await;
     context.set_height_and_round(BlockNumber(0), 1).await;
@@ -379,16 +307,7 @@ async fn proposals_from_different_rounds() {
         tx_hashes: vec![TX_BATCH[0].tx_hash()],
     });
     let prop_part_fin = ProposalPart::Fin(ProposalFin {
-        proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0.0),
-    });
-
-    // Proposal parts sent in the proposals.
-    let prop_part_txs = ProposalPart::Transactions(TransactionBatch {
-        transactions: TX_BATCH.clone().into_iter().map(Transaction::from).collect(),
-        tx_hashes: vec![TX_BATCH[0].tx_hash()],
-    });
-    let prop_part_fin = ProposalPart::Fin(ProposalFin {
-        proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0.0),
+        proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0 .0),
     });
 
     // The proposal from the past round is ignored.
@@ -420,7 +339,7 @@ async fn proposals_from_different_rounds() {
             content_receiver,
         )
         .await;
-    assert_eq!(fin_receiver_curr_round.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
+    assert_eq!(fin_receiver_curr_round.await.unwrap().0 .0, STATE_DIFF_COMMITMENT.0 .0);
 
     // The proposal from the future round should not be processed.
     let (mut content_sender, content_receiver) = mpsc::channel(CHANNEL_SIZE);
@@ -436,7 +355,6 @@ async fn proposals_from_different_rounds() {
         )
         .await;
     content_sender.close_channel();
-    // Even with sending fin and closing the channel.
     // Even with sending fin and closing the channel.
     assert!(fin_receiver_future_round.now_or_never().is_none());
 }
@@ -483,7 +401,6 @@ async fn interrupt_active_proposal() {
             })
         });
     let (mut context, _network) = setup(batcher);
-    let (mut context, _network) = setup(batcher);
     // Initialize the context for a specific height, starting with round 0.
     context.set_height_and_round(BlockNumber(0), 0).await;
 
@@ -510,7 +427,7 @@ async fn interrupt_active_proposal() {
         .unwrap();
     content_sender_1
         .send(ProposalPart::Fin(ProposalFin {
-            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0.0),
+            proposal_content_id: BlockHash(STATE_DIFF_COMMITMENT.0 .0),
         }))
         .await
         .unwrap();
@@ -528,6 +445,5 @@ async fn interrupt_active_proposal() {
 
     // Interrupt active proposal.
     assert!(fin_receiver_0.await.is_err());
-    assert_eq!(fin_receiver_1.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
-    assert_eq!(fin_receiver_1.await.unwrap().0.0, STATE_DIFF_COMMITMENT.0.0);
+    assert_eq!(fin_receiver_1.await.unwrap().0 .0, STATE_DIFF_COMMITMENT.0 .0);
 }

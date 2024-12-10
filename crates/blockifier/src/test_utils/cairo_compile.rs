@@ -246,17 +246,6 @@ pub fn prepare_group_tag_compiler_deps(tag_and_toolchain: &TagAndToolchain) {
 fn verify_cairo1_compiler_deps(git_tag_override: Option<String>) {
     let (tag, cairo_repo_path) = get_tag_and_repo_file_path(git_tag_override);
 
-    // Install the toolchain, if specified.
-    if let Some(toolchain) = optional_toolchain {
-        run_and_verify_output(
-            Command::new("rustup").args(["install", &format!("nightly-{toolchain}")]),
-        );
-    }
-}
-
-fn verify_cairo1_compiler_deps(git_tag_override: Option<String>) {
-    let (tag, cairo_repo_path) = get_tag_and_repo_file_path(git_tag_override);
-
     // Verify that the checked out tag is as expected.
     run_and_verify_output(Command::new("git").args([
         "-C",
