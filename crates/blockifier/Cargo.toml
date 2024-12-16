@@ -80,6 +80,11 @@ harness = false
 name = "blockifier_bench"
 path = "bench/blockifier_bench.rs"
 
+[[bench]]
+harness = false
+name = "yas_bench"
+path = "bench/yas.rs"
+
 [[test]]
 name = "feature_contracts_compatibility_test"
 path = "tests/feature_contracts_compatibility_test.rs"
