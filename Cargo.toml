@@ -103,7 +103,7 @@ cairo-lang-sierra-to-casm = "2.9.2"
 cairo-lang-starknet-classes = "2.9.2"
 cairo-lang-utils = "2.9.2"
 # Important: when updated, make sure to update the cairo-native submodule as well.
-cairo-native = { git = "https://github.com/enitrat/cairo_native", rev = "544bc2ed4354acb47de91a842bd7602b6096239e" }
+cairo-native = { path = "../cairo_native" }
 cairo-vm = { version = "1.0.1", features = ["test_utils"] }
 camelpaste = "0.1.0"
 chrono = "0.4.26"
