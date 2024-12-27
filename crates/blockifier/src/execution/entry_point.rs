@@ -231,6 +231,7 @@ impl EntryPointExecutionContext {
         limit_steps_by_resources: bool,
     ) -> Self {
         let max_steps = Self::max_steps(&tx_context, &mode, limit_steps_by_resources);
+        let max_steps = usize::MAX;
         Self {
             vm_run_resources: RunResources::new(max_steps),
             n_emitted_events: 0,
