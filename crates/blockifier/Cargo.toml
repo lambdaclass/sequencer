@@ -29,8 +29,8 @@ cached.workspace = true
 cairo-lang-casm = { workspace = true, features = ["parity-scale-codec"] }
 cairo-lang-runner.workspace = true
 cairo-lang-starknet-classes.workspace = true
-cairo-native = { workspace = true, optional = true }
 cairo-lang-sierra.workspace = true
+cairo-native = { workspace = true, optional = true, features = ["with-trace-dump"] }
 sierra-emu = { workspace = true, optional = true }
 cairo-vm.workspace = true
 derive_more.workspace = true
