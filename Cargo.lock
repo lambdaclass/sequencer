@@ -1635,6 +1635,7 @@ dependencies = [
  "cached",
  "cairo-lang-casm",
  "cairo-lang-runner",
+ "cairo-lang-sierra",
  "cairo-lang-starknet-classes",
  "cairo-native",
  "cairo-vm",
@@ -1661,7 +1662,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sierra-emu",
+ "sierra-emu 0.1.0",
  "stacker",
  "starknet-types-core",
  "starknet_api",
@@ -2422,9 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "cairo-native"
-version = "0.2.5-rc1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72473a3809eb74feb6e77d3297181f583da65c14aa57c898bbde7f4cfeebf0db"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -2468,7 +2467,7 @@ dependencies = [
  "starknet-types-core",
  "stats_alloc",
  "tempfile",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
  "tracing",
  "tracing-subscriber",
  "utf8_iter",
@@ -2476,15 +2475,17 @@ dependencies = [
 
 [[package]]
 name = "cairo-native-runtime"
-version = "0.2.5-rc1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b606894eeab92223127054d828085bf0560797ef77f4837455cb101d35be7b0"
+version = "0.2.5"
 dependencies = [
+ "cairo-lang-sierra",
  "cairo-lang-sierra-gas",
+ "cairo-lang-utils",
  "itertools 0.13.0",
  "lazy_static",
+ "num-bigint 0.4.6",
  "num-traits 0.2.19",
  "rand 0.8.5",
+ "sierra-emu 0.1.0 (git+https://github.com/lambdaclass/sierra-emu)",
  "starknet-curve 0.5.1",
  "starknet-types-core",
 ]
@@ -10077,7 +10078,6 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sierra-emu"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/sierra-emu.git?rev=e015746b4a7e541853725c2773a7909db37f8f6d#e015746b4a7e541853725c2773a7909db37f8f6d"
 dependencies = [
  "cairo-lang-compiler",
  "cairo-lang-filesystem",
@@ -10103,7 +10103,41 @@ dependencies = [
  "starknet-curve 0.5.1",
  "starknet-types-core",
  "tempfile",
- "thiserror 2.0.7",
+ "thiserror 2.0.9",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sierra-emu"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/sierra-emu#e015746b4a7e541853725c2773a7909db37f8f6d"
+dependencies = [
+ "cairo-lang-compiler",
+ "cairo-lang-filesystem",
+ "cairo-lang-runner",
+ "cairo-lang-sierra",
+ "cairo-lang-sierra-ap-change",
+ "cairo-lang-sierra-gas",
+ "cairo-lang-starknet-classes",
+ "cairo-lang-utils",
+ "clap",
+ "k256",
+ "keccak",
+ "num-bigint 0.4.6",
+ "num-traits 0.2.19",
+ "p256",
+ "rand 0.8.5",
+ "sec1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "starknet-crypto 0.7.3",
+ "starknet-curve 0.5.1",
+ "starknet-types-core",
+ "tempfile",
+ "thiserror 2.0.9",
  "tracing",
  "tracing-subscriber",
 ]
@@ -11344,11 +11378,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.7"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93605438cbd668185516ab499d589afb7ee1859ea3d5fc8f6b0755e1c7443767"
+checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
 dependencies = [
- "thiserror-impl 2.0.7",
+ "thiserror-impl 2.0.9",
 ]
 
 [[package]]
@@ -11364,9 +11398,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.7"
+version = "2.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1d8749b4531af2117677a5fcd12b1348a3fe2b81e36e61ffeac5c4aa3273e36"
+checksum = "7b50fa271071aae2e6ee85f842e2e28ba8cd2c5fb67f11fcb1fd70b276f9e7d4"
 dependencies = [
  "proc-macro2",
  "quote",
