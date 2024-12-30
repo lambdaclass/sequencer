@@ -1,8 +1,16 @@
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
+use cairo_lang_sierra::program::Program;
+use cairo_lang_sierra::program_registry::ProgramRegistry;
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::executor::AotContractExecutor;
+use cairo_native::runtime::trace_dump::TraceDump;
 use cairo_native::starknet::StarknetSyscallHandler;
+use cairo_native::types::TypeBuilder;
 use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
 use sierra_emu::VirtualMachine;
@@ -15,6 +23,8 @@ pub enum ContractExecutor {
     Aot(AotContractExecutor),
     // must use mutex, as emu executor has state, therefore it must me mutable.
     Emu(Mutex<VirtualMachine>),
+    // must use a differnt variant as we need `Program` for trace feature
+    AotTrace((AotContractExecutor, Program)),
 }
 
 impl From<AotContractExecutor> for ContractExecutor {
@@ -25,6 +35,11 @@ impl From<AotContractExecutor> for ContractExecutor {
 impl From<VirtualMachine> for ContractExecutor {
     fn from(value: VirtualMachine) -> Self {
         Self::Emu(Mutex::new(value))
+    }
+}
+impl From<(AotContractExecutor, Program)> for ContractExecutor {
+    fn from(value: (AotContractExecutor, Program)) -> Self {
+        Self::AotTrace(value)
     }
 }
 
@@ -48,6 +63,16 @@ impl ContractExecutor {
                 virtual_machine.call_contract(selector, gas, args);
 
                 let trace = virtual_machine.run_with_trace(&mut syscall_handler);
+
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let trace_path = PathBuf::from(format!("traces/emu/{counter}.json"));
+                let trace_parent_path = trace_path.parent().unwrap();
+                fs::create_dir_all(trace_parent_path).unwrap();
+                let trace_file = File::create(&trace_path).unwrap();
+                serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+
                 let result = sierra_emu::ContractExecutionResult::from_trace(&trace).unwrap();
 
                 Ok(ContractExecutionResult {
@@ -56,6 +81,64 @@ impl ContractExecutor {
                     return_values: result.return_values,
                     error_msg: result.error_msg,
                 })
+            }
+            ContractExecutor::AotTrace((aot_contract_executor, program)) => {
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let trace_dump_map = unsafe {
+                    aot_contract_executor
+                        .library
+                        .get::<extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(
+                            b"get_trace_dump_ptr\0",
+                        )
+                        .unwrap()()
+                };
+
+                // Insert trace dump for current execution
+                trace_dump_map.lock().unwrap().insert(
+                    counter,
+                    TraceDump::new(ProgramRegistry::new(&program).unwrap(), |x, registry| {
+                        x.layout(registry).unwrap()
+                    }),
+                );
+
+                // Overwrite new trace id, and save old one
+                let trace_id_ref = unsafe {
+                    aot_contract_executor
+                        .library
+                        .get::<u64>(b"TRACE_DUMP__TRACE_ID\0")
+                        .unwrap()
+                        .try_as_raw_ptr()
+                        .unwrap()
+                        .cast::<u64>()
+                        .as_mut()
+                        .unwrap()
+                };
+                let old_trace_id = *trace_id_ref;
+                *trace_id_ref = counter;
+
+                let result =
+                    aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler);
+
+                // Retreive trace dump for current execution
+                let trace = trace_dump_map
+                    .lock()
+                    .unwrap()
+                    .remove(&u64::try_from(counter).unwrap())
+                    .unwrap()
+                    .trace;
+
+                // Save trace dump to file
+                let trace_path = PathBuf::from(format!("traces/native/{counter}.json"));
+                let trace_parent_path = trace_path.parent().unwrap();
+                fs::create_dir_all(trace_parent_path).unwrap();
+                let trace_file = File::create(&trace_path).unwrap();
+                serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+
+                *trace_id_ref = old_trace_id;
+
+                result
             }
         }
     }
