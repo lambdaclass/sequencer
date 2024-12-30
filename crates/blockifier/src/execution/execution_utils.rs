@@ -57,6 +57,8 @@ pub fn execute_entry_point_call_wrapper(
     context: &mut EntryPointExecutionContext,
     remaining_gas: &mut u64,
 ) -> EntryPointExecutionResult<CallInfo> {
+    println!("Executing class: {}", call.class_hash.unwrap_or_default().to_hex_string());
+
     let current_tracked_resource = compiled_class.tracked_resource(
         &context.versioned_constants().min_compiler_version_for_sierra_gas,
         context.tracked_resource_stack.last(),

@@ -595,6 +595,9 @@ impl AccountTransaction {
             tx_context.clone(),
             self.execution_flags.charge_fee,
         );
+
+        println!("Validating tx: {}", self.tx_hash().to_hex_string());
+
         // Run the validation, and if execution later fails, only keep the validation diff.
         let validate_call_info =
             self.handle_validate_tx(state, tx_context.clone(), remaining_gas)?;
@@ -612,6 +615,8 @@ impl AccountTransaction {
         // Create copies of state and validate_resources for the execution.
         // Both will be rolled back if the execution is reverted or committed upon success.
         let mut execution_state = TransactionalState::create_transactional(state);
+
+        println!("Executing tx: {}", self.tx_hash().to_hex_string());
 
         let execution_result =
             self.run_execute(&mut execution_state, &mut execution_context, remaining_gas);
