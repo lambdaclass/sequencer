@@ -24,6 +24,7 @@ fn compile_cairo_native_aot_runtime() {
             "--release",
             "-p",
             "cairo-native-runtime",
+            "--features=with-trace-dump",
             "--message-format=json",
             "--target-dir",
             runtime_target_dir.to_str().unwrap(),
