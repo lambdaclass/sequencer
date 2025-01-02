@@ -1763,9 +1763,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.11.2"
+version = "1.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c94feba04f99cbce6558bbe1c18e38692a056981cb66c96f0878c2452aa28023"
+checksum = "531a9155a481e2ee699d4f98f43c0ca4ff8ee1bfd55c31e9e98fb29d2b176fe0"
 dependencies = [
  "memchr",
  "serde",
@@ -2423,7 +2423,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.2.5"
-source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#6e6bee965df6aac2eaffb1ce3dce41fa757bdf9c"
+source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#8d3d68b82b12eba14a52f5e93360855be953b1b7"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -2476,7 +2476,7 @@ dependencies = [
 [[package]]
 name = "cairo-native-runtime"
 version = "0.2.5"
-source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#6e6bee965df6aac2eaffb1ce3dce41fa757bdf9c"
+source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#8d3d68b82b12eba14a52f5e93360855be953b1b7"
 dependencies = [
  "cairo-lang-sierra-gas",
  "itertools 0.13.0",
