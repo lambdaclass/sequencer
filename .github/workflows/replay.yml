@@ -18,7 +18,7 @@ jobs:
         with:
           # required to clone native as a git submodule
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@1.82.0
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -35,7 +35,7 @@ jobs:
       - name: Run cargo clippy
         run: |
           cd crates/blockifier
-          cargo clippy --all-targets --all-features --no-deps
+          cargo +nightly clippy --all-targets --all-features --no-deps
 
   format:
     runs-on: ubuntu-latest
