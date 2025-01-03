@@ -21,7 +21,6 @@ fn compile_cairo_native_aot_runtime() {
     let status = Command::new("cargo")
         .args([
             "build",
-            "--release",
             "-p",
             "cairo-native-runtime",
             "--features=with-trace-dump",
