@@ -93,15 +93,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "alloy-chains"
-<<<<<<< HEAD
 version = "0.1.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d38fdd69239714d7625cda1e3730773a3c1a8719d506370eb17bb0103b7c2e15"
-=======
-version = "0.1.53"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da226340862e036ab26336dc99ca85311c6b662267c1440e1733890fd688802c"
->>>>>>> replay
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -2429,11 +2423,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.2.6"
-<<<<<<< HEAD
 source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#3f100997317b2367682b1aeada4541c262313275"
-=======
-source = "git+https://github.com/lambdaclass/cairo_native.git?rev=6a4efafa26d6a0424dee593d2091206c6e9f428d#6a4efafa26d6a0424dee593d2091206c6e9f428d"
->>>>>>> replay
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -2477,11 +2467,7 @@ dependencies = [
  "starknet-types-core",
  "stats_alloc",
  "tempfile",
-<<<<<<< HEAD
  "thiserror 2.0.10",
-=======
- "thiserror 2.0.9",
->>>>>>> replay
  "tracing",
  "tracing-subscriber",
  "utf8_iter",
@@ -2490,11 +2476,7 @@ dependencies = [
 [[package]]
 name = "cairo-native-runtime"
 version = "0.2.6"
-<<<<<<< HEAD
 source = "git+https://github.com/lambdaclass/cairo_native.git?branch=runtime_artifact_dependency#3f100997317b2367682b1aeada4541c262313275"
-=======
-source = "git+https://github.com/lambdaclass/cairo_native.git?rev=6a4efafa26d6a0424dee593d2091206c6e9f428d#6a4efafa26d6a0424dee593d2091206c6e9f428d"
->>>>>>> replay
 dependencies = [
  "cairo-lang-sierra-gas",
  "itertools 0.13.0",
@@ -8269,11 +8251,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
-<<<<<<< HEAD
  "thiserror 2.0.10",
-=======
- "thiserror 2.0.9",
->>>>>>> replay
  "ucd-trie",
 ]
 
@@ -8982,11 +8960,7 @@ dependencies = [
  "rustc-hash 2.1.0",
  "rustls 0.23.20",
  "socket2 0.5.8",
-<<<<<<< HEAD
  "thiserror 2.0.10",
-=======
- "thiserror 2.0.9",
->>>>>>> replay
  "tokio",
  "tracing",
 ]
@@ -9005,11 +8979,7 @@ dependencies = [
  "rustls 0.23.20",
  "rustls-pki-types",
  "slab",
-<<<<<<< HEAD
  "thiserror 2.0.10",
-=======
- "thiserror 2.0.9",
->>>>>>> replay
  "tinyvec",
  "tracing",
  "web-time",
@@ -10268,11 +10238,7 @@ dependencies = [
  "starknet-curve 0.5.1",
  "starknet-types-core",
  "tempfile",
-<<<<<<< HEAD
  "thiserror 2.0.10",
-=======
- "thiserror 2.0.9",
->>>>>>> replay
  "tracing",
  "tracing-subscriber",
 ]
@@ -11542,19 +11508,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-<<<<<<< HEAD
 version = "2.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3ac7f54ca534db81081ef1c1e7f6ea8a3ef428d2fc069097c079443d24124d3"
 dependencies = [
  "thiserror-impl 2.0.10",
-=======
-version = "2.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f072643fd0190df67a8bab670c20ef5d8737177d6ac6b2e9a236cb096206b2cc"
-dependencies = [
- "thiserror-impl 2.0.9",
->>>>>>> replay
 ]
 
 [[package]]
@@ -11570,15 +11528,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-<<<<<<< HEAD
 version = "2.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9465d30713b56a37ede7185763c3492a91be2f5fa68d958c44e41ab9248beb"
-=======
-version = "2.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b50fa271071aae2e6ee85f842e2e28ba8cd2c5fb67f11fcb1fd70b276f9e7d4"
->>>>>>> replay
 dependencies = [
  "proc-macro2",
  "quote",
