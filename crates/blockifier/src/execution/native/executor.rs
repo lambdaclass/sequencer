@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
@@ -73,6 +74,10 @@ impl ContractExecutor {
                 fs::create_dir_all(trace_parent_path).unwrap();
                 let trace_file = File::create(&trace_path).unwrap();
                 serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+
+                let sierra_path = PathBuf::from(format!("traces/{counter}.sierra"));
+                let mut sierra_file = File::create(&sierra_path).unwrap();
+                write!(sierra_file, "{}", program).unwrap();
 
                 let result = sierra_emu::ContractExecutionResult::from_trace(&trace).unwrap();
 
