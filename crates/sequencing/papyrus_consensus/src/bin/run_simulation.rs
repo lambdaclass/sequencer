@@ -4,6 +4,7 @@
 //! uses the `run_consensus` binary which is able to simulate network issues for consensus messages.
 use std::collections::HashSet;
 use std::fs::{self, File};
+use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::str::FromStr;
@@ -13,7 +14,7 @@ use clap::Parser;
 use fs2::FileExt;
 use lazy_static::lazy_static;
 use nix::unistd::Pid;
-use papyrus_common::tcp::find_free_port;
+use papyrus_protobuf::consensus::DEFAULT_VALIDATOR_ID;
 use tokio::process::Command as TokioCommand;
 
 lazy_static! {
@@ -184,6 +185,17 @@ impl Drop for LockDir {
     }
 }
 
+// WARNING(Tsabary): This is not a reliable way to obtain a free port; most notably it fails when
+// multiple concurrent instances try to obtain ports using this function. Do NOT use this in
+// production code, nor in tests, as they run concurrently.
+fn find_free_port() -> u16 {
+    // The socket is automatically closed when the function exits.
+    // The port may still be available when accessed, but this is not guaranteed.
+    // TODO(Asmaa): find a reliable way to ensure the port stays free.
+    let listener = TcpListener::bind("0.0.0.0:0").expect("Failed to bind");
+    listener.local_addr().expect("Failed to get local address").port()
+}
+
 fn parse_duration(s: &str) -> Result<Duration, std::num::ParseIntError> {
     let secs = u64::from_str(s)?;
     Ok(Duration::from_secs(secs))
@@ -265,16 +277,17 @@ async fn build_node(data_dir: &str, logs_dir: &str, i: usize, papyrus_args: &Pap
     let tcp_port = if is_bootstrap { *BOOTNODE_TCP_PORT } else { find_free_port() };
     let monitoring_gateway_server_port = find_free_port();
     let data_dir = format!("{}/data{}", data_dir, i);
+    let validator_id = i + usize::try_from(DEFAULT_VALIDATOR_ID).expect("Conversion failed");
 
     let mut cmd = format!(
         "RUST_LOG=papyrus_consensus=debug,papyrus=info target/release/run_consensus \
          --network.#is_none false --base_layer.node_url {} --storage.db_config.path_prefix {} \
-         --consensus.#is_none false --consensus.validator_id 0x{} --consensus.num_validators {} \
+         --consensus.#is_none false --consensus.validator_id 0x{:x} --consensus.num_validators {} \
          --network.tcp_port {} --rpc.server_address 127.0.0.1:{} \
          --monitoring_gateway.server_address 127.0.0.1:{} --collect_metrics true ",
         papyrus_args.base_layer_node_url,
         data_dir,
-        i,
+        validator_id,
         papyrus_args.num_validators,
         tcp_port,
         find_free_port(),
@@ -310,19 +323,20 @@ async fn build_node(data_dir: &str, logs_dir: &str, i: usize, papyrus_args: &Pap
 
     if is_bootstrap {
         cmd.push_str(&format!(
-            "--network.secret_key {} 2>&1 | sed -r 's/\\x1B\\[[0-9;]*[mK]//g' > {}/validator{}.txt",
-            SECRET_KEY, logs_dir, i
+            "--network.secret_key {} 2>&1 | sed -r 's/\\x1B\\[[0-9;]*[mK]//g' > \
+             {}/validator0x{:x}.txt",
+            SECRET_KEY, logs_dir, validator_id
         ));
     } else {
         cmd.push_str(&format!(
             "--network.bootstrap_peer_multiaddr.#is_none false --network.bootstrap_peer_multiaddr \
              /ip4/127.0.0.1/tcp/{}/p2p/{} 2>&1 | sed -r 's/\\x1B\\[[0-9;]*[mK]//g' > \
-             {}/validator{}.txt",
-            *BOOTNODE_TCP_PORT, BOOT_NODE_PEER_ID, logs_dir, i
+             {}/validator0x{:x}.txt",
+            *BOOTNODE_TCP_PORT, BOOT_NODE_PEER_ID, logs_dir, validator_id
         ));
     }
 
-    Node::new(i, monitoring_gateway_server_port, cmd)
+    Node::new(validator_id, monitoring_gateway_server_port, cmd)
 }
 
 async fn build_all_nodes(data_dir: &str, logs_dir: &str, papyrus_args: &PapyrusArgs) -> Vec<Node> {

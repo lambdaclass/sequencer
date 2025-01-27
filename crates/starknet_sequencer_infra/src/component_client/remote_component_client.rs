@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::net::IpAddr;
-use std::sync::Arc;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,6 +9,7 @@ use hyper::header::CONTENT_TYPE;
 use hyper::{Body, Client, Request as HyperRequest, Response as HyperResponse, StatusCode, Uri};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tokio::sync::Mutex;
 
 use super::definitions::{ClientError, ClientResult};
 use crate::component_definitions::{
@@ -63,13 +63,9 @@ use crate::serde_utils::SerdeWrapper;
 ///     let ip_address = std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
 ///     let port: u16 = 8080;
 ///     let socket = std::net::SocketAddr::new(ip_address, port);
-///     let config = RemoteClientConfig {
-///         socket,
-///         retries: 3,
-///         idle_connections: usize::MAX,
-///         idle_timeout: 90,
-///     };
-///     let client = RemoteComponentClient::<MyRequest, MyResponse>::new(config);
+///     let config =
+///         RemoteClientConfig { retries: 3, idle_connections: usize::MAX, idle_timeout: 90 };
+///     let client = RemoteComponentClient::<MyRequest, MyResponse>::new(config, socket);
 ///
 ///     // Instantiate a request.
 ///     let request = MyRequest { content: "Hello, world!".to_string() };
@@ -91,8 +87,15 @@ where
     uri: Uri,
     client: Client<hyper::client::HttpConnector>,
     config: RemoteClientConfig,
-    _req: PhantomData<Request>,
-    _res: PhantomData<Response>,
+    socket: SocketAddr,
+    // [`RemoteComponentClient<Request,Response>`] should be [`Send + Sync`] while [`Request`] and
+    // [`Response`] are only [`Send`]. [`Phantom<T>`] is [`Send + Sync`] only if [`T`] is, despite
+    // this bound making no sense as the phantom data field is unused. As such, we wrap it as
+    // [`PhantomData<Mutex<T>>`], not enforcing the redundant [`Sync`] bound. Alternatively,
+    // we could also use [`unsafe impl Sync for RemoteComponentClient<Request, Response> {}`], but
+    // we prefer the former for the sake of avoiding unsafe code.
+    _req: PhantomData<Mutex<Request>>,
+    _res: PhantomData<Mutex<Response>>,
 }
 
 impl<Request, Response> RemoteComponentClient<Request, Response>
@@ -100,9 +103,9 @@ where
     Request: Serialize + DeserializeOwned + Debug,
     Response: Serialize + DeserializeOwned + Debug,
 {
-    pub fn new(config: RemoteClientConfig) -> Self {
-        let ip_address = config.socket.ip();
-        let port = config.socket.port();
+    pub fn new(config: RemoteClientConfig, socket: SocketAddr) -> Self {
+        let ip_address = socket.ip();
+        let port = socket.port();
         let uri = match ip_address {
             IpAddr::V4(ip_address) => format!("http://{}:{}/", ip_address, port).parse().unwrap(),
             IpAddr::V6(ip_address) => format!("http://[{}]:{}/", ip_address, port).parse().unwrap(),
@@ -112,7 +115,7 @@ where
             .pool_max_idle_per_host(config.idle_connections)
             .pool_idle_timeout(Duration::from_secs(config.idle_timeout))
             .build_http();
-        Self { uri, client, config, _req: PhantomData, _res: PhantomData }
+        Self { uri, client, config, socket, _req: PhantomData, _res: PhantomData }
     }
 
     fn construct_http_request(&self, serialized_request: Vec<u8>) -> HyperRequest<Body> {
@@ -127,7 +130,7 @@ where
             .client
             .request(http_request)
             .await
-            .map_err(|e| ClientError::CommunicationFailure(Arc::new(e)))?;
+            .map_err(|err| ClientError::CommunicationFailure(err.to_string()))?;
 
         match http_response.status() {
             StatusCode::OK => get_response_body(http_response).await,
@@ -145,8 +148,8 @@ where
 impl<Request, Response> ComponentClient<Request, Response>
     for RemoteComponentClient<Request, Response>
 where
-    Request: Send + Sync + Serialize + DeserializeOwned + Debug,
-    Response: Send + Sync + Serialize + DeserializeOwned + Debug,
+    Request: Send + Serialize + DeserializeOwned + Debug,
+    Response: Send + Serialize + DeserializeOwned + Debug,
 {
     async fn send(&self, component_request: Request) -> ClientResult<Response> {
         // Serialize the request.
@@ -177,10 +180,10 @@ where
 {
     let body_bytes = to_bytes(response.into_body())
         .await
-        .map_err(|e| ClientError::ResponseParsingFailure(Arc::new(e)))?;
+        .map_err(|err| ClientError::ResponseParsingFailure(err.to_string()))?;
 
     SerdeWrapper::<Response>::wrapper_deserialize(&body_bytes)
-        .map_err(|e| ClientError::ResponseDeserializationFailure(Arc::new(e)))
+        .map_err(|err| ClientError::ResponseDeserializationFailure(err.to_string()))
 }
 
 // Can't derive because derive forces the generics to also be `Clone`, which we prefer not to do
@@ -195,6 +198,7 @@ where
             uri: self.uri.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
+            socket: self.socket,
             _req: PhantomData,
             _res: PhantomData,
         }

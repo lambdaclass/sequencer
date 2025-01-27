@@ -19,6 +19,7 @@ use crate::errors::{
 };
 use crate::py_utils::PyFelt;
 
+// TODO(Arni): consider moving to starknet api.
 const DEFAULT_ETH_L1_GAS_PRICE: GasPrice = GasPrice(100 * u128::pow(10, 9));
 const DEFAULT_STRK_L1_GAS_PRICE: GasPrice = GasPrice(100 * u128::pow(10, 9));
 const DEFAULT_ETH_L1_DATA_GAS_PRICE: GasPrice = GasPrice(u128::pow(10, 6));
@@ -26,7 +27,7 @@ const DEFAULT_STRK_L1_DATA_GAS_PRICE: GasPrice = GasPrice(u128::pow(10, 9));
 
 #[pyclass]
 #[derive(Default, FromPyObject)]
-// TODO: Add support for returning the `declared_classes` to python.
+// TODO(Dori): Add support for returning the `declared_classes` to python.
 pub struct PyStateDiff {
     #[pyo3(get)]
     pub address_to_class_hash: HashMap<PyFelt, PyFelt>,

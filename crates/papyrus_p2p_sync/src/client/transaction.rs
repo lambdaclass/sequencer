@@ -5,30 +5,38 @@ use papyrus_protobuf::sync::DataOrFin;
 use papyrus_storage::body::{BodyStorageReader, BodyStorageWriter};
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::{StorageError, StorageReader, StorageWriter};
+use papyrus_test_utils::{get_rng, GetTestInstance};
 use starknet_api::block::{BlockBody, BlockNumber};
-use starknet_api::transaction::FullTransaction;
+use starknet_api::transaction::{FullTransaction, Transaction, TransactionOutput};
+use starknet_class_manager_types::SharedClassManagerClient;
+use starknet_state_sync_types::state_sync_types::SyncBlock;
 
-use super::stream_builder::{
+use super::block_data_stream_builder::{
     BadPeerError,
     BlockData,
+    BlockDataStreamBuilder,
     BlockNumberLimit,
-    DataStreamBuilder,
     ParseDataError,
 };
-use super::{P2PSyncClientError, NETWORK_DATA_TIMEOUT};
+use super::{P2pSyncClientError, NETWORK_DATA_TIMEOUT};
 
 impl BlockData for (BlockBody, BlockNumber) {
-    fn write_to_storage(
+    fn write_to_storage<'a>(
         self: Box<Self>,
-        storage_writer: &mut StorageWriter,
-    ) -> Result<(), StorageError> {
-        storage_writer.begin_rw_txn()?.append_body(self.1, self.0)?.commit()
+        storage_writer: &'a mut StorageWriter,
+        _class_manager_client: &'a mut SharedClassManagerClient,
+    ) -> BoxFuture<'a, Result<(), P2pSyncClientError>> {
+        async move {
+            storage_writer.begin_rw_txn()?.append_body(self.1, self.0)?.commit()?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 
 pub(crate) struct TransactionStreamFactory;
 
-impl DataStreamBuilder<FullTransaction> for TransactionStreamFactory {
+impl BlockDataStreamBuilder<FullTransaction> for TransactionStreamFactory {
     // TODO(Eitan): Add events protocol to BlockBody or split their write to storage
     type Output = (BlockBody, BlockNumber);
 
@@ -54,7 +62,7 @@ impl DataStreamBuilder<FullTransaction> for TransactionStreamFactory {
                     transactions_response_manager.next(),
                 )
                 .await?
-                .ok_or(P2PSyncClientError::ReceiverChannelTerminated {
+                .ok_or(P2pSyncClientError::ReceiverChannelTerminated {
                     type_description: Self::TYPE_DESCRIPTION,
                 })?;
                 let Some(FullTransaction { transaction, transaction_output, transaction_hash }) =
@@ -83,5 +91,26 @@ impl DataStreamBuilder<FullTransaction> for TransactionStreamFactory {
 
     fn get_start_block_number(storage_reader: &StorageReader) -> Result<BlockNumber, StorageError> {
         storage_reader.begin_ro_txn()?.get_body_marker()
+    }
+
+    // TODO(Eitan): Use real transactions once SyncBlock contains data required by full nodes
+    fn convert_sync_block_to_block_data(
+        block_number: BlockNumber,
+        sync_block: SyncBlock,
+    ) -> (BlockBody, BlockNumber) {
+        let num_transactions = sync_block.transaction_hashes.len();
+        let mut rng = get_rng();
+        let block_body = BlockBody {
+            transaction_hashes: sync_block.transaction_hashes,
+            transaction_outputs: std::iter::repeat_with(|| {
+                TransactionOutput::get_test_instance(&mut rng)
+            })
+            .take(num_transactions)
+            .collect::<Vec<_>>(),
+            transactions: std::iter::repeat_with(|| Transaction::get_test_instance(&mut rng))
+                .take(num_transactions)
+                .collect::<Vec<_>>(),
+        };
+        (block_body, block_number)
     }
 }

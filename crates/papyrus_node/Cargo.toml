@@ -44,6 +44,7 @@ reqwest = { workspace = true, features = ["blocking", "json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 starknet_api = { workspace = true, features = ["testing"] }
+starknet_class_manager_types.workspace = true
 starknet_client.workspace = true
 strum.workspace = true
 tokio = { workspace = true, features = ["full", "sync"] }
@@ -57,13 +58,12 @@ tokio-stream = { workspace = true, optional = true }
 
 
 [dev-dependencies]
-assert-json-diff.workspace = true
 colored.workspace = true
-infra_utils.workspace = true
 insta = { workspace = true, features = ["json"] }
 metrics-exporter-prometheus.workspace = true
 papyrus_test_utils.workspace = true
 pretty_assertions.workspace = true
+starknet_infra_utils.workspace = true
 tempfile.workspace = true
 
 [lints]

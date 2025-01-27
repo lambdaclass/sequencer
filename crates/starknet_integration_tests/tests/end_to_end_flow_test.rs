@@ -1,10 +1,9 @@
-use std::collections::HashSet;
-
 use futures::StreamExt;
 use mempool_test_utils::starknet_api_test_utils::MultiAccountTransactionGenerator;
 use papyrus_consensus::types::ValidatorId;
 use papyrus_network::network_manager::BroadcastTopicChannels;
 use papyrus_protobuf::consensus::{
+    HeightAndRound,
     ProposalFin,
     ProposalInit,
     ProposalPart,
@@ -15,18 +14,26 @@ use papyrus_storage::test_utils::CHAIN_ID_FOR_TESTS;
 use pretty_assertions::assert_eq;
 use rstest::{fixture, rstest};
 use starknet_api::block::{BlockHash, BlockNumber};
+use starknet_api::rpc_transaction::RpcTransaction;
 use starknet_api::transaction::TransactionHash;
-use starknet_integration_tests::flow_test_setup::FlowTestSetup;
+use starknet_infra_utils::test_utils::TestIdentifier;
+use starknet_integration_tests::flow_test_setup::{FlowSequencerSetup, FlowTestSetup};
 use starknet_integration_tests::utils::{
+    create_funding_txs,
     create_integration_test_tx_generator,
-    run_integration_test_scenario,
+    create_many_invoke_txs,
+    create_multiple_account_txs,
+    run_test_scenario,
+    test_many_invoke_txs,
+    test_multiple_account_txs,
+    UNDEPLOYED_ACCOUNT_ID,
 };
 use starknet_sequencer_infra::trace_util::configure_tracing;
 use starknet_types_core::felt::Felt;
 use tracing::debug;
 
 const INITIAL_HEIGHT: BlockNumber = BlockNumber(0);
-const LAST_HEIGHT: BlockNumber = BlockNumber(2);
+const LAST_HEIGHT: BlockNumber = BlockNumber(4);
 
 #[fixture]
 fn tx_generator() -> MultiAccountTransactionGenerator {
@@ -41,18 +48,16 @@ async fn end_to_end_flow(mut tx_generator: MultiAccountTransactionGenerator) {
     const LISTEN_TO_BROADCAST_MESSAGES_TIMEOUT: std::time::Duration =
         std::time::Duration::from_secs(50);
     // Setup.
-    let mut mock_running_system = FlowTestSetup::new_from_tx_generator(&tx_generator).await;
+    let mut mock_running_system = FlowTestSetup::new_from_tx_generator(
+        &tx_generator,
+        TestIdentifier::EndToEndFlowTest.into(),
+    )
+    .await;
 
-    let next_height = INITIAL_HEIGHT.unchecked_next();
-    let heights_to_build = next_height.iter_up_to(LAST_HEIGHT.unchecked_next());
-    let expected_content_ids = [
-        Felt::from_hex_unchecked(
-            "0x457e9172b9c70fb4363bb3ff31bf778d8f83828184a9a3f9badadc497f2b954",
-        ),
-        Felt::from_hex_unchecked(
-            "0x572373fe992ac8c2413d5e727036316023ed6a2e8a2256b4952e223969e0221",
-        ),
-    ];
+    tokio::join!(
+        wait_for_sequencer_node(&mock_running_system.sequencer_0),
+        wait_for_sequencer_node(&mock_running_system.sequencer_1),
+    );
 
     let sequencers = [&mock_running_system.sequencer_0, &mock_running_system.sequencer_1];
     // We use only the first sequencer's gateway to test that the mempools are syncing.
@@ -62,18 +67,21 @@ async fn end_to_end_flow(mut tx_generator: MultiAccountTransactionGenerator) {
     expected_proposer_iter.next().unwrap();
 
     // Build multiple heights to ensure heights are committed.
-    for (height, expected_content_id) in itertools::zip_eq(heights_to_build, expected_content_ids) {
+    for (height, create_rpc_txs_fn, test_tx_hashes_fn, expected_content_id) in create_test_blocks()
+    {
         debug!("Starting height {}.", height);
         // Create and send transactions.
-        let expected_batched_tx_hashes =
-            run_integration_test_scenario(&mut tx_generator, &mut |tx| {
-                sequencer_to_add_txs.assert_add_tx_success(tx)
-            })
-            .await;
+        let expected_batched_tx_hashes = run_test_scenario(
+            &mut tx_generator,
+            create_rpc_txs_fn,
+            &mut |tx| sequencer_to_add_txs.assert_add_tx_success(tx),
+            test_tx_hashes_fn,
+        )
+        .await;
         let expected_validator_id = expected_proposer_iter
             .next()
             .unwrap()
-            .config
+            .node_config
             .consensus_manager_config
             .consensus_config
             .validator_id;
@@ -93,8 +101,61 @@ async fn end_to_end_flow(mut tx_generator: MultiAccountTransactionGenerator) {
     }
 }
 
+type CreateRpcTxsFn = fn(&mut MultiAccountTransactionGenerator) -> Vec<RpcTransaction>;
+type TestTxHashesFn = fn(&[TransactionHash]) -> Vec<TransactionHash>;
+type ExpectedContentId = Felt;
+
+fn create_test_blocks() -> Vec<(BlockNumber, CreateRpcTxsFn, TestTxHashesFn, ExpectedContentId)> {
+    let next_height = INITIAL_HEIGHT.unchecked_next();
+    let heights_to_build = next_height.iter_up_to(LAST_HEIGHT.unchecked_next());
+    let test_scenarios: Vec<(CreateRpcTxsFn, TestTxHashesFn, ExpectedContentId)> = vec![
+        (
+            create_multiple_account_txs,
+            test_multiple_account_txs,
+            Felt::from_hex_unchecked(
+                "0x665101f416fd5c4e91083fa9dcac1dba9a282f5211a1a2ad7695e95cb35d6b",
+            ),
+        ),
+        (
+            create_funding_txs,
+            test_single_tx,
+            Felt::from_hex_unchecked(
+                "0x354a08374de0b194773930010006a0cc42f7f984f509ceb0d564da37ed15bab",
+            ),
+        ),
+        (
+            deploy_account,
+            test_single_tx,
+            Felt::from_hex_unchecked(
+                "0x2942454db8523de50045d2cc28f9fe9342c56f1c07af35d6bdd5ba1f68700b6",
+            ),
+        ),
+        // Note: The following test scenario sends 15 transactions but only 12 are included in the
+        // block. This means that the last 3 transactions could be included in the next block if
+        // one is added to the test.
+        (
+            create_many_invoke_txs,
+            test_many_invoke_txs,
+            Felt::from_hex_unchecked(
+                "0x4c490b06c1479e04c535342d4036f797444c23484f3eb53a419e361c88fcdae",
+            ),
+        ),
+    ];
+    itertools::zip_eq(heights_to_build, test_scenarios)
+        .map(|(h, (create_txs_fn, test_tx_hashes_fn, expected_content_id))| {
+            (h, create_txs_fn, test_tx_hashes_fn, expected_content_id)
+        })
+        .collect()
+}
+
+async fn wait_for_sequencer_node(sequencer: &FlowSequencerSetup) {
+    sequencer.monitoring_client.await_alive(5000, 50).await.expect("Node should be alive.");
+}
+
 async fn listen_to_broadcasted_messages(
-    consensus_proposals_channels: &mut BroadcastTopicChannels<StreamMessage<ProposalPart>>,
+    consensus_proposals_channels: &mut BroadcastTopicChannels<
+        StreamMessage<ProposalPart, HeightAndRound>,
+    >,
     expected_batched_tx_hashes: &[TransactionHash],
     expected_height: BlockNumber,
     expected_content_id: Felt,
@@ -106,9 +167,8 @@ async fn listen_to_broadcasted_messages(
     // TODO (Dan, Guy): retrieve / calculate the expected proposal init and fin.
     let expected_proposal_init = ProposalInit {
         height: expected_height,
-        round: 0,
-        valid_round: None,
         proposer: expected_proposer_id,
+        ..Default::default()
     };
     let expected_proposal_fin = ProposalFin { proposal_content_id: BlockHash(expected_content_id) };
 
@@ -133,7 +193,7 @@ async fn listen_to_broadcasted_messages(
         incoming_proposal_init, expected_proposal_init
     );
 
-    let mut received_tx_hashes = HashSet::new();
+    let mut received_tx_hashes = Vec::new();
     let mut got_proposal_fin = false;
     let mut got_channel_fin = false;
     loop {
@@ -175,10 +235,20 @@ async fn listen_to_broadcasted_messages(
         }
     }
 
-    // Using HashSet to ignore the order of the transactions (broadcast can lead to reordering).
-    assert_eq!(
-        received_tx_hashes,
-        expected_batched_tx_hashes.iter().cloned().collect::<HashSet<_>>(),
-        "Unexpected transactions"
-    );
+    received_tx_hashes.sort();
+    let mut expected_batched_tx_hashes = expected_batched_tx_hashes.to_vec();
+    expected_batched_tx_hashes.sort();
+    assert_eq!(received_tx_hashes, expected_batched_tx_hashes, "Unexpected transactions");
+}
+
+fn deploy_account(tx_generator: &mut MultiAccountTransactionGenerator) -> Vec<RpcTransaction> {
+    let undeployed_account_tx_generator = tx_generator.account_with_id_mut(UNDEPLOYED_ACCOUNT_ID);
+    assert!(!undeployed_account_tx_generator.is_deployed());
+    let deploy_tx = undeployed_account_tx_generator.generate_deploy_account();
+    vec![deploy_tx]
+}
+
+fn test_single_tx(tx_hashes: &[TransactionHash]) -> Vec<TransactionHash> {
+    assert_eq!(tx_hashes.len(), 1, "Expected a single transaction");
+    tx_hashes.to_vec()
 }
