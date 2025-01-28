@@ -62,7 +62,17 @@ impl ContractExecutor {
                     VirtualMachine::new_starknet(program.to_owned(), entrypoints);
 
                 let args = args.to_owned();
-                virtual_machine.call_contract(selector, gas, args);
+                let builtin_costs = builtin_costs.map(|builtin_costs| sierra_emu::BuiltinCosts {
+                    r#const: builtin_costs.r#const,
+                    pedersen: builtin_costs.pedersen,
+                    bitwise: builtin_costs.bitwise,
+                    ecop: builtin_costs.ecop,
+                    poseidon: builtin_costs.poseidon,
+                    add_mod: builtin_costs.add_mod,
+                    mul_mod: builtin_costs.mul_mod,
+                });
+
+                virtual_machine.call_contract(selector, gas, args, builtin_costs);
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
