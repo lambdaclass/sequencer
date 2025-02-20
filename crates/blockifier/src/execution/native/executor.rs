@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use cairo_lang_sierra::program::Program;
 use cairo_lang_sierra::program_registry::ProgramRegistry;
@@ -11,7 +10,8 @@ use cairo_lang_starknet_classes::compiler_version::VersionId;
 use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::executor::AotContractExecutor;
-use cairo_native::runtime::trace_dump::TraceDump;
+use cairo_native::metadata::trace_dump::TraceBinding;
+use cairo_native::runtime::trace_dump::{TraceDump, TRACE_DUMP};
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::types::TypeBuilder;
 use cairo_native::utils::BuiltinCosts;
@@ -103,33 +103,28 @@ impl ContractExecutor {
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                let trace_dump_map = unsafe {
-                    let get_trace_dump_ptr_fptr = aot_contract_executor
-                        .find_symbol_ptr("get_trace_dump_ptr").unwrap();
-                    std::mem::transmute::<_, extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(get_trace_dump_ptr_fptr)()
-                };
-
-                // Insert trace dump for current execution
-                trace_dump_map.lock().unwrap().insert(
+                TRACE_DUMP.lock().unwrap().insert(
                     counter,
-                    TraceDump::new(ProgramRegistry::new(&program).unwrap(), |x, registry| {
-                        x.layout(registry).unwrap()
-                    }),
+                    TraceDump::new(
+                        ProgramRegistry::new(&program).unwrap(),
+                        |ty, registry| ty.layout(registry).unwrap(),
+                    ),
                 );
 
-                // Overwrite new trace id, and save old one
-                let trace_id_ref = unsafe {
-                    let trace_id_ptr = aot_contract_executor.find_symbol_ptr("TRACE_DUMP__TRACE_ID").unwrap();
+                let trace_id = unsafe {
+                    let trace_id_ptr = aot_contract_executor.find_symbol_ptr(TraceBinding::TraceId.symbol()).unwrap();
                     trace_id_ptr.cast::<u64>().as_mut().unwrap()
                 };
-                let old_trace_id = *trace_id_ref;
-                *trace_id_ref = counter;
+
+                // Overwrite new trace id, and save old one
+                let old_trace_id = *trace_id;
+                *trace_id = counter;
 
                 let result =
                     aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler);
 
                 // Retreive trace dump for current execution
-                let trace = trace_dump_map
+                let trace = TRACE_DUMP
                     .lock()
                     .unwrap()
                     .remove(&u64::try_from(counter).unwrap())
@@ -143,7 +138,7 @@ impl ContractExecutor {
                 let trace_file = File::create(&trace_path).unwrap();
                 serde_json::to_writer_pretty(trace_file, &trace).unwrap();
 
-                *trace_id_ref = old_trace_id;
+                *trace_id = old_trace_id;
 
                 result
             }
