@@ -104,12 +104,9 @@ impl ContractExecutor {
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 let trace_dump_map = unsafe {
-                    aot_contract_executor
-                        .library
-                        .get::<extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(
-                            b"get_trace_dump_ptr\0",
-                        )
-                        .unwrap()()
+                    let get_trace_dump_ptr_fptr = aot_contract_executor
+                        .find_symbol_ptr("get_trace_dump_ptr").unwrap();
+                    std::mem::transmute::<_, extern "C" fn() -> &'static Mutex<HashMap<u64, TraceDump>>>(get_trace_dump_ptr_fptr)()
                 };
 
                 // Insert trace dump for current execution
@@ -122,15 +119,8 @@ impl ContractExecutor {
 
                 // Overwrite new trace id, and save old one
                 let trace_id_ref = unsafe {
-                    aot_contract_executor
-                        .library
-                        .get::<u64>(b"TRACE_DUMP__TRACE_ID\0")
-                        .unwrap()
-                        .try_as_raw_ptr()
-                        .unwrap()
-                        .cast::<u64>()
-                        .as_mut()
-                        .unwrap()
+                    let trace_id_ptr = aot_contract_executor.find_symbol_ptr("TRACE_DUMP__TRACE_ID").unwrap();
+                    trace_id_ptr.cast::<u64>().as_mut().unwrap()
                 };
                 let old_trace_id = *trace_id_ref;
                 *trace_id_ref = counter;
