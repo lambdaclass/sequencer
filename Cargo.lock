@@ -1642,7 +1642,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sierra-emu 0.1.0 (git+https://github.com/lambdaclass/sierra-emu?branch=juli)",
+ "sierra-emu 0.1.0 (git+https://github.com/lambdaclass/sierra-emu?branch=main)",
  "starknet-types-core",
  "starknet_api",
  "starknet_infra_utils",
@@ -10079,7 +10079,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sierra-emu"
 version = "0.1.0"
-source = "git+https://github.com/lambdaclass/sierra-emu?branch=juli#7a1d293cdb54cd7f4ac6c477dced729d31af3296"
+source = "git+https://github.com/lambdaclass/sierra-emu?branch=main#f15e0e688009903491463fd71cd11d5b1329ed90"
 dependencies = [
  "cairo-lang-compiler",
  "cairo-lang-filesystem",
