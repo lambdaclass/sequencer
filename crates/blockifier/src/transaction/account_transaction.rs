@@ -800,7 +800,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
         self.verify_tx_version(tx_context.tx_info.version())?;
 
         // Nonce and fee check should be done before running user code.
-        let strict_nonce_check = true;
+        let strict_nonce_check = false;
         self.perform_pre_validation_stage(state, &tx_context, strict_nonce_check)?;
 
         // Run validation and execution.
