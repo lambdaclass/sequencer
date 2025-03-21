@@ -21,6 +21,7 @@ use starknet_api::block::{
     GasPrice,
     GasPricePerToken,
 };
+use starknet_api::contract_class::SierraVersion;
 use starknet_api::core::{
     ChainId,
     ClassHash,
@@ -157,7 +158,6 @@ pub fn prepare_storage(mut storage_writer: StorageWriter) {
                     *DEPRECATED_CONTRACT_ADDRESS => Nonce::default(),
                     *ACCOUNT_ADDRESS => Nonce::default(),
                 ),
-                replaced_classes: indexmap!(),
             },
         )
         .unwrap()
@@ -219,7 +219,7 @@ pub fn execute_simulate_transactions(
         &get_test_execution_config(),
         charge_fee,
         validate,
-        // TODO: Consider testing without overriding DA (It's already tested in the RPC)
+        // TODO(DanB): Consider testing without overriding DA (It's already tested in the RPC)
         true,
     )
     .unwrap()
@@ -312,6 +312,7 @@ impl TxsScenarioBuilder {
             DUMMY_SIERRA_SIZE,
             0,
             false,
+            SierraVersion::LATEST,
         );
         self.txs.push(tx);
         self

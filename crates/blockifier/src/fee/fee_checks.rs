@@ -1,3 +1,4 @@
+use starknet_api::block::FeeType;
 use starknet_api::execution_resources::{GasAmount, GasVector};
 use starknet_api::transaction::fields::Resource::{self, L1DataGas, L1Gas, L2Gas};
 use starknet_api::transaction::fields::{
@@ -10,11 +11,15 @@ use starknet_types_core::felt::Felt;
 use thiserror::Error;
 
 use crate::context::TransactionContext;
-use crate::fee::fee_utils::{get_balance_and_if_covers_fee, get_fee_by_gas_vector};
+use crate::fee::fee_utils::{
+    get_balance_and_if_covers_fee,
+    get_fee_by_gas_vector,
+    GasVectorToL1GasForFee,
+};
 use crate::fee::receipt::TransactionReceipt;
 use crate::state::state_api::StateReader;
 use crate::transaction::errors::TransactionExecutionError;
-use crate::transaction::objects::{FeeType, TransactionExecutionResult, TransactionInfo};
+use crate::transaction::objects::{TransactionExecutionResult, TransactionInfo};
 
 #[cfg_attr(feature = "transaction_serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
@@ -145,7 +150,9 @@ impl FeeCheckReport {
                 // Check max fee.
                 let max_fee = context.max_fee;
                 if fee > &max_fee {
-                    return Err(FeeCheckError::MaxFeeExceeded { max_fee, actual_fee: *fee })?;
+                    return Err(TransactionExecutionError::FeeCheckError(
+                        FeeCheckError::MaxFeeExceeded { max_fee, actual_fee: *fee },
+                    ));
                 }
                 Ok(())
             }
@@ -212,13 +219,16 @@ impl FeeCheckReport {
         gas_vector: &GasVector,
         tx_context: &TransactionContext,
     ) -> FeeCheckResult<()> {
-        let total_discounted_gas_used =
-            gas_vector.to_discounted_l1_gas(tx_context.get_gas_prices());
-        if total_discounted_gas_used > l1_bounds.max_amount {
+        let total_l1_gas_used = gas_vector.to_l1_gas_for_fee(
+            tx_context.get_gas_prices(),
+            &tx_context.block_context.versioned_constants,
+        );
+
+        if total_l1_gas_used > l1_bounds.max_amount {
             return Err(FeeCheckError::MaxGasAmountExceeded {
                 resource: L1Gas,
                 max_amount: l1_bounds.max_amount,
-                actual_amount: total_discounted_gas_used,
+                actual_amount: total_l1_gas_used,
             });
         }
         Ok(())
@@ -252,9 +262,10 @@ impl PostValidationReport {
     pub fn verify(
         tx_context: &TransactionContext,
         tx_receipt: &TransactionReceipt,
+        charge_fee: bool,
     ) -> TransactionExecutionResult<()> {
         // If fee is not enforced, no need to check post-execution.
-        if !tx_context.tx_info.enforce_fee() {
+        if !charge_fee {
             return Ok(());
         }
 

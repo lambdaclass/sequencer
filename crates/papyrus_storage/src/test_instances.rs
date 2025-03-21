@@ -31,6 +31,8 @@ auto_impl_get_test_instance! {
         pub l1_gas_price: GasPricePerToken,
         pub l1_data_gas_price: GasPricePerToken,
         pub l2_gas_price: GasPricePerToken,
+        pub l2_gas_consumed: u64,
+        pub next_l2_gas_price: u64,
         pub state_root: GlobalRoot,
         pub sequencer: SequencerContractAddress,
         pub timestamp: BlockTimestamp,
@@ -61,6 +63,8 @@ auto_impl_get_test_instance! {
         Class = 4,
         CompiledClass = 5,
         BaseLayerBlock = 6,
+        ClassManagerBlock = 7,
+        CompilerBackwardCompatibility = 8,
     }
     pub enum OffsetKind {
         ThinStateDiff = 0,

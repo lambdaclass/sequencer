@@ -4,17 +4,19 @@ use std::ops::{Add, AddAssign};
 
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use serde::Serialize;
+use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::core::{ClassHash, ContractAddress, EthAddress};
-use starknet_api::execution_resources::GasAmount;
+use starknet_api::execution_resources::{GasAmount, GasVector};
 use starknet_api::state::StorageKey;
+use starknet_api::transaction::fields::GasVectorComputationMode;
 use starknet_api::transaction::{EventContent, L2ToL1Payload};
 use starknet_types_core::felt::Felt;
 
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::execution::contract_class::TrackedResource;
 use crate::execution::entry_point::CallEntryPoint;
 use crate::state::cached_state::StorageEntry;
 use crate::utils::u64_from_usize;
-use crate::versioned_constants::VersionedConstants;
 
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -71,6 +73,25 @@ pub struct EventSummary {
     pub total_event_data_size: u64,
 }
 
+impl EventSummary {
+    pub fn to_gas_vector(
+        &self,
+        versioned_constants: &VersionedConstants,
+        mode: &GasVectorComputationMode,
+    ) -> GasVector {
+        let archival_gas_costs = versioned_constants.get_archival_data_gas_costs(mode);
+        let gas_amount: GasAmount = (archival_gas_costs.gas_per_data_felt
+            * (archival_gas_costs.event_key_factor * self.total_event_keys
+                + self.total_event_data_size))
+            .to_integer()
+            .into();
+        match mode {
+            GasVectorComputationMode::All => GasVector::from_l2_gas(gas_amount),
+            GasVectorComputationMode::NoL2Gas => GasVector::from_l1_gas(gas_amount),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExecutionSummary {
     pub charged_resources: ChargedResources,
@@ -99,6 +120,44 @@ impl Sum for ExecutionSummary {
     }
 }
 
+impl ExecutionSummary {
+    /// Returns the a gas cost _estimation_ for the execution summary.
+    ///
+    /// In particular, this calculation ignores state changes, cost of declared classes, L1 handler
+    /// payload length, plus Starknet OS overhead. These costs are only accounted for on a
+    /// transaction level and cannot be computed based on a single execution summary.
+    #[cfg(feature = "node_api")]
+    pub fn to_partial_gas_vector(
+        self,
+        versioned_constants: &VersionedConstants,
+        mode: &GasVectorComputationMode,
+    ) -> GasVector {
+        use crate::fee::resources::{ComputationResources, MessageResources};
+
+        let computation_resources = ComputationResources {
+            vm_resources: self.charged_resources.vm_resources,
+            n_reverted_steps: 0,
+            sierra_gas: self.charged_resources.gas_consumed,
+            reverted_sierra_gas: 0u64.into(),
+        };
+
+        [
+            computation_resources.to_gas_vector(versioned_constants, mode),
+            self.event_summary.to_gas_vector(versioned_constants, mode),
+            MessageResources::new(self.l2_to_l1_payload_lengths, None).to_gas_vector(),
+        ]
+        .iter()
+        .fold(GasVector::ZERO, |accumulator, cost| {
+            accumulator.checked_add(*cost).unwrap_or_else(|| {
+                panic!(
+                    "Execution summary to gas vector overflowed: tried to add {cost:?} to \
+                     {accumulator:?}"
+                );
+            })
+        })
+    }
+}
+
 /// L2 resources counted for fee charge.
 /// When all execution will be using gas (no VM mode), this should be removed, and the gas_consumed
 /// field should be used for fee collection.
@@ -106,12 +165,16 @@ impl Sum for ExecutionSummary {
 #[derive(Clone, Debug, Default, Serialize, Eq, PartialEq)]
 pub struct ChargedResources {
     pub vm_resources: ExecutionResources, // Counted in CairoSteps mode calls.
-    pub gas_for_fee: GasAmount,           // Counted in SierraGas mode calls.
+    pub gas_consumed: GasAmount,          // Counted in SierraGas mode calls.
 }
 
 impl ChargedResources {
     pub fn from_execution_resources(resources: ExecutionResources) -> Self {
         Self { vm_resources: resources, ..Default::default() }
+    }
+
+    pub fn from_gas(gas_consumed: GasAmount) -> Self {
+        Self { gas_consumed, ..Default::default() }
     }
 }
 
@@ -128,9 +191,23 @@ impl Add<&ChargedResources> for &ChargedResources {
 impl AddAssign<&ChargedResources> for ChargedResources {
     fn add_assign(&mut self, other: &Self) {
         self.vm_resources += &other.vm_resources;
-        self.gas_for_fee =
-            self.gas_for_fee.checked_add(other.gas_for_fee).expect("Gas for fee overflowed.");
+        self.gas_consumed =
+            self.gas_consumed.checked_add(other.gas_consumed).expect("Gas for fee overflowed.");
     }
+}
+
+#[cfg_attr(any(test, feature = "testing"), derive(Clone))]
+#[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
+#[derive(Debug, Default, Eq, PartialEq, Serialize)]
+pub struct StorageAccessTracker {
+    // TODO(Aner): refactor all to use a single enum with accessed_keys and ordered_values.
+    pub storage_read_values: Vec<Felt>,
+    pub accessed_storage_keys: HashSet<StorageKey>,
+    pub read_class_hash_values: Vec<ClassHash>,
+    pub accessed_contract_addresses: HashSet<ContractAddress>,
+    // TODO(Aner): add tests for storage tracking of contract 0x1
+    pub read_block_hash_values: Vec<BlockHash>,
+    pub accessed_blocks: HashSet<BlockNumber>,
 }
 
 /// Represents the full effects of executing an entry point, including the inner calls it invoked.
@@ -141,14 +218,11 @@ pub struct CallInfo {
     pub call: CallEntryPoint,
     pub execution: CallExecution,
     pub inner_calls: Vec<CallInfo>,
+    pub resources: ExecutionResources,
     pub tracked_resource: TrackedResource,
-    pub charged_resources: ChargedResources,
 
     // Additional information gathered during execution.
-    pub storage_read_values: Vec<Felt>,
-    pub accessed_storage_keys: HashSet<StorageKey>,
-    pub read_class_hash_values: Vec<ClassHash>,
-    pub accessed_contract_addresses: HashSet<ContractAddress>,
+    pub storage_access_tracker: StorageAccessTracker,
 }
 
 impl CallInfo {
@@ -181,6 +255,7 @@ impl CallInfo {
 
             // Storage entries.
             let call_storage_entries = call_info
+                .storage_access_tracker
                 .accessed_storage_keys
                 .iter()
                 .map(|storage_key| (call_info.call.storage_address, *storage_key));
@@ -208,9 +283,12 @@ impl CallInfo {
         }
 
         ExecutionSummary {
-            // Note: the charged resourses of a call contains the inner call resources, unlike other
-            // fields such as events and messages,
-            charged_resources: self.charged_resources.clone(),
+            // Note: the vm_resources and gas_consumed of a call contains the inner call resources,
+            // unlike other fields such as events and messages.
+            charged_resources: ChargedResources {
+                vm_resources: self.resources.clone(),
+                gas_consumed: GasAmount(self.execution.gas_consumed),
+            },
             executed_class_hashes,
             visited_storage_entries,
             l2_to_l1_payload_lengths,
@@ -225,13 +303,13 @@ impl CallInfo {
         call_infos.map(|call_info| call_info.summarize(versioned_constants)).sum()
     }
 
-    pub fn summarize_charged_resources<'a>(
+    pub fn summarize_vm_resources<'a>(
         call_infos: impl Iterator<Item = &'a CallInfo>,
-    ) -> ChargedResources {
-        // Note: the charged resourses of a call contains the inner call resources, unlike other
-        // fields such as events and messages,
-        call_infos.fold(ChargedResources::default(), |mut acc, inner_call| {
-            acc += &inner_call.charged_resources;
+    ) -> ExecutionResources {
+        // Note: the vm resources (and entire charged resources) of a call contains the inner call
+        // resources, unlike other fields such as events and messages.
+        call_infos.fold(ExecutionResources::default(), |mut acc, inner_call| {
+            acc += &inner_call.resources;
             acc
         })
     }

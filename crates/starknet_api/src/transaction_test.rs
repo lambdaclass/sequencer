@@ -1,9 +1,35 @@
+use rstest::{fixture, rstest};
+
 use super::Transaction;
 use crate::block::NonzeroGasPrice;
-use crate::executable_transaction::Transaction as ExecutableTransaction;
+use crate::core::ChainId;
+use crate::executable_transaction::{
+    AccountTransaction,
+    InvokeTransaction,
+    L1HandlerTransaction,
+    Transaction as ExecutableTransaction,
+};
 use crate::execution_resources::GasAmount;
 use crate::test_utils::{read_json_file, TransactionTestData};
 use crate::transaction::Fee;
+
+const CHAIN_ID: ChainId = ChainId::Mainnet;
+
+#[fixture]
+fn transactions_data() -> Vec<TransactionTestData> {
+    // The details were taken from Starknet Mainnet. You can find the transactions by hash in:
+    // https://alpha-mainnet.starknet.io/feeder_gateway/get_transaction?transactionHash=<transaction_hash>
+    serde_json::from_value(read_json_file("transaction_hash.json")).unwrap()
+}
+
+fn verify_transaction_conversion(tx: &Transaction, expected_executable_tx: ExecutableTransaction) {
+    let converted_executable_tx: ExecutableTransaction =
+        (tx.clone(), &CHAIN_ID).try_into().unwrap();
+    let reconverted_tx = Transaction::from(converted_executable_tx.clone());
+
+    assert_eq!(converted_executable_tx, expected_executable_tx);
+    assert_eq!(tx, &reconverted_tx);
+}
 
 #[test]
 fn test_fee_div_ceil() {
@@ -29,27 +55,38 @@ fn test_fee_div_ceil() {
     );
 }
 
-#[test]
-fn convert_executable_transaction_and_back() {
-    // The details were taken from Starknet Mainnet. You can find the transactions by hash in:
-    // https://alpha-mainnet.starknet.io/feeder_gateway/get_transaction?transactionHash=<transaction_hash>
-    let mut transactions_test_data_vec: Vec<TransactionTestData> =
-        serde_json::from_value(read_json_file("transaction_hash.json")).unwrap();
-
-    let (tx, tx_hash) = loop {
-        match transactions_test_data_vec.pop() {
-            Some(data) => {
-                if let Transaction::Invoke(tx) = data.transaction {
-                    // Do something with the data
-                    break (Transaction::Invoke(tx), data.transaction_hash);
-                }
-            }
-            None => {
-                panic!("Could not find a single Invoke transaction in the test data");
-            }
-        }
+#[rstest]
+fn test_invoke_executable_transaction_conversion(mut transactions_data: Vec<TransactionTestData>) {
+    // Extract Invoke transaction data.
+    let transaction_data = transactions_data.remove(0);
+    let Transaction::Invoke(invoke_tx) = transaction_data.transaction.clone() else {
+        panic!("Transaction_hash.json is expected to have Invoke as the first transaction.")
     };
-    let executable_tx: ExecutableTransaction = (tx.clone(), tx_hash.clone()).into();
-    let tx_back = Transaction::from(executable_tx);
-    assert_eq!(tx, tx_back);
+
+    let expected_executable_tx =
+        ExecutableTransaction::Account(AccountTransaction::Invoke(InvokeTransaction {
+            tx: invoke_tx,
+            tx_hash: transaction_data.transaction_hash,
+        }));
+
+    verify_transaction_conversion(&transaction_data.transaction, expected_executable_tx);
+}
+
+#[rstest]
+fn test_l1_handler_executable_transaction_conversion(
+    mut transactions_data: Vec<TransactionTestData>,
+) {
+    // Extract L1 Handler transaction data.
+    let transaction_data = transactions_data.remove(10);
+    let Transaction::L1Handler(l1_handler_tx) = transaction_data.transaction.clone() else {
+        panic!("Transaction_hash.json is expected to have L1 Handler as the 11th transaction.")
+    };
+
+    let expected_executable_tx = ExecutableTransaction::L1Handler(L1HandlerTransaction {
+        tx: l1_handler_tx,
+        tx_hash: transaction_data.transaction_hash,
+        paid_fee_on_l1: Fee(1),
+    });
+
+    verify_transaction_conversion(&transaction_data.transaction, expected_executable_tx);
 }

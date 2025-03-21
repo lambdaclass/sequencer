@@ -45,9 +45,40 @@ use crate::reader::objects::block::{BlockSignatureData, BlockSignatureMessage};
 use crate::reader::Block;
 use crate::test_utils::read_resource::read_resource_file;
 use crate::test_utils::retry::get_test_config;
+use crate::{KnownStarknetErrorCode, StarknetError, StarknetErrorCode};
 
 const NODE_VERSION: &str = "NODE VERSION";
 const FEEDER_GATEWAY_ALIVE_RESPONSE: &str = "FeederGateway is alive!";
+
+// TODO(Ayelet): Remove old feeder gateway support once the version update to 0.14.0 is complete.
+fn get_block_url(
+    block_number_or_latest: Option<u64>,
+    use_deprecated_feeder_gateway: bool,
+) -> String {
+    let mut url = match block_number_or_latest {
+        Some(block_number) => format!("/feeder_gateway/get_block?blockNumber={}", block_number),
+        None => "/feeder_gateway/get_block?blockNumber=latest".to_string(),
+    };
+
+    if !use_deprecated_feeder_gateway {
+        url.push_str("&withFeeMarketInfo=true");
+    }
+
+    url
+}
+
+fn starknet_client() -> StarknetFeederGatewayClient {
+    StarknetFeederGatewayClient::new(&mockito::server_url(), None, NODE_VERSION, get_test_config())
+        .unwrap()
+}
+
+fn block_not_found_error(block_number: i64) -> String {
+    let error = StarknetError {
+        code: StarknetErrorCode::KnownErrorCode(KnownStarknetErrorCode::BlockNotFound),
+        message: format!("Block {} was not found.", block_number),
+    };
+    serde_json::to_string(&error).unwrap()
+}
 
 #[test]
 fn new_urls() {
@@ -66,28 +97,23 @@ fn new_urls() {
 }
 
 #[tokio::test]
-async fn get_block_number() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
-    // There are blocks in Starknet.
-    let mock_block = mock("GET", "/feeder_gateway/get_block?blockNumber=latest")
+async fn get_latest_block_when_blocks_exists() {
+    let starknet_client = starknet_client();
+    let mock_block = mock("GET", get_block_url(None, false).as_str())
         .with_status(200)
         .with_body(read_resource_file("reader/block_post_0_13_1.json"))
         .create();
     let latest_block = starknet_client.latest_block().await.unwrap();
     mock_block.assert();
     assert_eq!(latest_block.unwrap().block_number(), BlockNumber(329525));
+}
 
-    // There are no blocks in Starknet.
-    let body = r#"{"code": "StarknetErrorCode.BLOCK_NOT_FOUND", "message": "Block number -1 was not found."}"#;
-    let mock_no_block = mock("GET", "/feeder_gateway/get_block?blockNumber=latest")
+#[tokio::test]
+async fn get_latest_block_when_no_blocks_exist() {
+    let starknet_client = starknet_client();
+    let mock_no_block = mock("GET", get_block_url(None, false).as_str())
         .with_status(400)
-        .with_body(body)
+        .with_body(block_not_found_error(-1))
         .create();
     let latest_block = starknet_client.latest_block().await.unwrap();
     mock_no_block.assert();
@@ -122,13 +148,7 @@ async fn declare_tx_serde() {
 
 #[tokio::test]
 async fn state_update() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let raw_state_update = read_resource_file("reader/block_state_update.json");
     let mock_state_update =
         mock("GET", &format!("/feeder_gateway/get_state_update?{BLOCK_NUMBER_QUERY}=123456")[..])
@@ -140,11 +160,10 @@ async fn state_update() {
     let expected_state_update: StateUpdate = serde_json::from_str(&raw_state_update).unwrap();
     assert_eq!(state_update.unwrap(), expected_state_update);
 
-    let body = r#"{"code": "StarknetErrorCode.BLOCK_NOT_FOUND", "message": "Block number -1 was not found."}"#;
     let mock_no_block =
         mock("GET", &format!("/feeder_gateway/get_state_update?{BLOCK_NUMBER_QUERY}=999999")[..])
             .with_status(400)
-            .with_body(body)
+            .with_body(block_not_found_error(-1))
             .create();
     let state_update = starknet_client.state_update(BlockNumber(999999)).await.unwrap();
     assert!(state_update.is_none());
@@ -162,13 +181,7 @@ async fn serialization_precision() {
 
 #[tokio::test]
 async fn contract_class() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let expected_contract_class = ContractClass {
         sierra_program: vec![
             felt!("0x302e312e30"),
@@ -218,13 +231,7 @@ async fn contract_class() {
 
 #[tokio::test]
 async fn deprecated_contract_class() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let expected_contract_class = DeprecatedContractClass {
         abi: Some(vec![ContractClassAbiEntry::Constructor(FunctionAbiEntry::<ConstructorType> {
             name: "constructor".to_string(),
@@ -316,17 +323,11 @@ async fn deprecated_contract_class() {
     assert!(class.is_none());
 }
 
-// TODO: Add test for pending_data.
+// TODO(DanB): Add test for pending_data.
 
 #[tokio::test]
 async fn deprecated_pending_data() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
 
     // Pending
     let raw_pending_data = read_resource_file("reader/deprecated_pending_data.json");
@@ -355,30 +356,34 @@ async fn deprecated_pending_data() {
 
 #[tokio::test]
 async fn get_block() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
-    let raw_block = read_resource_file("reader/block_post_0_13_1.json");
-    let mock_block = mock("GET", &format!("/feeder_gateway/get_block?{BLOCK_NUMBER_QUERY}=20")[..])
-        .with_status(200)
-        .with_body(&raw_block)
-        .create();
-    let block = starknet_client.block(BlockNumber(20)).await.unwrap().unwrap();
-    mock_block.assert();
-    let expected_block: Block = serde_json::from_str(&raw_block).unwrap();
-    assert_eq!(block, expected_block);
+    let starknet_client = starknet_client();
+    let test_cases = vec!["0.13.1", "0.14.0"];
 
-    // Non-existing block.
-    let body = r#"{"code": "StarknetErrorCode.BLOCK_NOT_FOUND", "message": "Block 9999999999 was not found."}"#;
-    let mock_no_block =
-        mock("GET", &format!("/feeder_gateway/get_block?{BLOCK_NUMBER_QUERY}=9999999999")[..])
-            .with_status(400)
-            .with_body(body)
+    for starknet_version in test_cases {
+        let json_filename =
+            format!("reader/block_post_{}.json", starknet_version.replace('.', "_"));
+        let raw_block = read_resource_file(&json_filename);
+        let expected_block: Block = serde_json::from_str(&raw_block).unwrap();
+
+        let mock_block = mock("GET", get_block_url(Some(20), false).as_str())
+            .with_status(200)
+            .with_body(&raw_block)
             .create();
+        let block = starknet_client.block(BlockNumber(20)).await.unwrap().unwrap();
+        mock_block.assert();
+
+        assert_eq!(block, expected_block);
+    }
+}
+
+// Requesting a block that does not exist, expecting a "Block Not Found" error.
+#[tokio::test]
+async fn get_block_not_found() {
+    let starknet_client = starknet_client();
+    let mock_no_block = mock("GET", get_block_url(Some(9999999999), false).as_str())
+        .with_status(400)
+        .with_body(block_not_found_error(9999999999))
+        .create();
     let block = starknet_client.block(BlockNumber(9999999999)).await.unwrap();
     mock_no_block.assert();
     assert!(block.is_none());
@@ -386,13 +391,7 @@ async fn get_block() {
 
 #[tokio::test]
 async fn compiled_class_by_hash() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let raw_casm_contract_class = read_resource_file("reader/casm_contract_class.json");
     let mock_casm_contract_class = mock(
         "GET",
@@ -429,13 +428,7 @@ async fn compiled_class_by_hash() {
 
 #[tokio::test]
 async fn is_alive() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let mock_is_alive = mock("GET", "/feeder_gateway/is_alive")
         .with_status(200)
         .with_body(FEEDER_GATEWAY_ALIVE_RESPONSE)
@@ -449,13 +442,8 @@ async fn is_alive() {
 // the state diff commitment).
 #[tokio::test]
 async fn state_update_with_empty_storage_diff() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
+
     let mut state_update = StateUpdate::default();
     let empty_storage_diff = indexmap!(ContractAddress::default() => vec![]);
     state_update.state_diff.storage_diffs.clone_from(&empty_storage_diff);
@@ -478,13 +466,7 @@ async fn test_unserializable<
     url_suffix: &str,
     call_method: F,
 ) {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
     let body = "body";
     let mock = mock("GET", url_suffix).with_status(200).with_body(body).create();
     let error = call_method(starknet_client).await.unwrap_err();
@@ -494,16 +476,15 @@ async fn test_unserializable<
 
 #[tokio::test]
 async fn latest_block_unserializable() {
-    test_unserializable(
-        "/feeder_gateway/get_block?blockNumber=latest",
-        |starknet_client| async move { starknet_client.latest_block().await },
-    )
+    test_unserializable(&get_block_url(None, false), |starknet_client| async move {
+        starknet_client.latest_block().await
+    })
     .await
 }
 
 #[tokio::test]
 async fn block_unserializable() {
-    test_unserializable("/feeder_gateway/get_block?blockNumber=20", |starknet_client| async move {
+    test_unserializable(&get_block_url(Some(20), false), |starknet_client| async move {
         starknet_client.block(BlockNumber(20)).await
     })
     .await
@@ -545,13 +526,7 @@ async fn compiled_class_by_hash_unserializable() {
 
 #[tokio::test]
 async fn get_block_signature() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
 
     let expected_block_signature = BlockSignatureData::Deprecated {
         block_number: BlockNumber(20),
@@ -575,19 +550,11 @@ async fn get_block_signature() {
 
 #[tokio::test]
 async fn get_block_signature_unknown_block() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
-
-    let body = r#"{"code": "StarknetErrorCode.BLOCK_NOT_FOUND", "message": "Block number 999999 was not found."}"#;
+    let starknet_client = starknet_client();
     let mock_no_block =
         mock("GET", &format!("/feeder_gateway/get_signature?{BLOCK_NUMBER_QUERY}=999999")[..])
             .with_status(400)
-            .with_body(body)
+            .with_body(block_not_found_error(999999))
             .create();
     let block_signature = starknet_client.block_signature(BlockNumber(999999)).await.unwrap();
     mock_no_block.assert();
@@ -596,13 +563,7 @@ async fn get_block_signature_unknown_block() {
 
 #[tokio::test]
 async fn get_sequencer_public_key() {
-    let starknet_client = StarknetFeederGatewayClient::new(
-        &mockito::server_url(),
-        None,
-        NODE_VERSION,
-        get_test_config(),
-    )
-    .unwrap();
+    let starknet_client = starknet_client();
 
     let expected_sequencer_pub_key = SequencerPublicKey(PublicKey(felt!("0x1")));
 

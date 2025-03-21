@@ -16,7 +16,6 @@ use starknet_api::transaction_hash::get_transaction_hash;
 use starknet_api::{calldata, contract_address, felt};
 use starknet_client::writer::objects::transaction::InvokeTransaction as SNClientInvokeTransaction;
 use starknet_core::crypto::ecdsa_sign;
-use starknet_core::types::FieldElement;
 use starknet_types_core::felt::Felt;
 
 const ETH_TO_WEI: u128 = u128::pow(10, 18);
@@ -102,19 +101,17 @@ async fn test_gw_integration_testnet() {
 
     // Update the signature.
     let hash = get_transaction_hash(
-        &Transaction::Invoke(
-            InvokeTransactionRPC0_8::Version1(invoke_tx.clone()).try_into().unwrap(),
-        ),
+        &Transaction::Invoke(InvokeTransactionRPC0_8::Version1(invoke_tx.clone()).into()),
         &ChainId::Sepolia,
         &TransactionOptions::default(),
     )
     .unwrap();
     let signature = ecdsa_sign(
-        &FieldElement::from_hex_be(&env::var("SENDER_PRIVATE_KEY").expect(
+        &Felt::from_hex(&env::var("SENDER_PRIVATE_KEY").expect(
             "Sender private key must be given in SENDER_PRIVATE_KEY environment variable.",
         ))
         .unwrap(),
-        &FieldElement::from_bytes_be(&hash.0.to_bytes_be()).unwrap(),
+        &hash.0,
     )
     .unwrap();
     invoke_tx.signature = TransactionSignature(vec![

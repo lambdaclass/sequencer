@@ -2,42 +2,46 @@ use std::collections::HashSet;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
-use metrics::gauge;
-use papyrus_common::metrics as papyrus_metrics;
 use papyrus_network::network_manager::ClientResponsesManager;
 use papyrus_proc_macros::latency_histogram;
 use papyrus_protobuf::sync::{DataOrFin, StateDiffChunk};
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::state::{StateStorageReader, StateStorageWriter};
 use papyrus_storage::{StorageError, StorageReader, StorageWriter};
+use papyrus_sync::metrics::SYNC_STATE_MARKER;
 use starknet_api::block::BlockNumber;
 use starknet_api::state::ThinStateDiff;
+use starknet_class_manager_types::SharedClassManagerClient;
+use starknet_state_sync_types::state_sync_types::SyncBlock;
 
-use super::stream_builder::BadPeerError;
-use crate::client::stream_builder::{
+use super::block_data_stream_builder::BadPeerError;
+use crate::client::block_data_stream_builder::{
     BlockData,
+    BlockDataStreamBuilder,
     BlockNumberLimit,
-    DataStreamBuilder,
     ParseDataError,
 };
-use crate::client::{P2PSyncClientError, NETWORK_DATA_TIMEOUT};
+use crate::client::P2pSyncClientError;
 
 impl BlockData for (ThinStateDiff, BlockNumber) {
     #[latency_histogram("p2p_sync_state_diff_write_to_storage_latency_seconds", true)]
-    #[allow(clippy::as_conversions)] // FIXME: use int metrics so `as f64` may be removed.
-    fn write_to_storage(
+    fn write_to_storage<'a>(
         self: Box<Self>,
-        storage_writer: &mut StorageWriter,
-    ) -> Result<(), StorageError> {
-        storage_writer.begin_rw_txn()?.append_state_diff(self.1, self.0)?.commit()?;
-        gauge!(papyrus_metrics::PAPYRUS_STATE_MARKER, self.1.unchecked_next().0 as f64);
-        Ok(())
+        storage_writer: &'a mut StorageWriter,
+        _class_manager_client: &'a mut SharedClassManagerClient,
+    ) -> BoxFuture<'a, Result<(), P2pSyncClientError>> {
+        async move {
+            storage_writer.begin_rw_txn()?.append_state_diff(self.1, self.0)?.commit()?;
+            SYNC_STATE_MARKER.set_lossy(self.1.unchecked_next().0);
+            Ok(())
+        }
+        .boxed()
     }
 }
 
 pub(crate) struct StateDiffStreamBuilder;
 
-impl DataStreamBuilder<StateDiffChunk> for StateDiffStreamBuilder {
+impl BlockDataStreamBuilder<StateDiffChunk> for StateDiffStreamBuilder {
     type Output = (ThinStateDiff, BlockNumber);
 
     const TYPE_DESCRIPTION: &'static str = "state diffs";
@@ -60,20 +64,18 @@ impl DataStreamBuilder<StateDiffChunk> for StateDiffStreamBuilder {
                 .get_block_header(block_number)?
                 .expect("A header with number lower than the header marker is missing")
                 .state_diff_length
-                .ok_or(P2PSyncClientError::OldHeaderInStorage {
+                .ok_or(P2pSyncClientError::OldHeaderInStorage {
                     block_number,
                     missing_field: "state_diff_length",
                 })?;
 
             while current_state_diff_len < target_state_diff_len {
-                let maybe_state_diff_chunk = tokio::time::timeout(
-                    NETWORK_DATA_TIMEOUT,
-                    state_diff_chunks_response_manager.next(),
-                )
-                .await?
-                .ok_or(P2PSyncClientError::ReceiverChannelTerminated {
-                    type_description: Self::TYPE_DESCRIPTION,
-                })?;
+                let maybe_state_diff_chunk = state_diff_chunks_response_manager
+                    .next()
+                    .await
+                    .ok_or(ParseDataError::BadPeer(BadPeerError::SessionEndedWithoutFin {
+                        type_description: Self::TYPE_DESCRIPTION,
+                    }))?;
                 let Some(state_diff_chunk) = maybe_state_diff_chunk?.0 else {
                     if current_state_diff_len == 0 {
                         return Ok(None);
@@ -109,6 +111,13 @@ impl DataStreamBuilder<StateDiffChunk> for StateDiffStreamBuilder {
 
     fn get_start_block_number(storage_reader: &StorageReader) -> Result<BlockNumber, StorageError> {
         storage_reader.begin_ro_txn()?.get_state_marker()
+    }
+
+    fn convert_sync_block_to_block_data(
+        block_number: BlockNumber,
+        sync_block: SyncBlock,
+    ) -> (ThinStateDiff, BlockNumber) {
+        (sync_block.state_diff, block_number)
     }
 }
 

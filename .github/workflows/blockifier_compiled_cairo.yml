@@ -9,20 +9,27 @@ on:
     paths:
       - 'Cargo.toml'
       - '.github/workflows/blockifier_compiled_cairo.yml'
-      - 'crates/blockifier/feature_contracts/**'
-      - 'crates/blockifier/src/test_utils/cairo_compile.rs'
-      - 'crates/blockifier/tests/feature_contracts_compatibility_test.rs'
-      - 'crates/blockifier/tests/requirements.txt'
+      - 'crates/blockifier_test_utils/cairo_compile.rs'
+      - 'crates/blockifier_test_utils/resources/feature_contracts/**'
+      - 'crates/blockifier_test_utils/tests/feature_contracts_compatibility_test.rs'
+      - 'crates/blockifier_test_utils/tests/requirements.txt'
       - 'scripts/dependencies.sh'
 
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
 # On PR events, cancel existing CI runs on this same PR for this workflow.
+# Also, create different concurrency groups for different pushed commits, on push events.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.job }}
+  group: >
+    ${{ github.workflow }}-
+    ${{ github.ref }}-
+    ${{ github.event_name == 'pull_request' && 'PR' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify_cairo_file_dependencies:
-    runs-on: starkware-ubuntu-20-04-medium
+    runs-on: starkware-ubuntu-24.04-medium
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
@@ -65,5 +72,5 @@ jobs:
       - name: Verify cairo contract recompilation (both cairo versions).
         run:
           cd sequencer &&
-          pip install -r crates/blockifier/tests/requirements.txt &&
-          cargo test -p blockifier --test feature_contracts_compatibility_test --features testing -- --include-ignored
+          pip install -r crates/blockifier_test_utils/tests/requirements.txt &&
+          cargo test -p blockifier_test_utils --test feature_contracts_compatibility_test -- --include-ignored --nocapture

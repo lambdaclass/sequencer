@@ -7,35 +7,35 @@ use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt;
 use papyrus_base_layer::ethereum_base_layer_contract::EthereumBaseLayerConfig;
 use papyrus_common::metrics::COLLECT_PROFILING_METRICS;
 use papyrus_common::pending_classes::PendingClasses;
 use papyrus_config::presentation::get_config_presentation;
 use papyrus_config::validators::config_validate;
-use papyrus_consensus::config::ConsensusConfig;
-use papyrus_consensus_orchestrator::papyrus_consensus_context::PapyrusConsensusContext;
 use papyrus_monitoring_gateway::MonitoringServer;
-use papyrus_network::gossipsub_impl::Topic;
 use papyrus_network::network_manager::NetworkManager;
 use papyrus_network::{network_manager, NetworkConfig};
-use papyrus_p2p_sync::client::{P2PSyncClient, P2PSyncClientChannels};
-use papyrus_p2p_sync::server::{P2PSyncServer, P2PSyncServerChannels};
+use papyrus_p2p_sync::client::{P2pSyncClient, P2pSyncClientChannels};
+use papyrus_p2p_sync::server::{P2pSyncServer, P2pSyncServerChannels};
 use papyrus_p2p_sync::{Protocol, BUFFER_SIZE};
 #[cfg(feature = "rpc")]
 use papyrus_rpc::run_server;
-use papyrus_storage::{open_storage, update_storage_metrics, StorageReader, StorageWriter};
-use papyrus_sync::sources::base_layer::{BaseLayerSourceError, EthereumBaseLayerSource};
+use papyrus_storage::storage_metrics::update_storage_metrics;
+use papyrus_storage::{open_storage, StorageReader, StorageWriter};
+use papyrus_sync::sources::base_layer::EthereumBaseLayerSource;
 use papyrus_sync::sources::central::{CentralError, CentralSource, CentralSourceConfig};
 use papyrus_sync::sources::pending::PendingSource;
-use papyrus_sync::{StateSync, SyncConfig};
+use papyrus_sync::{StateSync as CentralStateSync, SyncConfig as CentralSyncConfig};
 use starknet_api::block::{BlockHash, BlockHashAndNumber};
 use starknet_api::felt;
+use starknet_class_manager_types::{EmptyClassManagerClient, SharedClassManagerClient};
 use starknet_client::reader::objects::pending_data::{PendingBlock, PendingBlockOrDeprecated};
 use starknet_client::reader::PendingData;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::metadata::LevelFilter;
-use tracing::{debug, debug_span, error, info, warn, Instrument};
+use tracing::{debug_span, error, info, warn, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -45,9 +45,9 @@ use crate::version::VERSION_FULL;
 // TODO(yair): Add to config.
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::INFO;
 
-// TODO(shahak): Consider adding genesis hash to the config to support chains that have
+// TODO(Shahak): Consider adding genesis hash to the config to support chains that have
 // different genesis hash.
-// TODO: Consider moving to a more general place.
+// TODO(Shahak): Consider moving to a more general place.
 const GENESIS_HASH: &str = "0x0";
 
 // TODO(dvir): add this to config.
@@ -62,6 +62,7 @@ pub struct PapyrusResources {
     pub shared_highest_block: Arc<RwLock<Option<BlockHashAndNumber>>>,
     pub pending_data: Arc<RwLock<PendingData>>,
     pub pending_classes: Arc<RwLock<PendingClasses>>,
+    pub class_manager_client: SharedClassManagerClient,
 }
 
 /// Struct which allows configuring how the node will run.
@@ -75,7 +76,6 @@ pub struct PapyrusTaskHandles {
     pub sync_client_handle: Option<JoinHandle<anyhow::Result<()>>>,
     pub monitoring_server_handle: Option<JoinHandle<anyhow::Result<()>>>,
     pub p2p_sync_server_handle: Option<JoinHandle<anyhow::Result<()>>>,
-    pub consensus_handle: Option<JoinHandle<anyhow::Result<()>>>,
     pub network_handle: Option<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -94,6 +94,8 @@ impl PapyrusResources {
             ..Default::default()
         }));
         let pending_classes = Arc::new(RwLock::new(PendingClasses::default()));
+        // TODO(noamsp): Remove this and use the real client instead once implemented.
+        let class_manager_client = Arc::new(EmptyClassManagerClient);
         Ok(Self {
             storage_reader,
             storage_writer,
@@ -102,6 +104,7 @@ impl PapyrusResources {
             shared_highest_block,
             pending_data,
             pending_classes,
+            class_manager_client,
         })
     }
 }
@@ -115,6 +118,7 @@ fn build_network_manager(
     let network_manager = network_manager::NetworkManager::new(
         network_config.clone(),
         Some(VERSION_FULL.to_string()),
+        None,
     );
     let local_peer_id = network_manager.get_local_peer_id();
 
@@ -171,42 +175,8 @@ fn spawn_monitoring_server(
     Ok(tokio::spawn(async move { Ok(monitoring_server.run_server().await?) }))
 }
 
-fn spawn_consensus(
-    config: Option<&ConsensusConfig>,
-    storage_reader: StorageReader,
-    network_manager: Option<&mut NetworkManager>,
-) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
-    let (Some(config), Some(network_manager)) = (config, network_manager) else {
-        info!("Consensus is disabled.");
-        return Ok(tokio::spawn(future::pending()));
-    };
-    let config = config.clone();
-    debug!("Consensus configuration: {config:?}");
-
-    let network_channels = network_manager
-        .register_broadcast_topic(Topic::new(config.network_topic.clone()), BUFFER_SIZE)?;
-    let context = PapyrusConsensusContext::new(
-        storage_reader.clone(),
-        network_channels.broadcast_topic_client.clone(),
-        config.num_validators,
-        None,
-    );
-    Ok(tokio::spawn(async move {
-        Ok(papyrus_consensus::run_consensus(
-            context,
-            config.start_height,
-            config.validator_id,
-            config.consensus_delay,
-            config.timeouts.clone(),
-            network_channels.into(),
-            futures::stream::pending(),
-        )
-        .await?)
-    }))
-}
-
 async fn run_sync(
-    configs: (SyncConfig, CentralSourceConfig, EthereumBaseLayerConfig),
+    configs: (CentralSyncConfig, CentralSourceConfig, EthereumBaseLayerConfig),
     shared_highest_block: Arc<RwLock<Option<BlockHashAndNumber>>>,
     pending_data: Arc<RwLock<PendingData>>,
     pending_classes: Arc<RwLock<PendingClasses>>,
@@ -219,9 +189,9 @@ async fn run_sync(
             .map_err(CentralError::ClientCreation)?;
     let pending_source =
         PendingSource::new(central_config, VERSION_FULL).map_err(CentralError::ClientCreation)?;
-    let base_layer_source = EthereumBaseLayerSource::new(base_layer_config)
-        .map_err(|e| BaseLayerSourceError::BaseLayerSourceCreationError(e.to_string()))?;
-    let sync = StateSync::new(
+    let base_layer_source = Some(EthereumBaseLayerSource::new(base_layer_config));
+    let class_manager_client = None;
+    let sync = CentralStateSync::new(
         sync_config,
         shared_highest_block,
         pending_data,
@@ -231,10 +201,12 @@ async fn run_sync(
         base_layer_source,
         storage_reader.clone(),
         storage_writer,
+        class_manager_client,
     );
     Ok(sync.run().await?)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_sync_client(
     maybe_network_manager: Option<&mut NetworkManager>,
     storage_reader: StorageReader,
@@ -243,6 +215,7 @@ async fn spawn_sync_client(
     shared_highest_block: Arc<RwLock<Option<BlockHashAndNumber>>>,
     pending_data: Arc<RwLock<PendingData>>,
     pending_classes: Arc<RwLock<PendingClasses>>,
+    class_manager_client: SharedClassManagerClient,
 ) -> JoinHandle<anyhow::Result<()>> {
     match (config.sync, config.p2p_sync) {
         (Some(_), Some(_)) => {
@@ -271,19 +244,21 @@ async fn spawn_sync_client(
                 .register_sqmr_protocol_client(Protocol::Transaction.into(), BUFFER_SIZE);
             let class_client_sender =
                 network_manager.register_sqmr_protocol_client(Protocol::Class.into(), BUFFER_SIZE);
-            let p2p_sync_client_channels = P2PSyncClientChannels::new(
+            let p2p_sync_client_channels = P2pSyncClientChannels::new(
                 header_client_sender,
                 state_diff_client_sender,
                 transaction_client_sender,
                 class_client_sender,
             );
-            let p2p_sync = P2PSyncClient::new(
+            let p2p_sync = P2pSyncClient::new(
                 p2p_sync_client_config,
                 storage_reader,
                 storage_writer,
                 p2p_sync_client_channels,
+                futures::stream::pending().boxed(),
+                class_manager_client,
             );
-            tokio::spawn(async move { Ok(p2p_sync.run().await?) })
+            tokio::spawn(async move { Ok(p2p_sync.run().await.map(|_never| ())?) })
         }
     }
 }
@@ -291,9 +266,10 @@ async fn spawn_sync_client(
 fn spawn_p2p_sync_server(
     network_manager: Option<&mut NetworkManager>,
     storage_reader: StorageReader,
+    class_manager_client: SharedClassManagerClient,
 ) -> JoinHandle<anyhow::Result<()>> {
     let Some(network_manager) = network_manager else {
-        info!("P2P Sync is disabled.");
+        info!("P2p Sync is disabled.");
         return tokio::spawn(future::pending());
     };
 
@@ -308,7 +284,7 @@ fn spawn_p2p_sync_server(
     let event_server_receiver =
         network_manager.register_sqmr_protocol_server(Protocol::Event.into(), BUFFER_SIZE);
 
-    let p2p_sync_server_channels = P2PSyncServerChannels::new(
+    let p2p_sync_server_channels = P2pSyncServerChannels::new(
         header_server_receiver,
         state_diff_server_receiver,
         transaction_server_receiver,
@@ -316,10 +292,11 @@ fn spawn_p2p_sync_server(
         event_server_receiver,
     );
 
-    let p2p_sync_server = P2PSyncServer::new(storage_reader.clone(), p2p_sync_server_channels);
+    let p2p_sync_server =
+        P2pSyncServer::new(storage_reader.clone(), p2p_sync_server_channels, class_manager_client);
     tokio::spawn(async move {
-        p2p_sync_server.run().await;
-        Ok(())
+        let _never = p2p_sync_server.run().await;
+        unreachable!("Return type Never should never be constructed.");
     })
 }
 
@@ -328,16 +305,6 @@ async fn run_threads(
     mut resources: PapyrusResources,
     tasks: PapyrusTaskHandles,
 ) -> anyhow::Result<()> {
-    let consensus_handle = if let Some(handle) = tasks.consensus_handle {
-        handle
-    } else {
-        spawn_consensus(
-            config.consensus.as_ref(),
-            resources.storage_reader.clone(),
-            resources.maybe_network_manager.as_mut(),
-        )?
-    };
-
     let storage_metrics_handle = if let Some(handle) = tasks.storage_metrics_handle {
         handle
     } else {
@@ -372,13 +339,14 @@ async fn run_threads(
         .await?
     };
 
-    // P2P Sync Server task.
+    // P2p Sync Server task.
     let p2p_sync_server_handle = if let Some(handle) = tasks.p2p_sync_server_handle {
         handle
     } else {
         spawn_p2p_sync_server(
             resources.maybe_network_manager.as_mut(),
             resources.storage_reader.clone(),
+            resources.class_manager_client.clone(),
         )
     };
 
@@ -394,6 +362,7 @@ async fn run_threads(
             resources.shared_highest_block,
             resources.pending_data,
             resources.pending_classes,
+            resources.class_manager_client.clone(),
         )
         .await
     };
@@ -425,15 +394,11 @@ async fn run_threads(
             res??
         }
         res = p2p_sync_server_handle => {
-            error!("P2P Sync server stopped");
+            error!("P2p Sync server stopped");
             res??
         }
         res = network_handle => {
             error!("Network stopped.");
-            res??
-        }
-        res = consensus_handle => {
-            error!("Consensus stopped.");
             res??
         }
     };

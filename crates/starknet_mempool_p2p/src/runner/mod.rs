@@ -2,68 +2,79 @@
 mod test;
 
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
-use futures::{pin_mut, StreamExt, TryFutureExt};
+use futures::StreamExt;
 use papyrus_network::network_manager::{
     BroadcastTopicClient,
     BroadcastTopicClientTrait,
     BroadcastTopicServer,
-    NetworkManager,
+    NetworkError,
 };
-use papyrus_protobuf::mempool::RpcTransactionWrapper;
+use papyrus_protobuf::mempool::RpcTransactionBatch;
 use starknet_gateway_types::communication::{GatewayClientError, SharedGatewayClient};
 use starknet_gateway_types::errors::GatewayError;
 use starknet_gateway_types::gateway_types::GatewayInput;
+use starknet_mempool_p2p_types::communication::SharedMempoolP2pPropagatorClient;
 use starknet_sequencer_infra::component_definitions::ComponentStarter;
 use starknet_sequencer_infra::component_server::WrapperServer;
-use starknet_sequencer_infra::errors::ComponentError;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 pub struct MempoolP2pRunner {
-    network_manager: Option<NetworkManager>,
-    broadcasted_topic_server: BroadcastTopicServer<RpcTransactionWrapper>,
-    broadcast_topic_client: BroadcastTopicClient<RpcTransactionWrapper>,
+    network_future: BoxFuture<'static, Result<(), NetworkError>>,
+    broadcasted_topic_server: BroadcastTopicServer<RpcTransactionBatch>,
+    broadcast_topic_client: BroadcastTopicClient<RpcTransactionBatch>,
     gateway_client: SharedGatewayClient,
+    _mempool_p2p_propagator_client: SharedMempoolP2pPropagatorClient,
 }
 
 impl MempoolP2pRunner {
     pub fn new(
-        network_manager: Option<NetworkManager>,
-        broadcasted_topic_server: BroadcastTopicServer<RpcTransactionWrapper>,
-        broadcast_topic_client: BroadcastTopicClient<RpcTransactionWrapper>,
+        network_future: BoxFuture<'static, Result<(), NetworkError>>,
+        broadcasted_topic_server: BroadcastTopicServer<RpcTransactionBatch>,
+        broadcast_topic_client: BroadcastTopicClient<RpcTransactionBatch>,
         gateway_client: SharedGatewayClient,
+        mempool_p2p_propagator_client: SharedMempoolP2pPropagatorClient,
     ) -> Self {
-        Self { network_manager, broadcasted_topic_server, broadcast_topic_client, gateway_client }
+        Self {
+            network_future,
+            broadcasted_topic_server,
+            broadcast_topic_client,
+            gateway_client,
+            _mempool_p2p_propagator_client: mempool_p2p_propagator_client,
+        }
     }
 }
 
 #[async_trait]
 impl ComponentStarter for MempoolP2pRunner {
-    async fn start(&mut self) -> Result<(), ComponentError> {
-        let network_future = self
-            .network_manager
-            .take()
-            .expect("Network manager not found")
-            .run()
-            .map_err(|_| ComponentError::InternalComponentError);
-        pin_mut!(network_future);
+    async fn start(&mut self) {
         let mut gateway_futures = FuturesUnordered::new();
         loop {
             tokio::select! {
-                result = &mut network_future => {
-                    result?;
-                    panic!("Network stopped unexpectedly");
+                _ = &mut self.network_future => {
+                    panic!("MempoolP2pRunner failed - network stopped unexpectedly");
                 }
                 Some(result) = gateway_futures.next() => {
                     match result {
                         Ok(_) => {}
                         Err(gateway_client_error) => {
+                            // TODO(shahak): Analyze the error to see if it's the tx's fault or an
+                            // internal error. Widen GatewayError's variants if necessary.
                             if let GatewayClientError::GatewayError(
                                 GatewayError::GatewaySpecError{p2p_message_metadata: Some(p2p_message_metadata), ..}
                             ) = gateway_client_error {
+                                warn!(
+                                    "Gateway rejected transaction we received from another peer. Reporting peer."
+                                );
                                 if let Err(e) = self.broadcast_topic_client.report_peer(p2p_message_metadata.clone()).await {
                                     warn!("Failed to report peer: {:?}", e);
                                 }
+                            } else {
+                                warn!(
+                                    "Failed sending transaction to gateway. {:?}",
+                                    gateway_client_error
+                                );
                             }
                         }
                     }
@@ -71,9 +82,14 @@ impl ComponentStarter for MempoolP2pRunner {
                 Some((message_result, broadcasted_message_metadata)) = self.broadcasted_topic_server.next() => {
                     match message_result {
                         Ok(message) => {
-                            gateway_futures.push(self.gateway_client.add_tx(
-                                GatewayInput { rpc_tx: message.0, message_metadata: Some(broadcasted_message_metadata.clone()) }
-                            ));
+                            // TODO(alonl): consider calculating the tx_hash and pringing it instead of the entire tx.
+                            info!("Received transaction from network, forwarding to gateway");
+                            debug!("received transaction: {:?}", message.0);
+                            for rpc_tx in message.0 {
+                                gateway_futures.push(self.gateway_client.add_tx(
+                                    GatewayInput { rpc_tx, message_metadata: Some(broadcasted_message_metadata.clone()) }
+                                ));
+                            }
                         }
                         Err(e) => {
                             warn!("Received a faulty transaction from network: {:?}. Attempting to report the sending peer", e);

@@ -15,6 +15,7 @@ use command::{get_command_matches, update_config_map_by_command_args};
 use itertools::any;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use tracing::{info, instrument};
 
 use crate::validators::validate_path_exists;
 use crate::{
@@ -30,6 +31,7 @@ use crate::{
 /// Deserializes config from flatten JSON.
 /// For an explanation of `for<'a> Deserialize<'a>` see
 /// `<https://doc.rust-lang.org/nomicon/hrtb.html>`.
+#[instrument(skip(config_map))]
 pub fn load<T: for<'a> Deserialize<'a>>(
     config_map: &BTreeMap<ParamPath, Value>,
 ) -> Result<T, ConfigError> {
@@ -50,16 +52,21 @@ pub fn load_and_process_config<T: for<'a> Deserialize<'a>>(
     default_config_file: File,
     command: Command,
     args: Vec<String>,
+    ignore_default_values: bool,
 ) -> Result<T, ConfigError> {
     let deserialized_default_config: Map<String, Value> =
         serde_json::from_reader(default_config_file)?;
-
     // Store the pointers separately from the default values. The pointers will receive a value
     // only at the end of the process.
     let (default_config_map, pointers_map) = split_pointers_map(deserialized_default_config);
     // Take param paths with corresponding descriptions, and get the matching arguments.
     let mut arg_matches = get_command_matches(&default_config_map, command, args)?;
+    // Retaining values from the default config map for backward compatibility.
     let (mut values_map, types_map) = split_values_and_types(default_config_map);
+    if ignore_default_values {
+        info!("Ignoring default values by overriding with an empty map.");
+        values_map = BTreeMap::new();
+    }
     // If the config_file arg is given, updates the values map according to this files.
     if let Some(custom_config_paths) = arg_matches.remove_many::<PathBuf>("config_file") {
         update_config_map_by_custom_configs(&mut values_map, &types_map, custom_config_paths)?;
@@ -124,6 +131,7 @@ pub(crate) fn update_config_map_by_custom_configs(
     custom_config_paths: Values<PathBuf>,
 ) -> Result<(), ConfigError> {
     for config_path in custom_config_paths {
+        info!("Loading custom config file: {:?}", config_path);
         validate_path_exists(&config_path)?;
         let file = std::fs::File::open(config_path)?;
         let custom_config: Map<String, Value> = serde_json::from_reader(file)?;

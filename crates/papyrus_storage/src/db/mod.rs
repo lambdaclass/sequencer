@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use libmdbx::{DatabaseFlags, Geometry, PageSize, WriteMap};
 use papyrus_config::dumping::{ser_param, SerializeConfig};
-use papyrus_config::validators::{validate_ascii, validate_path_exists};
+use papyrus_config::validators::validate_ascii;
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_proc_macros::latency_histogram;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ use self::table_types::{DbCursor, DbCursorTrait};
 use crate::db::table_types::TableType;
 
 // Maximum number of Sub-Databases.
-const MAX_DBS: usize = 18;
+const MAX_DBS: usize = 19;
 
 // Note that NO_TLS mode is used by default.
 type EnvironmentKind = WriteMap;
@@ -57,7 +57,6 @@ type DbValueType<'env> = Cow<'env, [u8]>;
 pub struct DbConfig {
     /// The path prefix of the database files. The final path is the path prefix followed by the
     /// chain id.
-    #[validate(custom = "validate_path_exists")]
     pub path_prefix: PathBuf,
     /// The [chain id](https://docs.rs/starknet_api/latest/starknet_api/core/struct.ChainId.html) of the Starknet network.
     #[validate(custom = "validate_ascii")]
@@ -77,6 +76,7 @@ impl Default for DbConfig {
     fn default() -> Self {
         DbConfig {
             path_prefix: PathBuf::from("./data"),
+            // TODO(guyn): should we remove the default for chain_id?
             chain_id: ChainId::Mainnet,
             enforce_file_exists: false,
             min_size: 1 << 20,    // 1MB
@@ -261,7 +261,7 @@ impl DbWriter {
 
 type DbWriteTransaction<'env> = DbTransaction<'env, RW>;
 
-impl<'a> DbWriteTransaction<'a> {
+impl DbWriteTransaction<'_> {
     #[latency_histogram("storage_commit_inner_db_latency_seconds", false)]
     pub(crate) fn commit(self) -> DbResult<()> {
         self.txn.commit()?;
@@ -279,7 +279,7 @@ pub(crate) struct DbTransaction<'env, Mode: TransactionKind> {
     txn: libmdbx::Transaction<'env, Mode::Internal, EnvironmentKind>,
 }
 
-impl<'a, Mode: TransactionKind> DbTransaction<'a, Mode> {
+impl<Mode: TransactionKind> DbTransaction<'_, Mode> {
     pub fn open_table<'env, K: Key + Debug, V: ValueSerde + Debug, T: TableType>(
         &'env self,
         table_id: &TableIdentifier<K, V, T>,
@@ -326,8 +326,8 @@ impl<'cursor, 'txn, Mode: TransactionKind, K: Key, V: ValueSerde, T: TableType>
     }
 }
 
-impl<'cursor, 'txn, Mode: TransactionKind, K: Key, V: ValueSerde, T: TableType> Iterator
-    for DbIter<'cursor, 'txn, Mode, K, V, T>
+impl<'txn, Mode: TransactionKind, K: Key, V: ValueSerde, T: TableType> Iterator
+    for DbIter<'_, 'txn, Mode, K, V, T>
 where
     DbCursor<'txn, Mode, K, V, T>: DbCursorTrait<Key = K, Value = V>,
 {

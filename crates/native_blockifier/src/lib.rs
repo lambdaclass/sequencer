@@ -20,6 +20,11 @@ pub mod state_readers;
 pub mod storage;
 pub mod test_utils;
 
+use blockifier::state::stateful_compression::{
+    ALIAS_COUNTER_STORAGE_KEY,
+    MAX_NON_COMPRESSED_CONTRACT_ADDRESS,
+    MIN_VALUE_FOR_ALIAS_ALLOC,
+};
 use errors::{add_py_exceptions, UndeclaredClassHashError};
 use py_block_executor::PyBlockExecutor;
 use py_objects::PyExecutionResources;
@@ -51,7 +56,6 @@ fn native_blockifier(py: Python<'_>, py_module: &PyModule) -> PyResult<()> {
     py_module.add("UndeclaredClassHashError", py.get_type::<UndeclaredClassHashError>())?;
     add_py_exceptions(py, py_module)?;
 
-    py_module.add_function(wrap_pyfunction!(blockifier_version, py)?)?;
     py_module.add_function(wrap_pyfunction!(starknet_version, py)?)?;
 
     // TODO(Dori, 1/4/2023): If and when supported in the Python build environment, gate this code
@@ -65,16 +69,14 @@ fn native_blockifier(py: Python<'_>, py_module: &PyModule) -> PyResult<()> {
         estimate_casm_hash_computation_resources_for_testing_single,
         py
     )?)?;
+    py_module.add("ALIAS_COUNTER_STORAGE_KEY", ALIAS_COUNTER_STORAGE_KEY.to_string())?;
+    py_module.add(
+        "MAX_NON_COMPRESSED_CONTRACT_ADDRESS",
+        MAX_NON_COMPRESSED_CONTRACT_ADDRESS.to_string(),
+    )?;
+    py_module.add("INITIAL_AVAILABLE_ALIAS", MIN_VALUE_FOR_ALIAS_ALLOC.to_string())?;
 
     Ok(())
-}
-
-/// Returns the version that the `blockifier` and `native_blockifier` crates were built with.
-// Assumption: both `blockifier` and `native_blockifier` use `version.workspace` in the package
-// section of their `Cargo.toml`.
-#[pyfunction]
-pub fn blockifier_version() -> PyResult<String> {
-    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 /// Returns the latest Starknet version for versioned constants.

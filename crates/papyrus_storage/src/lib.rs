@@ -78,10 +78,12 @@
 pub mod base_layer;
 pub mod body;
 pub mod class;
+pub mod class_hash;
+pub mod class_manager;
 pub mod compiled_class;
 #[cfg(feature = "document_calls")]
 pub mod document_calls;
-pub mod utils;
+pub mod storage_metrics;
 // TODO(yair): Make the compression_utils module pub(crate) or extract it from the crate.
 #[doc(hidden)]
 pub mod compression_utils;
@@ -102,6 +104,7 @@ pub mod test_utils;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
+use std::fs;
 use std::sync::Arc;
 
 use body::events::EventIndex;
@@ -123,12 +126,12 @@ use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_proc_macros::latency_histogram;
 use serde::{Deserialize, Serialize};
 use starknet_api::block::{BlockHash, BlockNumber, BlockSignature, StarknetVersion};
-use starknet_api::core::{ClassHash, ContractAddress, Nonce};
+use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
 use starknet_api::state::{SierraContractClass, StateNumber, StorageKey, ThinStateDiff};
 use starknet_api::transaction::{Transaction, TransactionHash, TransactionOutput};
 use starknet_types_core::felt::Felt;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use validator::Validate;
 use version::{StorageVersionError, Version};
 
@@ -150,19 +153,26 @@ use crate::db::{
 use crate::header::StorageBlockHeader;
 use crate::mmap_file::MMapFileStats;
 use crate::state::data::IndexedDeprecatedContractClass;
-pub use crate::utils::update_storage_metrics;
 use crate::version::{VersionStorageReader, VersionStorageWriter};
 
 // For more details on the storage version, see the module documentation.
 /// The current version of the storage state code.
-pub const STORAGE_VERSION_STATE: Version = Version { major: 3, minor: 0 };
+pub const STORAGE_VERSION_STATE: Version = Version { major: 5, minor: 0 };
 /// The current version of the storage blocks code.
-pub const STORAGE_VERSION_BLOCKS: Version = Version { major: 3, minor: 0 };
+pub const STORAGE_VERSION_BLOCKS: Version = Version { major: 5, minor: 0 };
 
 /// Opens a storage and returns a [`StorageReader`] and a [`StorageWriter`].
 pub fn open_storage(
     storage_config: StorageConfig,
 ) -> StorageResult<(StorageReader, StorageWriter)> {
+    info!("Opening storage: {}", storage_config.db_config.path_prefix.display());
+    if !storage_config.db_config.path_prefix.exists()
+        && !storage_config.db_config.enforce_file_exists
+    {
+        fs::create_dir_all(storage_config.db_config.path_prefix.clone())?;
+        info!("Created storage directory: {}", storage_config.db_config.path_prefix.display());
+    }
+
     let (db_reader, mut db_writer) = open_env(&storage_config.db_config)?;
     let tables = Arc::new(Tables {
         block_hash_to_number: db_writer.create_simple_table("block_hash_to_number")?,
@@ -183,9 +193,13 @@ pub fn open_storage(
         transaction_hash_to_idx: db_writer.create_simple_table("transaction_hash_to_idx")?,
         transaction_metadata: db_writer.create_simple_table("transaction_metadata")?,
 
-        // Version tables
+        // Version tables.
         starknet_version: db_writer.create_simple_table("starknet_version")?,
         storage_version: db_writer.create_simple_table("storage_version")?,
+
+        // Class hashes.
+        class_hash_to_executable_class_hash: db_writer
+            .create_simple_table("class_hash_to_executable_class_hash")?,
     });
     let (file_writers, file_readers) = open_storage_files(
         &storage_config.db_config,
@@ -472,7 +486,7 @@ pub struct StorageTxn<'env, Mode: TransactionKind> {
     scope: StorageScope,
 }
 
-impl<'env> StorageTxn<'env, RW> {
+impl StorageTxn<'_, RW> {
     /// Commits the changes made in the transaction to the storage.
     #[latency_histogram("storage_commit_latency_seconds", false)]
     pub fn commit(self) -> StorageResult<()> {
@@ -481,7 +495,7 @@ impl<'env> StorageTxn<'env, RW> {
     }
 }
 
-impl<'env, Mode: TransactionKind> StorageTxn<'env, Mode> {
+impl<Mode: TransactionKind> StorageTxn<'_, Mode> {
     pub(crate) fn open_table<K: Key + Debug, V: ValueSerde + Debug, T: TableType>(
         &self,
         table_id: &TableIdentifier<K, V, T>,
@@ -533,7 +547,10 @@ struct_field_names! {
 
         // Version tables
         starknet_version: TableIdentifier<BlockNumber, VersionZeroWrapper<StarknetVersion>, SimpleTable>,
-        storage_version: TableIdentifier<String, NoVersionValueWrapper<Version>, SimpleTable>
+        storage_version: TableIdentifier<String, NoVersionValueWrapper<Version>, SimpleTable>,
+
+        // Class hashes.
+        class_hash_to_executable_class_hash: TableIdentifier<ClassHash, NoVersionValueWrapper<CompiledClassHash>, SimpleTable>
     }
 }
 
@@ -560,7 +577,7 @@ pub(crate) struct TransactionMetadata {
     tx_output_location: LocationInFile,
 }
 
-// TODO: sort the variants alphabetically.
+// TODO(Yair): sort the variants alphabetically.
 /// Error type for the storage crate.
 #[allow(missing_docs)]
 #[derive(thiserror::Error, Debug)]
@@ -658,6 +675,10 @@ pub(crate) enum MarkerKind {
     Class,
     CompiledClass,
     BaseLayerBlock,
+    ClassManagerBlock,
+    /// Marks the block beyond the last block that its classes can't be compiled with the current
+    /// compiler version used in the class manager. Determined by starknet version.
+    CompilerBackwardCompatibility,
 }
 
 pub(crate) type MarkersTable<'env> =
@@ -723,7 +744,7 @@ impl FileHandlers<RW> {
 
 impl<Mode: TransactionKind> FileHandlers<Mode> {
     pub fn stats(&self) -> HashMap<String, MMapFileStats> {
-        // TODO: use consts for the file names.
+        // TODO(Yair): use consts for the file names.
         HashMap::from_iter([
             ("thin_state_diff".to_string(), self.thin_state_diff.stats()),
             ("contract_class".to_string(), self.contract_class.stats()),

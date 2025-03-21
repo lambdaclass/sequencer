@@ -10,6 +10,7 @@ use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::abi::constants::CONSTRUCTOR_ENTRY_POINT_NAME;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::fields::{
     AllResourceBounds,
@@ -20,10 +21,11 @@ use starknet_api::transaction::fields::{
 use starknet_api::transaction::TransactionVersion;
 use starknet_types_core::felt::Felt;
 
+use crate::blockifier_versioned_constants::{GasCosts, VersionedConstants};
 use crate::context::{BlockContext, TransactionContext};
 use crate::execution::call_info::CallInfo;
 use crate::execution::common_hints::ExecutionMode;
-use crate::execution::contract_class::TrackedResource;
+use crate::execution::contract_class::{RunnableCompiledClass, TrackedResource};
 use crate::execution::errors::{
     ConstructorEntryPointExecutionError,
     EntryPointExecutionError,
@@ -35,7 +37,6 @@ use crate::state::state_api::{State, StateResult};
 use crate::transaction::objects::{HasRelatedFeeType, TransactionInfo};
 use crate::transaction::transaction_types::TransactionType;
 use crate::utils::usize_from_u64;
-use crate::versioned_constants::{GasCosts, VersionedConstants};
 
 #[cfg(test)]
 #[path = "entry_point_test.rs"]
@@ -92,15 +93,38 @@ pub enum CallType {
     Call = 0,
     Delegate = 1,
 }
+
+pub struct EntryPointTypeAndSelector {
+    pub entry_point_type: EntryPointType,
+    pub entry_point_selector: EntryPointSelector,
+}
+
+impl EntryPointTypeAndSelector {
+    pub fn verify_constructor(&self) -> Result<(), PreExecutionError> {
+        if self.entry_point_type == EntryPointType::Constructor
+            && self.entry_point_selector != selector_from_name(CONSTRUCTOR_ENTRY_POINT_NAME)
+        {
+            Err(PreExecutionError::InvalidConstructorEntryPointName)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Represents a call to an entry point of a Starknet contract.
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct CallEntryPoint {
-    // The class hash is not given if it can be deduced from the storage address.
-    pub class_hash: Option<ClassHash>,
+pub struct CallEntryPointVariant<TClassHash> {
+    /// The class hash of the entry point.
+    /// The type is `ClassHash` in the case of [ExecutableCallEntryPoint] and `Option<ClassHash>`
+    /// in the case of [CallEntryPoint].
+    ///
+    /// The class hash is not given if it can be deduced from the storage address.
+    /// It is resolved prior to entry point's execution.
+    pub class_hash: TClassHash,
     // Optional, since there is no address to the code implementation in a library call.
     // and for outermost calls (triggered by the transaction itself).
-    // TODO: BACKWARD-COMPATIBILITY.
+    // TODO(AlonH): BACKWARD-COMPATIBILITY.
     pub code_address: Option<ContractAddress>,
     pub entry_point_type: EntryPointType,
     pub entry_point_selector: EntryPointSelector,
@@ -110,6 +134,25 @@ pub struct CallEntryPoint {
     pub call_type: CallType,
     // We can assume that the initial gas is less than 2^64.
     pub initial_gas: u64,
+}
+
+pub type CallEntryPoint = CallEntryPointVariant<Option<ClassHash>>;
+pub type ExecutableCallEntryPoint = CallEntryPointVariant<ClassHash>;
+
+impl From<ExecutableCallEntryPoint> for CallEntryPoint {
+    fn from(call: ExecutableCallEntryPoint) -> Self {
+        Self {
+            class_hash: Some(call.class_hash),
+            code_address: call.code_address,
+            entry_point_type: call.entry_point_type,
+            entry_point_selector: call.entry_point_selector,
+            calldata: call.calldata,
+            storage_address: call.storage_address,
+            caller_address: call.caller_address,
+            call_type: call.call_type,
+            initial_gas: call.initial_gas,
+        }
+    }
 }
 
 impl CallEntryPoint {
@@ -147,7 +190,7 @@ impl CallEntryPoint {
         }
         // Add class hash to the call, that will appear in the output (call info).
         self.class_hash = Some(class_hash);
-        let contract_class = state.get_compiled_contract_class(class_hash)?;
+        let compiled_class = state.get_compiled_class(class_hash)?;
 
         context.revert_infos.0.push(EntryPointRevertInfo::new(
             self.storage_address,
@@ -157,7 +200,13 @@ impl CallEntryPoint {
         ));
 
         // This is the last operation of this function.
-        execute_entry_point_call_wrapper(self, contract_class, state, context, remaining_gas)
+        execute_entry_point_call_wrapper(
+            self.into_executable(class_hash),
+            compiled_class,
+            state,
+            context,
+            remaining_gas,
+        )
     }
 
     /// Similar to `execute`, but returns an error if the outer call is reverted.
@@ -169,6 +218,12 @@ impl CallEntryPoint {
     ) -> EntryPointExecutionResult<CallInfo> {
         let execution_result = self.execute(state, context, remaining_gas);
         if let Ok(call_info) = &execution_result {
+            // Update revert gas tracking (for completeness - value will not be used unless the tx
+            // is reverted).
+            context.sierra_gas_revert_tracker.update_with_next_remaining_gas(
+                call_info.tracked_resource,
+                GasAmount(*remaining_gas),
+            );
             // If the execution of the outer call failed, revert the transction.
             if call_info.execution.failed {
                 return Err(EntryPointExecutionError::ExecutionFailed {
@@ -182,13 +237,27 @@ impl CallEntryPoint {
 
         execution_result
     }
-    pub fn verify_constructor(&self) -> Result<(), PreExecutionError> {
-        if self.entry_point_type == EntryPointType::Constructor
-            && self.entry_point_selector != selector_from_name(CONSTRUCTOR_ENTRY_POINT_NAME)
-        {
-            Err(PreExecutionError::InvalidConstructorEntryPointName)
-        } else {
-            Ok(())
+
+    fn into_executable(self, class_hash: ClassHash) -> ExecutableCallEntryPoint {
+        ExecutableCallEntryPoint {
+            class_hash,
+            code_address: self.code_address,
+            entry_point_type: self.entry_point_type,
+            entry_point_selector: self.entry_point_selector,
+            calldata: self.calldata,
+            storage_address: self.storage_address,
+            caller_address: self.caller_address,
+            call_type: self.call_type,
+            initial_gas: self.initial_gas,
+        }
+    }
+}
+
+impl ExecutableCallEntryPoint {
+    pub fn type_and_selector(&self) -> EntryPointTypeAndSelector {
+        EntryPointTypeAndSelector {
+            entry_point_type: self.entry_point_type,
+            entry_point_selector: self.entry_point_selector,
         }
     }
 }
@@ -199,6 +268,38 @@ pub struct ConstructorContext {
     pub code_address: Option<ContractAddress>,
     pub storage_address: ContractAddress,
     pub caller_address: ContractAddress,
+}
+
+#[derive(Debug)]
+pub struct SierraGasRevertTracker {
+    initial_remaining_gas: GasAmount,
+    last_seen_remaining_gas: GasAmount,
+}
+
+impl SierraGasRevertTracker {
+    pub fn new(initial_remaining_gas: GasAmount) -> Self {
+        Self { initial_remaining_gas, last_seen_remaining_gas: initial_remaining_gas }
+    }
+
+    /// Updates the last seen remaining gas, if we are in gas-tracking mode.
+    pub fn update_with_next_remaining_gas(
+        &mut self,
+        tracked_resource: TrackedResource,
+        next_remaining_gas: GasAmount,
+    ) {
+        if tracked_resource == TrackedResource::SierraGas {
+            self.last_seen_remaining_gas = next_remaining_gas;
+        }
+    }
+
+    pub fn get_gas_consumed(&self) -> GasAmount {
+        self.initial_remaining_gas.checked_sub(self.last_seen_remaining_gas).unwrap_or_else(|| {
+            panic!(
+                "The consumed gas must be non-negative. Initial gas: {}, last seen gas: {}.",
+                self.initial_remaining_gas, self.last_seen_remaining_gas
+            )
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -222,6 +323,9 @@ pub struct EntryPointExecutionContext {
 
     // Information for reverting the state (inludes the revert info of the callers).
     pub revert_infos: ExecutionRevertInfo,
+
+    // Used to support charging for gas consumed in blockifier revert flow.
+    pub sierra_gas_revert_tracker: SierraGasRevertTracker,
 }
 
 impl EntryPointExecutionContext {
@@ -229,6 +333,7 @@ impl EntryPointExecutionContext {
         tx_context: Arc<TransactionContext>,
         mode: ExecutionMode,
         limit_steps_by_resources: bool,
+        sierra_gas_revert_tracker: SierraGasRevertTracker,
     ) -> Self {
         let max_steps = Self::max_steps(&tx_context, &mode, limit_steps_by_resources);
         Self {
@@ -240,18 +345,34 @@ impl EntryPointExecutionContext {
             execution_mode: mode,
             tracked_resource_stack: vec![],
             revert_infos: ExecutionRevertInfo(vec![]),
+            sierra_gas_revert_tracker,
         }
     }
 
     pub fn new_validate(
         tx_context: Arc<TransactionContext>,
         limit_steps_by_resources: bool,
+        sierra_gas_revert_tracker: SierraGasRevertTracker,
     ) -> Self {
-        Self::new(tx_context, ExecutionMode::Validate, limit_steps_by_resources)
+        Self::new(
+            tx_context,
+            ExecutionMode::Validate,
+            limit_steps_by_resources,
+            sierra_gas_revert_tracker,
+        )
     }
 
-    pub fn new_invoke(tx_context: Arc<TransactionContext>, limit_steps_by_resources: bool) -> Self {
-        Self::new(tx_context, ExecutionMode::Execute, limit_steps_by_resources)
+    pub fn new_invoke(
+        tx_context: Arc<TransactionContext>,
+        limit_steps_by_resources: bool,
+        sierra_gas_revert_tracker: SierraGasRevertTracker,
+    ) -> Self {
+        Self::new(
+            tx_context,
+            ExecutionMode::Execute,
+            limit_steps_by_resources,
+            sierra_gas_revert_tracker,
+        )
     }
 
     /// Returns the maximum number of cairo steps allowed, given the max fee, gas price and the
@@ -264,7 +385,7 @@ impl EntryPointExecutionContext {
         limit_steps_by_resources: bool,
     ) -> usize {
         let TransactionContext { block_context, tx_info } = tx_context;
-        let BlockContext { block_info, versioned_constants, .. } = block_context;
+        let BlockContext { block_info, versioned_constants, .. } = block_context.as_ref();
         let block_upper_bound = match mode {
             ExecutionMode::Validate => versioned_constants.validate_max_n_steps,
             ExecutionMode::Execute => versioned_constants.invoke_tx_max_n_steps,
@@ -284,7 +405,7 @@ impl EntryPointExecutionContext {
         // New transactions with only L1 bounds use the L1 resource bounds directly.
         // New transactions with L2 bounds use the L2 bounds directly.
         let l1_gas_per_step = versioned_constants.vm_resource_fee_cost().n_steps;
-        let l2_gas_per_step = versioned_constants.os_constants.gas_costs.step_gas_cost;
+        let l2_gas_per_step = versioned_constants.os_constants.gas_costs.base.step_gas_cost;
 
         let tx_upper_bound_u64 = match tx_info {
             // Fee is a larger uint type than GasAmount, so we need to saturate the division.
@@ -293,9 +414,9 @@ impl EntryPointExecutionContext {
                 if l1_gas_per_step.is_zero() {
                     u64::MAX
                 } else {
-                    let induced_l1_gas_limit = context.max_fee.saturating_div(
-                        block_info.gas_prices.get_l1_gas_price_by_fee_type(&tx_info.fee_type()),
-                    );
+                    let induced_l1_gas_limit = context
+                        .max_fee
+                        .saturating_div(block_info.gas_prices.l1_gas_price(&tx_info.fee_type()));
                     (l1_gas_per_step.inv() * induced_l1_gas_limit.0).to_integer()
                 }
             }
@@ -343,11 +464,7 @@ impl EntryPointExecutionContext {
         // would cause underflow error.
         // Logically, we update remaining steps to `max(0, remaining_steps - steps_to_subtract)`.
         let remaining_steps = self.n_remaining_steps();
-        let new_remaining_steps = if remaining_steps < steps_to_subtract {
-            0
-        } else {
-            remaining_steps - steps_to_subtract
-        };
+        let new_remaining_steps = remaining_steps.saturating_sub(steps_to_subtract);
         self.vm_run_resources = RunResources::new(new_remaining_steps);
         self.n_remaining_steps()
     }
@@ -363,12 +480,23 @@ impl EntryPointExecutionContext {
     ) -> usize {
         let validate_steps = validate_call_info
             .as_ref()
-            .map(|call_info| call_info.charged_resources.vm_resources.n_steps)
+            .map(|call_info| call_info.resources.n_steps)
             .unwrap_or_default();
 
         let overhead_steps =
             self.versioned_constants().os_resources_for_tx_type(tx_type, calldata_length).n_steps;
         self.subtract_steps(validate_steps + overhead_steps)
+    }
+
+    /// Calls update_with_next_remaining_gas if the tracked resource is sierra gas.
+    pub fn update_revert_gas_with_next_remaining_gas(&mut self, next_remaining_gas: GasAmount) {
+        self.sierra_gas_revert_tracker.update_with_next_remaining_gas(
+            *self
+                .tracked_resource_stack
+                .last()
+                .expect("Tracked resource stack should not be empty at this point."),
+            next_remaining_gas,
+        );
     }
 
     pub fn versioned_constants(&self) -> &VersionedConstants {
@@ -377,6 +505,10 @@ impl EntryPointExecutionContext {
 
     pub fn gas_costs(&self) -> &GasCosts {
         &self.versioned_constants().os_constants.gas_costs
+    }
+
+    pub fn mode_sierra_gas_limit(&self) -> GasAmount {
+        self.tx_context.block_context.versioned_constants.sierra_gas_limit(&self.execution_mode)
     }
 
     /// Reverts the state back to the way it was when self.revert_infos.0['revert_idx'] was created.
@@ -406,14 +538,19 @@ pub fn execute_constructor_entry_point(
     remaining_gas: &mut u64,
 ) -> ConstructorEntryPointExecutionResult<CallInfo> {
     // Ensure the class is declared (by reading it).
-    let contract_class =
-        state.get_compiled_contract_class(ctor_context.class_hash).map_err(|error| {
-            ConstructorEntryPointExecutionError::new(error.into(), &ctor_context, None)
-        })?;
-    let Some(constructor_selector) = contract_class.constructor_selector() else {
+    let compiled_class = state.get_compiled_class(ctor_context.class_hash).map_err(|error| {
+        ConstructorEntryPointExecutionError::new(error.into(), &ctor_context, None)
+    })?;
+    let Some(constructor_selector) = compiled_class.constructor_selector() else {
         // Contract has no constructor.
-        return handle_empty_constructor(&ctor_context, calldata, *remaining_gas)
-            .map_err(|error| ConstructorEntryPointExecutionError::new(error, &ctor_context, None));
+        return handle_empty_constructor(
+            compiled_class,
+            context,
+            &ctor_context,
+            calldata,
+            *remaining_gas,
+        )
+        .map_err(|error| ConstructorEntryPointExecutionError::new(error, &ctor_context, None));
     };
 
     let constructor_call = CallEntryPoint {
@@ -434,6 +571,8 @@ pub fn execute_constructor_entry_point(
 }
 
 pub fn handle_empty_constructor(
+    compiled_class: RunnableCompiledClass,
+    context: &mut EntryPointExecutionContext,
     ctor_context: &ConstructorContext,
     calldata: Calldata,
     remaining_gas: u64,
@@ -446,6 +585,14 @@ pub fn handle_empty_constructor(
         });
     }
 
+    let current_tracked_resource = compiled_class.get_current_tracked_resource(context);
+    let initial_gas = if current_tracked_resource == TrackedResource::CairoSteps {
+        // Override the initial gas with a high value to be consistent with the behavior for the
+        // rest of the CairoSteps mode calls.
+        context.versioned_constants().infinite_gas_for_vm_mode()
+    } else {
+        remaining_gas
+    };
     let empty_constructor_call_info = CallInfo {
         call: CallEntryPoint {
             class_hash: Some(ctor_context.class_hash),
@@ -456,8 +603,9 @@ pub fn handle_empty_constructor(
             storage_address: ctor_context.storage_address,
             caller_address: ctor_context.caller_address,
             call_type: CallType::Call,
-            initial_gas: remaining_gas,
+            initial_gas,
         },
+        tracked_resource: current_tracked_resource,
         ..Default::default()
     };
 

@@ -1,3 +1,4 @@
+mod builtins_test;
 mod call_contract;
 mod constants;
 mod deploy;
@@ -8,6 +9,7 @@ mod get_class_hash_at;
 mod get_execution_info;
 mod keccak;
 mod library_call;
+mod meta_tx;
 mod out_of_gas;
 mod replace_class;
 mod secp;

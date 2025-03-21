@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use assert_matches::assert_matches;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::execution::call_info::Retdata;
 use blockifier::execution::errors::ConstructorEntryPointExecutionError;
 use blockifier::execution::stack_trace::gen_tx_execution_error_trace;
 use blockifier::transaction::errors::TransactionExecutionError as BlockifierTransactionExecutionError;
-use blockifier::versioned_constants::VersionedConstants;
 use indexmap::indexmap;
 use papyrus_storage::test_utils::get_test_storage;
 use pretty_assertions::assert_eq;
@@ -645,7 +645,7 @@ fn simulate_invoke_from_new_account_validate_and_charge() {
 }
 
 #[test]
-// TODO: Fix this test.
+// TODO(DanB): Fix this test.
 #[ignore]
 fn induced_state_diff() {
     let ((storage_reader, storage_writer), _temp_dir) = get_test_storage();
@@ -682,7 +682,6 @@ fn induced_state_diff() {
         },
         declared_classes: indexmap! {},
         deprecated_declared_classes: vec![],
-        replaced_classes: indexmap! {},
     };
     assert_eq!(simulation_results[0].induced_state_diff, expected_invoke_deprecated);
 
@@ -699,7 +698,6 @@ fn induced_state_diff() {
         },
         deployed_contracts: indexmap! {},
         deprecated_declared_classes: vec![],
-        replaced_classes: indexmap! {},
     };
     assert_eq!(simulation_results[1].induced_state_diff, expected_declare_class);
     next_declared_class_hash += 1;
@@ -717,7 +715,6 @@ fn induced_state_diff() {
         },
         declared_classes: indexmap! {},
         deployed_contracts: indexmap! {},
-        replaced_classes: indexmap! {},
     };
     assert_eq!(simulation_results[2].induced_state_diff, expected_declare_deprecated_class);
 
@@ -738,7 +735,6 @@ fn induced_state_diff() {
         },
         declared_classes: indexmap! {},
         deployed_contracts: indexmap! {*NEW_ACCOUNT_ADDRESS => *ACCOUNT_CLASS_HASH},
-        replaced_classes: indexmap! {},
     };
     assert_eq!(simulation_results[3].induced_state_diff, expected_deploy_account);
 }

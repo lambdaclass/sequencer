@@ -1,6 +1,6 @@
+use blockifier::blockifier_versioned_constants::VersionedConstantsError;
 use blockifier::state::errors::StateError;
 use blockifier::transaction::errors::TransactionExecutionError;
-use blockifier::versioned_constants::VersionedConstantsError;
 use serde_json::Error as SerdeError;
 use starknet_api::StarknetApiError;
 use starknet_gateway::errors::RPCStateReaderError;
@@ -24,3 +24,5 @@ pub enum ReexecutionError {
     #[error(transparent)]
     VersionedConstants(#[from] VersionedConstantsError),
 }
+
+pub type ReexecutionResult<T> = Result<T, ReexecutionError>;

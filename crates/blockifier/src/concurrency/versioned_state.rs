@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
@@ -7,7 +6,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::concurrency::versioned_storage::VersionedStorage;
 use crate::concurrency::TxIndex;
-use crate::execution::contract_class::RunnableContractClass;
+use crate::execution::contract_class::RunnableCompiledClass;
 use crate::state::cached_state::{ContractClassMapping, StateMaps};
 use crate::state::errors::StateError;
 use crate::state::state_api::{StateReader, StateResult, UpdatableState};
@@ -34,7 +33,7 @@ pub struct VersionedState<S: StateReader> {
     // the compiled contract classes mapping. Each key with value false, sohuld not apprear
     // in the compiled contract classes mapping.
     declared_contracts: VersionedStorage<ClassHash, bool>,
-    compiled_contract_classes: VersionedStorage<ClassHash, RunnableContractClass>,
+    compiled_contract_classes: VersionedStorage<ClassHash, RunnableCompiledClass>,
 }
 
 impl<S: StateReader> VersionedState<S> {
@@ -74,8 +73,8 @@ impl<S: StateReader> VersionedState<S> {
     // TODO(Mohammad, 01/04/2024): Store the read set (and write set) within a shared
     // object (probabily `VersionedState`). As RefCell operations are not thread-safe. Therefore,
     // accessing this function should be protected by a mutex to ensure thread safety.
-    // TODO: Consider coupling the tx index with the read set to ensure any mismatch between them
-    // will cause the validation to fail.
+    // TODO(Mohammad): Consider coupling the tx index with the read set to ensure any mismatch
+    // between them will cause the validation to fail.
     fn validate_reads(&mut self, tx_index: TxIndex, reads: &StateMaps) -> bool {
         // If is the first transaction in the chunk, then the read set is valid. Since it has no
         // predecessors, there's nothing to compare it to.
@@ -199,11 +198,7 @@ impl<S: StateReader> VersionedState<S> {
 }
 
 impl<U: UpdatableState> VersionedState<U> {
-    pub fn commit_chunk_and_recover_block_state(
-        mut self,
-        n_committed_txs: usize,
-        visited_pcs: HashMap<ClassHash, HashSet<usize>>,
-    ) -> U {
+    pub fn commit_chunk_and_recover_block_state(mut self, n_committed_txs: usize) -> U {
         if n_committed_txs == 0 {
             return self.into_initial_state();
         }
@@ -212,7 +207,7 @@ impl<U: UpdatableState> VersionedState<U> {
         let class_hash_to_class =
             self.compiled_contract_classes.get_writes_up_to_index(commit_index);
         let mut state = self.into_initial_state();
-        state.apply_writes(&writes, &class_hash_to_class, &visited_pcs);
+        state.apply_writes(&writes, &class_hash_to_class);
         state
     }
 }
@@ -271,14 +266,8 @@ impl<S: StateReader> VersionedStateProxy<S> {
     }
 }
 
-// TODO(Noa, 15/5/24): Consider using visited_pcs.
 impl<S: StateReader> UpdatableState for VersionedStateProxy<S> {
-    fn apply_writes(
-        &mut self,
-        writes: &StateMaps,
-        class_hash_to_class: &ContractClassMapping,
-        _visited_pcs: &HashMap<ClassHash, HashSet<usize>>,
-    ) {
+    fn apply_writes(&mut self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping) {
         self.state().apply_writes(self.tx_index, writes, class_hash_to_class)
     }
 }
@@ -336,14 +325,11 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
         }
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<RunnableContractClass> {
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass> {
         let mut state = self.state();
         match state.compiled_contract_classes.read(self.tx_index, class_hash) {
             Some(value) => Ok(value),
-            None => match state.initial_state.get_compiled_contract_class(class_hash) {
+            None => match state.initial_state.get_compiled_class(class_hash) {
                 Ok(initial_value) => {
                     state.declared_contracts.set_initial_value(class_hash, true);
                     state

@@ -4,9 +4,11 @@ use async_trait::async_trait;
 #[cfg(any(feature = "testing", test))]
 use mockall::automock;
 use papyrus_network_types::network_types::BroadcastedMessageMetadata;
-use papyrus_proc_macros::handle_response_variants;
+use papyrus_proc_macros::handle_all_response_variants;
 use serde::{Deserialize, Serialize};
-use starknet_api::executable_transaction::AccountTransaction;
+use starknet_api::block::NonzeroGasPrice;
+use starknet_api::core::ContractAddress;
+use starknet_api::rpc_transaction::InternalRpcTransaction;
 use starknet_sequencer_infra::component_client::{
     ClientError,
     LocalComponentClient,
@@ -19,7 +21,7 @@ use starknet_sequencer_infra::component_definitions::{
 use thiserror::Error;
 
 use crate::errors::MempoolError;
-use crate::mempool_types::{AddTransactionArgs, CommitBlockArgs};
+use crate::mempool_types::{AddTransactionArgs, CommitBlockArgs, MempoolSnapshot};
 
 pub type LocalMempoolClient = LocalComponentClient<MempoolRequest, MempoolResponse>;
 pub type RemoteMempoolClient = RemoteComponentClient<MempoolRequest, MempoolResponse>;
@@ -40,11 +42,17 @@ pub struct AddTransactionArgsWrapper {
 #[cfg_attr(any(feature = "testing", test), automock)]
 #[async_trait]
 pub trait MempoolClient: Send + Sync {
-    // TODO: Add Option<BroadcastedMessageMetadata> as an argument for add_transaction
-    // TODO: Rename tx to transaction
+    // TODO(AlonH): Add Option<BroadcastedMessageMetadata> as an argument for add_transaction
+    // TODO(AlonH): Rename tx to transaction
     async fn add_tx(&self, args: AddTransactionArgsWrapper) -> MempoolClientResult<()>;
     async fn commit_block(&self, args: CommitBlockArgs) -> MempoolClientResult<()>;
-    async fn get_txs(&self, n_txs: usize) -> MempoolClientResult<Vec<AccountTransaction>>;
+    async fn get_txs(&self, n_txs: usize) -> MempoolClientResult<Vec<InternalRpcTransaction>>;
+    async fn account_tx_in_pool_or_recent_block(
+        &self,
+        contract_address: ContractAddress,
+    ) -> MempoolClientResult<bool>;
+    async fn update_gas_price(&self, gas_price: NonzeroGasPrice) -> MempoolClientResult<()>;
+    async fn get_mempool_snapshot(&self) -> MempoolClientResult<MempoolSnapshot>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,13 +60,19 @@ pub enum MempoolRequest {
     AddTransaction(AddTransactionArgsWrapper),
     CommitBlock(CommitBlockArgs),
     GetTransactions(usize),
+    AccountTxInPoolOrRecentBlock(ContractAddress),
+    UpdateGasPrice(NonzeroGasPrice),
+    GetMempoolSnapshot(),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MempoolResponse {
     AddTransaction(MempoolResult<()>),
     CommitBlock(MempoolResult<()>),
-    GetTransactions(MempoolResult<Vec<AccountTransaction>>),
+    GetTransactions(MempoolResult<Vec<InternalRpcTransaction>>),
+    AccountTxInPoolOrRecentBlock(MempoolResult<bool>),
+    UpdateGasPrice(MempoolResult<()>),
+    GetMempoolSnapshot(MempoolResult<MempoolSnapshot>),
 }
 
 #[derive(Clone, Debug, Error)]
@@ -76,24 +90,70 @@ where
 {
     async fn add_tx(&self, args: AddTransactionArgsWrapper) -> MempoolClientResult<()> {
         let request = MempoolRequest::AddTransaction(args);
-        let response = self.send(request).await;
-        handle_response_variants!(MempoolResponse, AddTransaction, MempoolClientError, MempoolError)
+        handle_all_response_variants!(
+            MempoolResponse,
+            AddTransaction,
+            MempoolClientError,
+            MempoolError,
+            Direct
+        )
     }
 
     async fn commit_block(&self, args: CommitBlockArgs) -> MempoolClientResult<()> {
         let request = MempoolRequest::CommitBlock(args);
-        let response = self.send(request).await;
-        handle_response_variants!(MempoolResponse, CommitBlock, MempoolClientError, MempoolError)
+        handle_all_response_variants!(
+            MempoolResponse,
+            CommitBlock,
+            MempoolClientError,
+            MempoolError,
+            Direct
+        )
     }
 
-    async fn get_txs(&self, n_txs: usize) -> MempoolClientResult<Vec<AccountTransaction>> {
+    async fn get_txs(&self, n_txs: usize) -> MempoolClientResult<Vec<InternalRpcTransaction>> {
         let request = MempoolRequest::GetTransactions(n_txs);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             MempoolResponse,
             GetTransactions,
             MempoolClientError,
-            MempoolError
+            MempoolError,
+            Direct
+        )
+    }
+
+    async fn account_tx_in_pool_or_recent_block(
+        &self,
+        account_address: ContractAddress,
+    ) -> MempoolClientResult<bool> {
+        let request = MempoolRequest::AccountTxInPoolOrRecentBlock(account_address);
+        handle_all_response_variants!(
+            MempoolResponse,
+            AccountTxInPoolOrRecentBlock,
+            MempoolClientError,
+            MempoolError,
+            Direct
+        )
+    }
+
+    async fn update_gas_price(&self, gas_price: NonzeroGasPrice) -> MempoolClientResult<()> {
+        let request = MempoolRequest::UpdateGasPrice(gas_price);
+        handle_all_response_variants!(
+            MempoolResponse,
+            UpdateGasPrice,
+            MempoolClientError,
+            MempoolError,
+            Direct
+        )
+    }
+
+    async fn get_mempool_snapshot(&self) -> MempoolClientResult<MempoolSnapshot> {
+        let request = MempoolRequest::GetMempoolSnapshot();
+        handle_all_response_variants!(
+            MempoolResponse,
+            GetMempoolSnapshot,
+            MempoolClientError,
+            MempoolError,
+            Direct
         )
     }
 }

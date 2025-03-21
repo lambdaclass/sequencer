@@ -1,31 +1,25 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use assert_matches::assert_matches;
-use blockifier::context::{BlockContext, ChainInfo};
-use blockifier::test_utils::contracts::FeatureContract;
-use blockifier::test_utils::{
-    CairoVersion,
-    BALANCE,
-    CURRENT_BLOCK_TIMESTAMP,
-    DEFAULT_ETH_L1_GAS_PRICE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-    TEST_SEQUENCER_ADDRESS,
-};
-use blockifier::transaction::objects::FeeType;
-use blockifier::versioned_constants::VersionedConstants;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
+use blockifier::context::ChainInfo;
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::contracts::FeatureContract;
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use indexmap::IndexMap;
-use mempool_test_utils::starknet_api_test_utils::Contract;
-use papyrus_common::pending_classes::PendingClasses;
-use papyrus_rpc::{run_server, RpcConfig};
+use mempool_test_utils::starknet_api_test_utils::{
+    AccountTransactionGenerator,
+    Contract,
+    VALID_ACCOUNT_BALANCE,
+};
 use papyrus_storage::body::BodyStorageWriter;
 use papyrus_storage::class::ClassStorageWriter;
 use papyrus_storage::compiled_class::CasmStorageWriter;
 use papyrus_storage::header::HeaderStorageWriter;
 use papyrus_storage::state::StateStorageWriter;
 use papyrus_storage::test_utils::TestStorageBuilder;
-use papyrus_storage::{StorageConfig, StorageReader, StorageScope, StorageWriter};
+use papyrus_storage::{StorageConfig, StorageScope, StorageWriter};
 use starknet_api::abi::abi_utils::get_fee_token_var_address;
 use starknet_api::block::{
     BlockBody,
@@ -33,112 +27,215 @@ use starknet_api::block::{
     BlockHeaderWithoutHash,
     BlockNumber,
     BlockTimestamp,
+    FeeType,
     GasPricePerToken,
 };
-use starknet_api::core::{ChainId, ClassHash, ContractAddress, Nonce, SequencerContractAddress};
+use starknet_api::contract_class::{ContractClass, SierraVersion};
+use starknet_api::core::{ClassHash, ContractAddress, Nonce, SequencerContractAddress};
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
-use starknet_api::state::{StorageKey, ThinStateDiff};
-use starknet_api::transaction::fields::Fee;
+use starknet_api::state::{SierraContractClass, StorageKey, ThinStateDiff};
+use starknet_api::test_utils::{
+    CURRENT_BLOCK_TIMESTAMP,
+    DEFAULT_ETH_L1_GAS_PRICE,
+    DEFAULT_STRK_L1_GAS_PRICE,
+    TEST_SEQUENCER_ADDRESS,
+};
 use starknet_api::{contract_address, felt};
-use starknet_client::reader::PendingData;
-use starknet_sequencer_infra::test_utils::get_available_socket;
+use starknet_class_manager::class_storage::{ClassStorage, FsClassStorage};
+use starknet_class_manager::config::FsClassStorageConfig;
+use starknet_class_manager::test_utils::FsClassStorageBuilderForTesting;
 use starknet_types_core::felt::Felt;
 use strum::IntoEnumIterator;
 use tempfile::TempDir;
-use tokio::sync::RwLock;
 
-type ContractClassesMap =
-    (Vec<(ClassHash, DeprecatedContractClass)>, Vec<(ClassHash, CasmContractClass)>);
+pub type TempDirHandlePair = (TempDir, TempDir);
+type ContractClassesMap = (
+    Vec<(ClassHash, DeprecatedContractClass)>,
+    Vec<(ClassHash, (SierraContractClass, CasmContractClass))>,
+);
+
+pub(crate) const BATCHER_DB_PATH_SUFFIX: &str = "batcher";
+pub(crate) const CLASS_MANAGER_DB_PATH_SUFFIX: &str = "class_manager";
+pub(crate) const CLASS_HASH_STORAGE_DB_PATH_SUFFIX: &str = "class_hash_storage";
+pub(crate) const CLASSES_STORAGE_DB_PATH_SUFFIX: &str = "classes";
+pub(crate) const STATE_SYNC_DB_PATH_SUFFIX: &str = "state_sync";
 
 pub struct StorageTestSetup {
-    pub rpc_storage_reader: StorageReader,
-    pub rpc_storage_handle: TempDir,
     pub batcher_storage_config: StorageConfig,
-    pub batcher_storage_handle: TempDir,
+    pub batcher_storage_handle: Option<TempDir>,
+    pub state_sync_storage_config: StorageConfig,
+    pub state_sync_storage_handle: Option<TempDir>,
+    pub class_manager_storage_config: FsClassStorageConfig,
+    pub class_manager_storage_handles: Option<TempDirHandlePair>,
 }
 
 impl StorageTestSetup {
-    pub fn new(test_defined_accounts: Vec<Contract>, chain_id: ChainId) -> Self {
-        let ((rpc_storage_reader, mut rpc_storage_writer), _, rpc_storage_file_handle) =
-            TestStorageBuilder::default().chain_id(chain_id.clone()).build();
-        create_test_state(&mut rpc_storage_writer, test_defined_accounts.clone());
-        let ((_, mut batcher_storage_writer), batcher_storage_config, batcher_storage_file_handle) =
-            TestStorageBuilder::default()
+    pub fn new(
+        test_defined_accounts: Vec<AccountTransactionGenerator>,
+        chain_info: &ChainInfo,
+        path: Option<PathBuf>,
+    ) -> Self {
+        let preset_test_contracts = PresetTestContracts::new();
+        // TODO(yair): Avoid cloning.
+        let classes = TestClasses::new(&test_defined_accounts, preset_test_contracts.clone());
+
+        let batcher_db_path = path.as_ref().map(|p| p.join(BATCHER_DB_PATH_SUFFIX));
+        let ((_, mut batcher_storage_writer), batcher_storage_config, batcher_storage_handle) =
+            TestStorageBuilder::new(batcher_db_path)
                 .scope(StorageScope::StateOnly)
-                .chain_id(chain_id.clone())
+                .chain_id(chain_info.chain_id.clone())
                 .build();
-        create_test_state(&mut batcher_storage_writer, test_defined_accounts);
+        initialize_papyrus_test_state(
+            &mut batcher_storage_writer,
+            chain_info,
+            &test_defined_accounts,
+            preset_test_contracts.clone(),
+            &classes,
+        );
+
+        let state_sync_db_path = path.as_ref().map(|p| p.join(STATE_SYNC_DB_PATH_SUFFIX));
+        let (
+            (_, mut state_sync_storage_writer),
+            state_sync_storage_config,
+            state_sync_storage_handle,
+        ) = TestStorageBuilder::new(state_sync_db_path)
+            .scope(StorageScope::FullArchive)
+            .chain_id(chain_info.chain_id.clone())
+            .build();
+        initialize_papyrus_test_state(
+            &mut state_sync_storage_writer,
+            chain_info,
+            &test_defined_accounts,
+            preset_test_contracts,
+            &classes,
+        );
+
+        let fs_class_storage_db_path = path.as_ref().map(|p| p.join(CLASS_MANAGER_DB_PATH_SUFFIX));
+        let mut fs_class_storage_builder = FsClassStorageBuilderForTesting::default();
+        if let Some(class_manager_path) = fs_class_storage_db_path.as_ref() {
+            let class_hash_storage_path_prefix =
+                class_manager_path.join(CLASS_HASH_STORAGE_DB_PATH_SUFFIX);
+            let persistent_root = class_manager_path.join(CLASSES_STORAGE_DB_PATH_SUFFIX);
+            // The paths will be created in the first time the storage is opened (passing
+            // `enforce_file_exists: false`).
+            fs_class_storage_builder = fs_class_storage_builder
+                .with_existing_paths(class_hash_storage_path_prefix, persistent_root);
+        }
+        let (
+            mut class_manager_storage,
+            class_manager_storage_config,
+            class_manager_storage_handles,
+        ) = fs_class_storage_builder.build();
+
+        initialize_class_manager_test_state(&mut class_manager_storage, classes);
+
         Self {
-            rpc_storage_reader,
-            rpc_storage_handle: rpc_storage_file_handle,
             batcher_storage_config,
-            batcher_storage_handle: batcher_storage_file_handle,
+            batcher_storage_handle,
+            state_sync_storage_config,
+            state_sync_storage_handle,
+            class_manager_storage_config,
+            class_manager_storage_handles,
         }
     }
 }
 
-/// A variable number of identical accounts and test contracts are initialized and funded.
-fn create_test_state(storage_writer: &mut StorageWriter, test_defined_accounts: Vec<Contract>) {
-    let block_context = BlockContext::create_for_testing();
-
-    let into_contract = |contract: FeatureContract| Contract {
-        contract,
-        sender_address: contract.get_instance_address(0),
-    };
-    let default_test_contracts = [
-        FeatureContract::TestContract(CairoVersion::Cairo0),
-        FeatureContract::TestContract(CairoVersion::Cairo1),
-    ]
-    .into_iter()
-    .map(into_contract)
-    .collect();
-
-    let erc20_contract = FeatureContract::ERC20(CairoVersion::Cairo0);
-    let erc20_contract = into_contract(erc20_contract);
-
-    initialize_papyrus_test_state(
-        storage_writer,
-        block_context.chain_info(),
-        test_defined_accounts,
-        default_test_contracts,
-        erc20_contract,
-    );
+#[derive(Clone)]
+struct PresetTestContracts {
+    pub default_test_contracts: Vec<Contract>,
+    pub erc20_contract: Contract,
 }
 
+impl PresetTestContracts {
+    pub fn new() -> Self {
+        let into_contract = |contract: FeatureContract| Contract {
+            contract,
+            sender_address: contract.get_instance_address(0),
+        };
+        let default_test_contracts = [
+            FeatureContract::TestContract(CairoVersion::Cairo0),
+            FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
+        ]
+        .into_iter()
+        .map(into_contract)
+        .collect();
+
+        let erc20_contract = FeatureContract::ERC20(CairoVersion::Cairo0);
+        let erc20_contract = into_contract(erc20_contract);
+
+        Self { default_test_contracts, erc20_contract }
+    }
+}
+
+struct TestClasses {
+    pub cairo0_contract_classes: Vec<(ClassHash, DeprecatedContractClass)>,
+    pub cairo1_contract_classes: Vec<(ClassHash, (SierraContractClass, CasmContractClass))>,
+}
+
+impl TestClasses {
+    pub fn new(
+        test_defined_accounts: &[AccountTransactionGenerator],
+        preset_test_contracts: PresetTestContracts,
+    ) -> TestClasses {
+        let PresetTestContracts { default_test_contracts, erc20_contract } = preset_test_contracts;
+        let contract_classes_to_retrieve = test_defined_accounts
+            .iter()
+            .map(|acc| acc.account)
+            .chain(default_test_contracts)
+            .chain([erc20_contract]);
+        let (cairo0_contract_classes, cairo1_contract_classes) =
+            prepare_contract_classes(contract_classes_to_retrieve);
+
+        Self { cairo0_contract_classes, cairo1_contract_classes }
+    }
+}
+
+fn initialize_class_manager_test_state(
+    class_manager_storage: &mut FsClassStorage,
+    classes: TestClasses,
+) {
+    let TestClasses { cairo0_contract_classes, cairo1_contract_classes } = classes;
+
+    for (class_hash, casm) in cairo0_contract_classes {
+        let casm = ContractClass::V0(casm).try_into().unwrap();
+        class_manager_storage.set_deprecated_class(class_hash, casm).unwrap();
+    }
+    for (class_hash, (sierra, casm)) in cairo1_contract_classes {
+        let sierra_version = SierraVersion::extract_from_program(&sierra.sierra_program).unwrap();
+        let class = ContractClass::V1((casm, sierra_version));
+        class_manager_storage
+            .set_class(
+                class_hash,
+                sierra.try_into().unwrap(),
+                class.compiled_class_hash(),
+                class.try_into().unwrap(),
+            )
+            .unwrap();
+    }
+}
+
+// TODO(Yair): Make the storage setup part of [MultiAccountTransactionGenerator] and remove this
+// functionality.
+/// A variable number of identical accounts and test contracts are initialized and funded.
 fn initialize_papyrus_test_state(
     storage_writer: &mut StorageWriter,
     chain_info: &ChainInfo,
-    test_defined_accounts: Vec<Contract>,
-    default_test_contracts: Vec<Contract>,
-    erc20_contract: Contract,
+    test_defined_accounts: &[AccountTransactionGenerator],
+    preset_test_contracts: PresetTestContracts,
+    classes: &TestClasses,
 ) {
-    let state_diff = prepare_state_diff(
-        chain_info,
-        &test_defined_accounts,
-        &default_test_contracts,
-        &erc20_contract,
-    );
+    let state_diff = prepare_state_diff(chain_info, test_defined_accounts, &preset_test_contracts);
 
-    let contract_classes_to_retrieve =
-        test_defined_accounts.into_iter().chain(default_test_contracts).chain([erc20_contract]);
-    let (cairo0_contract_classes, cairo1_contract_classes) =
-        prepare_compiled_contract_classes(contract_classes_to_retrieve);
-
-    write_state_to_papyrus_storage(
-        storage_writer,
-        state_diff,
-        &cairo0_contract_classes,
-        &cairo1_contract_classes,
-    )
+    write_state_to_papyrus_storage(storage_writer, state_diff, classes)
 }
 
 fn prepare_state_diff(
     chain_info: &ChainInfo,
-    test_defined_accounts: &[Contract],
-    default_test_contracts: &[Contract],
-    erc20_contract: &Contract,
+    test_defined_accounts: &[AccountTransactionGenerator],
+    preset_test_contracts: &PresetTestContracts,
 ) -> ThinStateDiff {
     let mut state_diff_builder = ThinStateDiffBuilder::new(chain_info);
+    let PresetTestContracts { default_test_contracts, erc20_contract } = preset_test_contracts;
 
     // Setup the common test contracts that are used by default in all test invokes.
     // TODO(batcher): this does nothing until we actually start excuting stuff in the batcher.
@@ -152,54 +249,66 @@ fn prepare_state_diff(
     // state_diff_builder.set_contracts(accounts_defined_in_the_test).declare().fund();
     // ```
     // or use declare txs and transfers for both.
-    state_diff_builder.inject_accounts_into_state(test_defined_accounts);
+    let (deployed_accounts, undeployed_accounts): (Vec<_>, Vec<_>) =
+        test_defined_accounts.iter().partition(|account| account.is_deployed());
+
+    let deployed_accounts_contracts: Vec<_> =
+        deployed_accounts.iter().map(|acc| acc.account).collect();
+    let undeployed_accounts_contracts: Vec<_> =
+        undeployed_accounts.iter().map(|acc| acc.account).collect();
+
+    state_diff_builder.inject_deployed_accounts_into_state(deployed_accounts_contracts.as_slice());
+    state_diff_builder
+        .inject_undeployed_accounts_into_state(undeployed_accounts_contracts.as_slice());
 
     state_diff_builder.build()
 }
 
-fn prepare_compiled_contract_classes(
+fn prepare_contract_classes(
     contract_classes_to_retrieve: impl Iterator<Item = Contract>,
 ) -> ContractClassesMap {
-    let mut cairo0_contract_classes = Vec::new();
-    let mut cairo1_contract_classes = Vec::new();
+    let mut cairo0_contract_classes = HashMap::new();
+    let mut cairo1_contract_classes = HashMap::new();
     for contract in contract_classes_to_retrieve {
         match contract.cairo_version() {
             CairoVersion::Cairo0 => {
-                cairo0_contract_classes.push((
+                cairo0_contract_classes.insert(
                     contract.class_hash(),
                     serde_json::from_str(&contract.raw_class()).unwrap(),
-                ));
+                );
             }
             // todo(rdr): including both Cairo1 and Native versions for now. Temporal solution to
             // avoid compilation errors when using the "cairo_native" feature
             _ => {
-                cairo1_contract_classes.push((
-                    contract.class_hash(),
-                    serde_json::from_str(&contract.raw_class()).unwrap(),
-                ));
+                let sierra = contract.sierra();
+                let casm = serde_json::from_str(&contract.raw_class()).unwrap();
+                cairo1_contract_classes.insert(contract.class_hash(), (sierra, casm));
             }
         }
     }
 
-    (cairo0_contract_classes, cairo1_contract_classes)
+    (cairo0_contract_classes.into_iter().collect(), cairo1_contract_classes.into_iter().collect())
 }
 
 fn write_state_to_papyrus_storage(
     storage_writer: &mut StorageWriter,
     state_diff: ThinStateDiff,
-    cairo0_contract_classes: &[(ClassHash, DeprecatedContractClass)],
-    cairo1_contract_classes: &[(ClassHash, CasmContractClass)],
+    classes: &TestClasses,
 ) {
     let block_number = BlockNumber(0);
     let block_header = test_block_header(block_number);
+    let TestClasses { cairo0_contract_classes, cairo1_contract_classes } = classes;
     let cairo0_contract_classes: Vec<_> =
         cairo0_contract_classes.iter().map(|(hash, contract)| (*hash, contract)).collect();
 
     let mut write_txn = storage_writer.begin_rw_txn().unwrap();
 
-    for (class_hash, casm) in cairo1_contract_classes {
+    let mut sierras = Vec::with_capacity(cairo1_contract_classes.len());
+    for (class_hash, (sierra, casm)) in cairo1_contract_classes {
         write_txn = write_txn.append_casm(class_hash, casm).unwrap();
+        sierras.push((*class_hash, sierra));
     }
+
     write_txn
         .append_header(block_number, &block_header)
         .unwrap()
@@ -207,7 +316,7 @@ fn write_state_to_papyrus_storage(
         .unwrap()
         .append_state_diff(block_number, state_diff)
         .unwrap()
-        .append_classes(block_number, &[], &cairo0_contract_classes)
+        .append_classes(block_number, &sierras, &cairo0_contract_classes)
         .unwrap()
         .commit()
         .unwrap();
@@ -239,33 +348,6 @@ fn test_block_header(block_number: BlockNumber) -> BlockHeader {
     }
 }
 
-/// Spawns a papyrus rpc server for given state reader.
-/// Returns the address of the rpc server.
-pub async fn spawn_test_rpc_state_reader(
-    storage_reader: StorageReader,
-    chain_id: ChainId,
-) -> SocketAddr {
-    let rpc_config = RpcConfig {
-        chain_id,
-        server_address: get_available_socket().await.to_string(),
-        ..Default::default()
-    };
-    let (addr, handle) = run_server(
-        &rpc_config,
-        Arc::new(RwLock::new(None)),
-        Arc::new(RwLock::new(PendingData::default())),
-        Arc::new(RwLock::new(PendingClasses::default())),
-        storage_reader,
-        "NODE VERSION",
-    )
-    .await
-    .unwrap();
-    // Spawn the server handle to keep the server running, otherwise the server will stop once the
-    // handler is out of scope.
-    tokio::spawn(handle.stopped());
-    addr
-}
-
 /// Constructs a thin state diff from lists of contracts, where each contract can be declared,
 /// deployed, and in case it is an account, funded.
 #[derive(Default)]
@@ -283,7 +365,6 @@ struct ThinStateDiffBuilder<'a> {
 
 impl<'a> ThinStateDiffBuilder<'a> {
     fn new(chain_info: &ChainInfo) -> Self {
-        const TEST_INITIAL_ACCOUNT_BALANCE: Fee = BALANCE;
         let erc20 = FeatureContract::ERC20(CairoVersion::Cairo0);
         let erc20_class_hash = erc20.get_class_hash();
 
@@ -293,7 +374,7 @@ impl<'a> ThinStateDiffBuilder<'a> {
 
         Self {
             chain_info: chain_info.clone(),
-            initial_account_balance: felt!(TEST_INITIAL_ACCOUNT_BALANCE.0),
+            initial_account_balance: felt!(VALID_ACCOUNT_BALANCE.0),
             deployed_contracts,
             ..Default::default()
         }
@@ -350,9 +431,11 @@ impl<'a> ThinStateDiffBuilder<'a> {
         self
     }
 
-    // TODO(deploy_account_support): delete method once we have batcher with execution.
-    fn inject_accounts_into_state(&mut self, accounts_defined_in_the_test: &'a [Contract]) {
-        self.set_contracts(accounts_defined_in_the_test).declare().deploy().fund();
+    fn inject_deployed_accounts_into_state(
+        &mut self,
+        deployed_accounts_defined_in_the_test: &'a [Contract],
+    ) {
+        self.set_contracts(deployed_accounts_defined_in_the_test).declare().deploy().fund();
 
         // Set nonces as 1 in the state so that subsequent invokes can pass validation.
         self.nonces = self
@@ -362,6 +445,13 @@ impl<'a> ThinStateDiffBuilder<'a> {
             .collect();
     }
 
+    fn inject_undeployed_accounts_into_state(
+        &mut self,
+        undeployed_accounts_defined_in_the_test: &'a [Contract],
+    ) {
+        self.set_contracts(undeployed_accounts_defined_in_the_test).declare().fund();
+    }
+
     fn build(self) -> ThinStateDiff {
         ThinStateDiff {
             storage_diffs: self.storage_diffs,
@@ -369,7 +459,6 @@ impl<'a> ThinStateDiffBuilder<'a> {
             declared_classes: self.declared_classes,
             deprecated_declared_classes: self.deprecated_declared_classes,
             nonces: self.nonces,
-            ..Default::default()
         }
     }
 }

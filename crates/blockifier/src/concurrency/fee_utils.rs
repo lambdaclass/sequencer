@@ -11,6 +11,7 @@ use crate::fee::fee_utils::get_sequencer_balance_keys;
 use crate::state::cached_state::{ContractClassMapping, StateMaps};
 use crate::state::state_api::UpdatableState;
 use crate::transaction::objects::TransactionExecutionInfo;
+use crate::transaction::transaction_execution::Transaction;
 
 #[cfg(test)]
 #[path = "fee_utils_test.rs"]
@@ -25,7 +26,9 @@ pub(crate) const STORAGE_READ_SEQUENCER_BALANCE_INDICES: (usize, usize) = (2, 3)
 pub fn complete_fee_transfer_flow(
     tx_context: &TransactionContext,
     tx_execution_info: &mut TransactionExecutionInfo,
+    state_diff: &mut StateMaps,
     state: &mut impl UpdatableState,
+    tx: &Transaction,
 ) {
     if tx_context.is_sequencer_the_sender() {
         // When the sequencer is the sender, we use the sequential (full) fee transfer.
@@ -54,10 +57,14 @@ pub fn complete_fee_transfer_flow(
             tx_execution_info.receipt.fee,
             &tx_context.block_context,
             sequencer_balance,
+            tx_context.tx_info.sender_address(),
+            state_diff,
         );
     } else {
-        // Assumes we set the charge fee flag to the transaction enforce fee value.
-        let charge_fee = tx_context.tx_info.enforce_fee();
+        let charge_fee = match tx {
+            Transaction::Account(tx) => tx.execution_flags.charge_fee,
+            Transaction::L1Handler(_) => tx_context.tx_info.enforce_fee(),
+        };
         assert!(!charge_fee, "Transaction with no fee transfer info must not enforce a fee charge.")
     }
 }
@@ -69,7 +76,7 @@ pub fn fill_sequencer_balance_reads(
     sequencer_balance: (Felt, Felt),
 ) {
     let storage_read_values = if fee_transfer_call_info.inner_calls.is_empty() {
-        &mut fee_transfer_call_info.storage_read_values
+        &mut fee_transfer_call_info.storage_access_tracker.storage_read_values
     } else
     // Proxy pattern.
     {
@@ -78,7 +85,7 @@ pub fn fill_sequencer_balance_reads(
             1,
             "Proxy pattern should have one inner call"
         );
-        &mut fee_transfer_call_info.inner_calls[0].storage_read_values
+        &mut fee_transfer_call_info.inner_calls[0].storage_access_tracker.storage_read_values
     };
     assert_eq!(storage_read_values.len(), 4, "Storage read values should have 4 elements");
 
@@ -97,16 +104,23 @@ pub fn add_fee_to_sequencer_balance(
     actual_fee: Fee,
     block_context: &BlockContext,
     sequencer_balance: (Felt, Felt),
+    sender_address: ContractAddress,
+    state_diff: &mut StateMaps,
 ) {
+    assert_ne!(
+        sender_address, block_context.block_info.sequencer_address,
+        "The sender cannot be the sequencer."
+    );
     let (low, high) = sequencer_balance;
     let sequencer_balance_low_as_u128 =
         low.to_u128().expect("sequencer balance low should be u128");
     let sequencer_balance_high_as_u128 =
         high.to_u128().expect("sequencer balance high should be u128");
-    let (new_value_low, carry) = sequencer_balance_low_as_u128.overflowing_add(actual_fee.0);
-    let (new_value_high, carry) = sequencer_balance_high_as_u128.overflowing_add(carry.into());
+    let (new_value_low, overflow_low) = sequencer_balance_low_as_u128.overflowing_add(actual_fee.0);
+    let (new_value_high, overflow_high) =
+        sequencer_balance_high_as_u128.overflowing_add(overflow_low.into());
     assert!(
-        !carry,
+        !overflow_high,
         "The sequencer balance overflowed when adding the fee. This should not happen."
     );
     let (sequencer_balance_key_low, sequencer_balance_key_high) =
@@ -118,5 +132,23 @@ pub fn add_fee_to_sequencer_balance(
         ]),
         ..StateMaps::default()
     };
-    state.apply_writes(&writes, &ContractClassMapping::default(), &HashMap::default());
+
+    // Modify state_diff to accurately reflect the post tx-execution state, after fee transfer to
+    // the sequencer. We assume that a non-sequencer sender cannot reduce the sequencer's
+    // balance—only increases are possible.
+
+    if sequencer_balance_high_as_u128 != new_value_high {
+        // Update the high balance only if it has changed.
+        state_diff
+            .storage
+            .insert((fee_token_address, sequencer_balance_key_high), Felt::from(new_value_high));
+    }
+
+    if sequencer_balance_low_as_u128 != new_value_low {
+        // Update the low balance only if it has changed.
+        state_diff
+            .storage
+            .insert((fee_token_address, sequencer_balance_key_low), Felt::from(new_value_low));
+    }
+    state.apply_writes(&writes, &ContractClassMapping::default());
 }

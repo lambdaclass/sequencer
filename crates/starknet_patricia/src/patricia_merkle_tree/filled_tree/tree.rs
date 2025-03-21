@@ -4,6 +4,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use async_recursion::async_recursion;
+use starknet_patricia_storage::db_object::DBObject;
+use starknet_patricia_storage::storage_trait::{DbKey, DbValue};
 
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::filled_tree::errors::FilledTreeError;
@@ -14,8 +16,6 @@ use crate::patricia_merkle_tree::types::NodeIndex;
 use crate::patricia_merkle_tree::updated_skeleton_tree::hash_function::TreeHashFunction;
 use crate::patricia_merkle_tree::updated_skeleton_tree::node::UpdatedSkeletonNode;
 use crate::patricia_merkle_tree::updated_skeleton_tree::tree::UpdatedSkeletonTree;
-use crate::storage::db_object::DBObject;
-use crate::storage::storage_trait::{StorageKey, StorageValue};
 
 #[cfg(test)]
 #[path = "tree_test.rs"]
@@ -42,7 +42,7 @@ pub trait FilledTree<L: Leaf>: Sized + Send {
     /// Serializes the current state of the tree into a hashmap,
     /// where each key-value pair corresponds
     /// to a storage key and its serialized storage value.
-    fn serialize(&self) -> HashMap<StorageKey, StorageValue>;
+    fn serialize(&self) -> HashMap<DbKey, DbValue>;
 
     fn get_root_hash(&self) -> HashOutput;
 }
@@ -363,7 +363,7 @@ impl<L: Leaf + 'static> FilledTree<L> for FilledTreeImpl<L> {
         })
     }
 
-    fn serialize(&self) -> HashMap<StorageKey, StorageValue> {
+    fn serialize(&self) -> HashMap<DbKey, DbValue> {
         // This function iterates over each node in the tree, using the node's `db_key` as the
         // hashmap key and the result of the node's `serialize` method as the value.
         self.get_all_nodes().iter().map(|(_, node)| (node.db_key(), node.serialize())).collect()

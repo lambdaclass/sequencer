@@ -12,8 +12,7 @@ class Probe:
     timeout_seconds: int
 
     def __post_init__(self):
-        assert not isinstance(self.port, (bool)), \
-            "Port must be of type int or str, not bool."
+        assert not isinstance(self.port, (bool)), "Port must be of type int or str, not bool."
 
 
 @dataclasses.dataclass
@@ -42,11 +41,18 @@ class PersistentVolumeClaim:
 
 @dataclasses.dataclass
 class Config:
-    schema: Dict[Any, Any]
+    global_config: Dict[Any, Any]
     config: Dict[Any, Any]
-    mount_path: str
 
-    def get(self):
+    def _merged_config(self) -> Dict[Any, Any]:
+        _config = self.global_config.copy()
+        _config.update(self.config)
+        return _config
+
+    def get_merged_config(self) -> Dict[Any, Any]:
+        return self._merged_config()
+
+    def get_config(self) -> Dict[Any, Any]:
         return self.config
 
     def validate(self):
@@ -100,7 +106,7 @@ class PvcVolume:
     read_only: bool
 
 
-@ dataclasses.dataclass
+@dataclasses.dataclass
 class ContainerPort:
     container_port: int
 

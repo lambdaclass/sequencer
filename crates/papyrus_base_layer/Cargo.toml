@@ -9,22 +9,16 @@ license-file.workspace = true
 workspace = true
 
 [features]
-testing = ["tar", "tempfile"]
+testing = ["alloy/node-bindings", "colored", "tar", "tempfile"]
 
 [dependencies]
-alloy-contract.workspace = true
-alloy-dyn-abi.workspace = true
-alloy-json-rpc.workspace = true
-alloy-primitives.workspace = true
-alloy-provider.workspace = true
-alloy-sol-types.workspace = true
-alloy-transport.workspace = true
-alloy-transport-http.workspace = true
+alloy = { workspace = true, features = ["contract", "json-rpc", "rpc-types"] }
 async-trait.workspace = true
+colored = { workspace = true, optional = true }
 ethers.workspace = true
+mockall.workspace = true
 papyrus_config.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 starknet-types-core.workspace = true
 starknet_api.workspace = true
 tar = { workspace = true, optional = true }
@@ -32,10 +26,15 @@ tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full", "sync"] }
 url = { workspace = true, features = ["serde"] }
+validator.workspace = true
 
 [dev-dependencies]
+alloy = { workspace = true, features = ["node-bindings"] }
+colored.workspace = true
 ethers-core.workspace = true
-papyrus_base_layer = { workspace = true, features = ["testing"] }
+mempool_test_utils.workspace = true
 pretty_assertions.workspace = true
 starknet-types-core.workspace = true
 starknet_api = { workspace = true, features = ["testing"] }
+tar.workspace = true
+tempfile.workspace = true

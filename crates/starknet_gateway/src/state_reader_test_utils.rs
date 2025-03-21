@@ -1,16 +1,17 @@
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::context::BlockContext;
-use blockifier::execution::contract_class::RunnableContractClass;
+use blockifier::execution::contract_class::RunnableCompiledClass;
 use blockifier::state::errors::StateError;
 use blockifier::state::state_api::{StateReader as BlockifierStateReader, StateResult};
-use blockifier::test_utils::contracts::FeatureContract;
 use blockifier::test_utils::dict_state_reader::DictStateReader;
 use blockifier::test_utils::initial_test_state::test_state;
-use blockifier::test_utils::{CairoVersion, BALANCE};
-use starknet_api::block::BlockNumber;
+use blockifier_test_utils::cairo_versions::CairoVersion;
+use blockifier_test_utils::contracts::FeatureContract;
+use mempool_test_utils::starknet_api_test_utils::VALID_ACCOUNT_BALANCE;
+use starknet_api::block::{BlockInfo, BlockNumber};
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::fields::Fee;
+use starknet_state_sync_types::communication::StateSyncClientResult;
 use starknet_types_core::felt::Felt;
 
 use crate::state_reader::{MempoolStateReader, StateReaderFactory};
@@ -44,11 +45,8 @@ impl BlockifierStateReader for TestStateReader {
         self.blockifier_state_reader.get_class_hash_at(contract_address)
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<RunnableContractClass> {
-        self.blockifier_state_reader.get_compiled_contract_class(class_hash)
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass> {
+        self.blockifier_state_reader.get_compiled_class(class_hash)
     }
 
     fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
@@ -61,8 +59,10 @@ pub struct TestStateReaderFactory {
 }
 
 impl StateReaderFactory for TestStateReaderFactory {
-    fn get_state_reader_from_latest_block(&self) -> Box<dyn MempoolStateReader> {
-        Box::new(self.state_reader.clone())
+    fn get_state_reader_from_latest_block(
+        &self,
+    ) -> StateSyncClientResult<Box<dyn MempoolStateReader>> {
+        Ok(Box::new(self.state_reader.clone()))
     }
 
     fn get_state_reader(&self, _block_number: BlockNumber) -> Box<dyn MempoolStateReader> {
@@ -75,7 +75,7 @@ pub fn local_test_state_reader_factory(
     zero_balance: bool,
 ) -> TestStateReaderFactory {
     let block_context = BlockContext::create_for_testing();
-    let account_balance = if zero_balance { Fee(0) } else { BALANCE };
+    let account_balance = if zero_balance { Fee(0) } else { VALID_ACCOUNT_BALANCE };
     let account_contract = FeatureContract::AccountWithoutValidations(cairo_version);
     let test_contract = FeatureContract::TestContract(cairo_version);
 

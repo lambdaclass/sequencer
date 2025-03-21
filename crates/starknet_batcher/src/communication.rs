@@ -15,6 +15,9 @@ impl ComponentRequestHandler<BatcherRequest, BatcherResponse> for Batcher {
             BatcherRequest::ProposeBlock(input) => {
                 BatcherResponse::ProposeBlock(self.propose_block(input).await)
             }
+            BatcherRequest::GetCurrentHeight => {
+                BatcherResponse::GetCurrentHeight(self.get_height().await)
+            }
             BatcherRequest::GetProposalContent(input) => {
                 BatcherResponse::GetProposalContent(self.get_proposal_content(input).await)
             }
@@ -22,13 +25,19 @@ impl ComponentRequestHandler<BatcherRequest, BatcherResponse> for Batcher {
                 BatcherResponse::StartHeight(self.start_height(input).await)
             }
             BatcherRequest::DecisionReached(input) => {
-                BatcherResponse::DecisionReached(self.decision_reached(input).await)
+                BatcherResponse::DecisionReached(self.decision_reached(input).await.map(Box::new))
             }
             BatcherRequest::ValidateBlock(input) => {
                 BatcherResponse::ValidateBlock(self.validate_block(input).await)
             }
             BatcherRequest::SendProposalContent(input) => {
                 BatcherResponse::SendProposalContent(self.send_proposal_content(input).await)
+            }
+            BatcherRequest::AddSyncBlock(sync_block) => {
+                BatcherResponse::AddSyncBlock(self.add_sync_block(sync_block).await)
+            }
+            BatcherRequest::RevertBlock(input) => {
+                BatcherResponse::RevertBlock(self.revert_block(input).await)
             }
         }
     }

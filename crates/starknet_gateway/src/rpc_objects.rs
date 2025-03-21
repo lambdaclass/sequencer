@@ -1,7 +1,15 @@
-use blockifier::blockifier::block::{BlockInfo, GasPrices};
+use blockifier::blockifier::block::validated_gas_prices;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use starknet_api::block::{BlockHash, BlockNumber, BlockTimestamp, GasPrice, NonzeroGasPrice};
+use starknet_api::block::{
+    BlockHash,
+    BlockInfo,
+    BlockNumber,
+    BlockTimestamp,
+    GasPrice,
+    GasPricePerToken,
+    NonzeroGasPrice,
+};
 use starknet_api::core::{ClassHash, ContractAddress, GlobalRoot};
 use starknet_api::data_availability::L1DataAvailabilityMode;
 use starknet_api::state::StorageKey;
@@ -48,7 +56,7 @@ pub struct GetClassHashAtParams {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetCompiledContractClassParams {
+pub struct GetCompiledClassParams {
     pub class_hash: ClassHash,
     pub block_id: BlockId,
 }
@@ -59,12 +67,6 @@ pub struct GetBlockWithTxHashesParams {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-pub struct ResourcePrice {
-    pub price_in_wei: GasPrice,
-    pub price_in_fri: GasPrice,
-}
-
-#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct BlockHeader {
     pub block_hash: BlockHash,
     pub parent_hash: BlockHash,
@@ -72,9 +74,9 @@ pub struct BlockHeader {
     pub sequencer_address: ContractAddress,
     pub new_root: GlobalRoot,
     pub timestamp: BlockTimestamp,
-    pub l1_gas_price: ResourcePrice,
-    pub l1_data_gas_price: ResourcePrice,
-    pub l2_gas_price: ResourcePrice,
+    pub l1_gas_price: GasPricePerToken,
+    pub l1_data_gas_price: GasPricePerToken,
+    pub l2_gas_price: GasPricePerToken,
     pub l1_da_mode: L1DataAvailabilityMode,
     pub starknet_version: String,
 }
@@ -86,7 +88,7 @@ impl TryInto<BlockInfo> for BlockHeader {
             block_number: self.block_number,
             sequencer_address: self.sequencer_address,
             block_timestamp: self.timestamp,
-            gas_prices: GasPrices::new(
+            gas_prices: validated_gas_prices(
                 parse_gas_price(self.l1_gas_price.price_in_wei)?,
                 parse_gas_price(self.l1_gas_price.price_in_fri)?,
                 parse_gas_price(self.l1_data_gas_price.price_in_wei)?,

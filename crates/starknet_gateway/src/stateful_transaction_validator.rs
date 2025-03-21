@@ -1,21 +1,23 @@
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::blockifier::stateful_validator::{
     StatefulValidator,
     StatefulValidatorResult as BlockifierStatefulValidatorResult,
 };
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::{BlockContext, ChainInfo};
 use blockifier::state::cached_state::CachedState;
-use blockifier::transaction::account_transaction::AccountTransaction;
-use blockifier::versioned_constants::VersionedConstants;
+use blockifier::transaction::account_transaction::{AccountTransaction, ExecutionFlags};
+use blockifier::transaction::transactions::enforce_fee;
 #[cfg(test)]
 use mockall::automock;
-use starknet_api::core::{ContractAddress, Nonce};
+use starknet_api::block::BlockInfo;
+use starknet_api::core::Nonce;
 use starknet_api::executable_transaction::{
     AccountTransaction as ExecutableTransaction,
     InvokeTransaction as ExecutableInvokeTransaction,
 };
 use starknet_gateway_types::errors::GatewaySpecError;
+use starknet_mempool_types::communication::SharedMempoolClient;
 use starknet_types_core::felt::Felt;
 use tracing::error;
 
@@ -36,48 +38,39 @@ type BlockifierStatefulValidator = StatefulValidator<Box<dyn MempoolStateReader>
 // TODO(yair): move the trait to Blockifier.
 #[cfg_attr(test, automock)]
 pub trait StatefulTransactionValidatorTrait {
-    fn validate(
-        &mut self,
-        account_tx: AccountTransaction,
-        skip_validate: bool,
-    ) -> BlockifierStatefulValidatorResult<()>;
-
-    fn get_nonce(
-        &mut self,
-        account_address: ContractAddress,
-    ) -> BlockifierStatefulValidatorResult<Nonce>;
+    fn validate(&mut self, account_tx: AccountTransaction)
+    -> BlockifierStatefulValidatorResult<()>;
 }
 
 impl StatefulTransactionValidatorTrait for BlockifierStatefulValidator {
     fn validate(
         &mut self,
         account_tx: AccountTransaction,
-        skip_validate: bool,
     ) -> BlockifierStatefulValidatorResult<()> {
-        self.perform_validations(account_tx, skip_validate)
-    }
-
-    fn get_nonce(
-        &mut self,
-        account_address: ContractAddress,
-    ) -> BlockifierStatefulValidatorResult<Nonce> {
-        self.get_nonce(account_address)
+        self.perform_validations(account_tx)
     }
 }
 
 impl StatefulTransactionValidator {
-    // TODO(Arni): consider separating validation from transaction conversion, as transaction
-    // conversion is also relevant for the Mempool.
     pub fn run_validate<V: StatefulTransactionValidatorTrait>(
         &self,
         executable_tx: &ExecutableTransaction,
         account_nonce: Nonce,
+        mempool_client: SharedMempoolClient,
         mut validator: V,
+        runtime: tokio::runtime::Handle,
     ) -> StatefulTransactionValidatorResult<()> {
-        let skip_validate = skip_stateful_validations(executable_tx, account_nonce);
-        let account_tx = AccountTransaction::new(executable_tx.clone());
+        let skip_validate =
+            skip_stateful_validations(executable_tx, account_nonce, mempool_client, runtime)?;
+        let only_query = false;
+        let charge_fee = enforce_fee(executable_tx, only_query);
+        let strict_nonce_check = false;
+        let execution_flags =
+            ExecutionFlags { only_query, charge_fee, validate: !skip_validate, strict_nonce_check };
+
+        let account_tx = AccountTransaction { tx: executable_tx.clone(), execution_flags };
         validator
-            .validate(account_tx, skip_validate)
+            .validate(account_tx)
             .map_err(|err| GatewaySpecError::ValidationFailure { data: err.to_string() })?;
         Ok(())
     }
@@ -110,25 +103,39 @@ impl StatefulTransactionValidator {
     }
 }
 
-// Check if validation of an invoke transaction should be skipped due to deploy_account not being
-// proccessed yet. This feature is used to improve UX for users sending deploy_account + invoke at
-// once.
-fn skip_stateful_validations(tx: &ExecutableTransaction, account_nonce: Nonce) -> bool {
-    match tx {
-        ExecutableTransaction::Invoke(ExecutableInvokeTransaction { tx, .. }) => {
-            // check if the transaction nonce is 1, meaning it is post deploy_account, and the
-            // account nonce is zero, meaning the account was not deployed yet. The mempool also
-            // verifies that the deploy_account transaction exists.
-            tx.nonce() == Nonce(Felt::ONE) && account_nonce == Nonce(Felt::ZERO)
+/// Check if validation of an invoke transaction should be skipped due to deploy_account not being
+/// processed yet. This feature is used to improve UX for users sending deploy_account + invoke at
+/// once.
+fn skip_stateful_validations(
+    tx: &ExecutableTransaction,
+    account_nonce: Nonce,
+    mempool_client: SharedMempoolClient,
+    runtime: tokio::runtime::Handle,
+) -> StatefulTransactionValidatorResult<bool> {
+    if let ExecutableTransaction::Invoke(ExecutableInvokeTransaction { tx, .. }) = tx {
+        // check if the transaction nonce is 1, meaning it is post deploy_account, and the
+        // account nonce is zero, meaning the account was not deployed yet.
+        if tx.nonce() == Nonce(Felt::ONE) && account_nonce == Nonce(Felt::ZERO) {
+            // We verify that a deploy_account transaction exists for this account. It is sufficient
+            // to check if the account exists in the mempool since it means that either it has a
+            // deploy_account transaction or transactions with future nonces that passed
+            // validations.
+            return runtime.block_on(mempool_client.account_tx_in_pool_or_recent_block(tx.sender_address()))
+                // TODO(Arni): consider using mempool_client_result_to_gw_spec_result for error handling.
+                .map_err(|err| GatewaySpecError::UnexpectedError { data: err.to_string() });
         }
-        ExecutableTransaction::DeployAccount(_) | ExecutableTransaction::Declare(_) => false,
     }
+
+    Ok(false)
 }
 
 pub fn get_latest_block_info(
     state_reader_factory: &dyn StateReaderFactory,
 ) -> StatefulTransactionValidatorResult<BlockInfo> {
-    let state_reader = state_reader_factory.get_state_reader_from_latest_block();
+    let state_reader = state_reader_factory.get_state_reader_from_latest_block().map_err(|e| {
+        error!("Failed to get state reader from latest block: {}", e);
+        GatewaySpecError::UnexpectedError { data: "Internal server error.".to_owned() }
+    })?;
     state_reader.get_block_info().map_err(|e| {
         error!("Failed to get latest block info: {}", e);
         GatewaySpecError::UnexpectedError { data: "Internal server error.".to_owned() }

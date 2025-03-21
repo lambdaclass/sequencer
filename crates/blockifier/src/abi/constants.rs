@@ -1,9 +1,3 @@
-use starknet_api::transaction::TransactionVersion;
-use starknet_types_core::felt::Felt;
-
-// The version is considered 0 for L1-Handler transaction hash calculation purposes.
-pub const L1_HANDLER_VERSION: TransactionVersion = TransactionVersion(Felt::ZERO);
-
 // OS-related constants.
 pub const L1_TO_L2_MSG_HEADER_SIZE: usize = 5;
 pub const L2_TO_L1_MSG_HEADER_SIZE: usize = 3;
@@ -27,24 +21,20 @@ pub const CONSUMED_MSG_TO_L2_ENCODED_DATA_SIZE: usize =
 // Transaction resource names.
 // TODO(Amos, 1/10/2024): Rename to l1_gas_weight.
 pub const L1_GAS_USAGE: &str = "gas_weight";
-pub const L2_GAS_USAGE: &str = "l2_gas_weight";
-pub const BLOB_GAS_USAGE: &str = "l1_blob_gas_usage";
 pub const N_STEPS_RESOURCE: &str = "n_steps";
 pub const N_EVENTS: &str = "n_events";
 pub const MESSAGE_SEGMENT_LENGTH: &str = "message_segment_length";
 pub const STATE_DIFF_SIZE: &str = "state_diff_size";
 pub const N_MEMORY_HOLES: &str = "n_memory_holes";
+pub const SIERRA_GAS: &str = "sierra_gas";
 
 // Casm hash calculation-related constants.
 pub const CAIRO0_ENTRY_POINT_STRUCT_SIZE: usize = 2;
 pub const N_STEPS_PER_PEDERSEN: usize = 8;
 
-// OS reserved contract addresses.
-
-// This contract stores the block number -> block hash mapping.
-// TODO(Arni, 14/6/2023): Replace BLOCK_HASH_CONSTANT_ADDRESS with a lazy calculation.
-//      pub static BLOCK_HASH_CONTRACT_ADDRESS: Lazy<ContractAddress> = ...
-pub const BLOCK_HASH_CONTRACT_ADDRESS: u64 = 1;
-
 // The block number -> block hash mapping is written for the current block number minus this number.
 pub const STORED_BLOCK_HASH_BUFFER: u64 = 10;
+
+// Maximum possible Sierra gas for a transaction to run with in Sierra mode.
+// This limit is derived from the stack size limit when running natively.
+pub const MAX_POSSIBLE_SIERRA_GAS: u64 = 3_500_000_000;

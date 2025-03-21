@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::net::IpAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,10 +8,17 @@ use hyper::header::CONTENT_TYPE;
 use hyper::{Body, Client, Request as HyperRequest, Response as HyperResponse, StatusCode, Uri};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tokio::sync::Mutex;
+use tracing::{debug, error};
 
 use super::definitions::{ClientError, ClientResult};
-use crate::component_definitions::{ComponentClient, RemoteClientConfig, APPLICATION_OCTET_STREAM};
-use crate::serde_utils::BincodeSerdeWrapper;
+use crate::component_definitions::{
+    ComponentClient,
+    RemoteClientConfig,
+    ServerError,
+    APPLICATION_OCTET_STREAM,
+};
+use crate::serde_utils::SerdeWrapper;
 
 /// The `RemoteComponentClient` struct is a generic client for sending component requests and
 /// receiving responses asynchronously through HTTP connection.
@@ -55,16 +60,15 @@ use crate::serde_utils::BincodeSerdeWrapper;
 /// async fn main() {
 ///     // Create a channel for sending requests and receiving responses
 ///     // Instantiate the client.
-///     let ip_address = std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
+///     let url = "127.0.0.1".to_string();
 ///     let port: u16 = 8080;
-///     let socket = std::net::SocketAddr::new(ip_address, port);
 ///     let config = RemoteClientConfig {
-///         socket,
 ///         retries: 3,
 ///         idle_connections: usize::MAX,
 ///         idle_timeout: 90,
+///         retry_interval: 3,
 ///     };
-///     let client = RemoteComponentClient::<MyRequest, MyResponse>::new(config);
+///     let client = RemoteComponentClient::<MyRequest, MyResponse>::new(config, &url, port);
 ///
 ///     // Instantiate a request.
 ///     let request = MyRequest { content: "Hello, world!".to_string() };
@@ -86,8 +90,14 @@ where
     uri: Uri,
     client: Client<hyper::client::HttpConnector>,
     config: RemoteClientConfig,
-    _req: PhantomData<Request>,
-    _res: PhantomData<Response>,
+    // [`RemoteComponentClient<Request,Response>`] should be [`Send + Sync`] while [`Request`] and
+    // [`Response`] are only [`Send`]. [`Phantom<T>`] is [`Send + Sync`] only if [`T`] is, despite
+    // this bound making no sense as the phantom data field is unused. As such, we wrap it as
+    // [`PhantomData<Mutex<T>>`], not enforcing the redundant [`Sync`] bound. Alternatively,
+    // we could also use [`unsafe impl Sync for RemoteComponentClient<Request, Response> {}`], but
+    // we prefer the former for the sake of avoiding unsafe code.
+    _req: PhantomData<Mutex<Request>>,
+    _res: PhantomData<Mutex<Response>>,
 }
 
 impl<Request, Response> RemoteComponentClient<Request, Response>
@@ -95,22 +105,19 @@ where
     Request: Serialize + DeserializeOwned + Debug,
     Response: Serialize + DeserializeOwned + Debug,
 {
-    pub fn new(config: RemoteClientConfig) -> Self {
-        let ip_address = config.socket.ip();
-        let port = config.socket.port();
-        let uri = match ip_address {
-            IpAddr::V4(ip_address) => format!("http://{}:{}/", ip_address, port).parse().unwrap(),
-            IpAddr::V6(ip_address) => format!("http://[{}]:{}/", ip_address, port).parse().unwrap(),
-        };
+    pub fn new(config: RemoteClientConfig, url: &str, port: u16) -> Self {
+        let uri = format!("http://{}:{}/", url, port).parse().unwrap();
         let client = Client::builder()
             .http2_only(true)
             .pool_max_idle_per_host(config.idle_connections)
             .pool_idle_timeout(Duration::from_secs(config.idle_timeout))
             .build_http();
+        debug!("RemoteComponentClient created with URI: {:?}", uri);
         Self { uri, client, config, _req: PhantomData, _res: PhantomData }
     }
 
     fn construct_http_request(&self, serialized_request: Vec<u8>) -> HyperRequest<Body> {
+        debug!("Sending request: {:?}", serialized_request);
         HyperRequest::post(self.uri.clone())
             .header(CONTENT_TYPE, APPLICATION_OCTET_STREAM)
             .body(Body::from(serialized_request))
@@ -118,18 +125,30 @@ where
     }
 
     async fn try_send(&self, http_request: HyperRequest<Body>) -> ClientResult<Response> {
-        let http_response = self
-            .client
-            .request(http_request)
-            .await
-            .map_err(|e| ClientError::CommunicationFailure(Arc::new(e)))?;
+        debug!("Sending HTTP request: {:?}", http_request);
+        let http_response = self.client.request(http_request).await.map_err(|err| {
+            error!("HTTP request failed with error: {:?}", err);
+            ClientError::CommunicationFailure(err.to_string())
+        })?;
 
         match http_response.status() {
-            StatusCode::OK => get_response_body(http_response).await,
-            status_code => Err(ClientError::ResponseError(
-                status_code,
-                get_response_body(http_response).await?,
-            )),
+            StatusCode::OK => {
+                let response_body = get_response_body(http_response).await;
+                debug!("Successfully deserialized response: {:?}", response_body);
+                response_body
+            }
+            status_code => {
+                error!(
+                    "Unexpected response status: {:?}. Unable to deserialize response.",
+                    status_code
+                );
+                Err(ClientError::ResponseError(
+                    status_code,
+                    ServerError::RequestDeserializationFailure(
+                        "Could not deserialize server response".to_string(),
+                    ),
+                ))
+            }
         }
     }
 }
@@ -138,27 +157,33 @@ where
 impl<Request, Response> ComponentClient<Request, Response>
     for RemoteComponentClient<Request, Response>
 where
-    Request: Send + Sync + Serialize + DeserializeOwned + Debug,
-    Response: Send + Sync + Serialize + DeserializeOwned + Debug,
+    Request: Send + Serialize + DeserializeOwned + Debug,
+    Response: Send + Serialize + DeserializeOwned + Debug,
 {
     async fn send(&self, component_request: Request) -> ClientResult<Response> {
         // Serialize the request.
-        let serialized_request = BincodeSerdeWrapper::new(component_request)
-            .to_bincode()
+        let serialized_request = SerdeWrapper::new(component_request)
+            .wrapper_serialize()
             .expect("Request serialization should succeed");
 
         // Construct the request, and send it up to 'max_retries + 1' times. Return if received a
         // successful response, or the last response if all attempts failed.
         let max_attempts = self.config.retries + 1;
+        debug!("Starting retry loop: max_attempts = {:?}", max_attempts);
         for attempt in 0..max_attempts {
+            debug!("Attempt {} of {:?}", attempt + 1, max_attempts);
             let http_request = self.construct_http_request(serialized_request.clone());
             let res = self.try_send(http_request).await;
             if res.is_ok() {
+                debug!("Request successful on attempt {}: {:?}", attempt + 1, res);
                 return res;
             }
+            error!("Request failed on attempt {}: {:?}", attempt + 1, res);
             if attempt == max_attempts - 1 {
                 return res;
             }
+            error!("sleeping for {:?}", self.config.retry_interval);
+            tokio::time::sleep(Duration::from_secs(self.config.retry_interval)).await;
         }
         unreachable!("Guaranteed to return a response before reaching this point.");
     }
@@ -170,10 +195,10 @@ where
 {
     let body_bytes = to_bytes(response.into_body())
         .await
-        .map_err(|e| ClientError::ResponseParsingFailure(Arc::new(e)))?;
+        .map_err(|err| ClientError::ResponseParsingFailure(err.to_string()))?;
 
-    BincodeSerdeWrapper::<Response>::from_bincode(&body_bytes)
-        .map_err(|e| ClientError::ResponseDeserializationFailure(Arc::new(e)))
+    SerdeWrapper::<Response>::wrapper_deserialize(&body_bytes)
+        .map_err(|err| ClientError::ResponseDeserializationFailure(err.to_string()))
 }
 
 // Can't derive because derive forces the generics to also be `Clone`, which we prefer not to do

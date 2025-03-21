@@ -49,7 +49,7 @@ use starknet_api::block::{
     GasPricePerToken,
     StarknetVersion,
 };
-use starknet_api::class_hash;
+use starknet_api::consensus_transaction::ConsensusTransaction;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{
     ClassHash,
@@ -88,9 +88,12 @@ use starknet_api::deprecated_contract_class::{
 use starknet_api::execution_resources::{Builtin, ExecutionResources, GasAmount, GasVector};
 use starknet_api::hash::{PoseidonHash, StarkHash};
 use starknet_api::rpc_transaction::{
-    ContractClass as RpcContractClass,
     EntryPointByType as RpcEntryPointByType,
     EntryPointByType,
+    InternalRpcDeclareTransactionV3,
+    InternalRpcDeployAccountTransaction,
+    InternalRpcTransaction,
+    InternalRpcTransactionWithoutTxHash,
     RpcDeclareTransaction,
     RpcDeclareTransactionV3,
     RpcDeployAccountTransaction,
@@ -157,6 +160,7 @@ use starknet_api::transaction::{
     TransactionOutput,
     TransactionVersion,
 };
+use starknet_api::{class_hash, tx_hash};
 use starknet_types_core::felt::Felt;
 
 //////////////////////////////////////////////////////////////////////////
@@ -281,7 +285,7 @@ fn get_rand_test_body_with_events(
         while is_v3_transaction(&transaction) {
             transaction = Transaction::get_test_instance(rng);
         }
-        transaction_hashes.push(TransactionHash(StarkHash::from(u128::try_from(i).unwrap())));
+        transaction_hashes.push(tx_hash!(i));
         let transaction_output = get_test_transaction_output(&transaction);
         transactions.push(transaction);
         transaction_outputs.push(transaction_output);
@@ -362,7 +366,7 @@ fn set_events(tx: &mut TransactionOutput, events: Vec<Event>) {
 }
 
 //////////////////////////////////////////////////////////////////////////
-/// EXTERNAL FUNCTIONS - REMOVE DUPLICATIONS
+// EXTERNAL FUNCTIONS - REMOVE DUPLICATIONS
 //////////////////////////////////////////////////////////////////////////
 
 // Returns a test block with a variable number of transactions and events.
@@ -405,8 +409,6 @@ pub fn get_test_state_diff() -> StateDiff {
     // hashes than the deprecated_contract_classes.
     let (_, data) = res.declared_classes.pop().unwrap();
     res.declared_classes.insert(class_hash!("0x001"), data);
-    // TODO(yair): Find a way to create replaced classes in a test instance of StateDiff.
-    res.replaced_classes.clear();
     res
 }
 
@@ -443,6 +445,8 @@ auto_impl_get_test_instance! {
         pub l1_gas_price: GasPricePerToken,
         pub l1_data_gas_price: GasPricePerToken,
         pub l2_gas_price: GasPricePerToken,
+        pub l2_gas_consumed: u64,
+        pub next_l2_gas_price: u64,
         pub state_root: GlobalRoot,
         pub sequencer: SequencerContractAddress,
         pub timestamp: BlockTimestamp,
@@ -492,12 +496,18 @@ auto_impl_get_test_instance! {
         V0_13_2_1 = 17,
         V0_13_3 = 18,
         V0_13_4 = 19,
+        V0_13_5 = 20,
+        V0_14_0 = 21,
     }
 
     pub struct Calldata(pub Arc<Vec<Felt>>);
     pub struct ClassHash(pub StarkHash);
     pub struct CompiledClassHash(pub StarkHash);
     pub struct ContractAddressSalt(pub StarkHash);
+    pub enum ConsensusTransaction {
+        RpcTransaction(RpcTransaction) = 0,
+        L1Handler(L1HandlerTransaction) = 1,
+    }
     pub struct SierraContractClass {
         pub sierra_program: Vec<Felt>,
         pub contract_class_version: String,
@@ -746,15 +756,31 @@ auto_impl_get_test_instance! {
         L1Gas = 0,
         L2Gas = 1,
     }
-    pub struct ResourceBounds {
-        pub max_amount: GasAmount,
-        pub max_price_per_unit: GasPrice,
+    pub struct InternalRpcTransaction {
+        pub tx: InternalRpcTransactionWithoutTxHash,
+        pub tx_hash: TransactionHash,
     }
-    pub struct RpcContractClass {
-        pub sierra_program: Vec<Felt>,
-        pub contract_class_version: String,
-        pub entry_points_by_type: RpcEntryPointByType,
-        pub abi: String,
+    pub enum InternalRpcTransactionWithoutTxHash {
+        Declare(InternalRpcDeclareTransactionV3) = 0,
+        DeployAccount(InternalRpcDeployAccountTransaction) = 1,
+        Invoke(RpcInvokeTransaction) = 2,
+    }
+    pub struct InternalRpcDeclareTransactionV3 {
+        pub sender_address: ContractAddress,
+        pub compiled_class_hash: CompiledClassHash,
+        pub signature: TransactionSignature,
+        pub nonce: Nonce,
+        pub class_hash: ClassHash,
+        pub resource_bounds: AllResourceBounds,
+        pub tip: Tip,
+        pub paymaster_data: PaymasterData,
+        pub account_deployment_data: AccountDeploymentData,
+        pub nonce_data_availability_mode: DataAvailabilityMode,
+        pub fee_data_availability_mode: DataAvailabilityMode,
+    }
+    pub struct InternalRpcDeployAccountTransaction {
+        pub tx: RpcDeployAccountTransaction,
+        pub contract_address: ContractAddress,
     }
     pub enum RpcTransaction {
         Declare(RpcDeclareTransaction) = 0,
@@ -769,7 +795,7 @@ auto_impl_get_test_instance! {
         pub tip: Tip,
         pub signature: TransactionSignature,
         pub nonce: Nonce,
-        pub contract_class: RpcContractClass,
+        pub contract_class: SierraContractClass,
         pub compiled_class_hash: CompiledClassHash,
         pub sender_address: ContractAddress,
         pub nonce_data_availability_mode: DataAvailabilityMode,
@@ -823,7 +849,6 @@ auto_impl_get_test_instance! {
         pub declared_classes: IndexMap<ClassHash, (CompiledClassHash, SierraContractClass)>,
         pub deprecated_declared_classes: IndexMap<ClassHash, DeprecatedContractClass>,
         pub nonces: IndexMap<ContractAddress, Nonce>,
-        pub replaced_classes: IndexMap<ContractAddress, ClassHash>,
     }
     pub struct StateDiffCommitment(pub PoseidonHash);
     pub struct StructMember {
@@ -840,7 +865,6 @@ auto_impl_get_test_instance! {
         pub declared_classes: IndexMap<ClassHash, CompiledClassHash>,
         pub deprecated_declared_classes: Vec<ClassHash>,
         pub nonces: IndexMap<ContractAddress, Nonce>,
-        pub replaced_classes: IndexMap<ContractAddress, ClassHash>,
     }
     pub struct Tip(pub u64);
     pub enum Transaction {
@@ -1130,7 +1154,7 @@ impl GetTestInstance for Hint {
     }
 }
 
-// TODO: fix mismatch of member types between ExecutionResources and
+// TODO(NoamS): fix mismatch of member types between ExecutionResources and
 // protobuf::receipt::ExecutionResources.
 impl GetTestInstance for ExecutionResources {
     fn get_test_instance(rng: &mut ChaCha8Rng) -> Self {
@@ -1168,5 +1192,16 @@ impl GetTestInstance for NonZeroU32 {
 impl GetTestInstance for NonZeroU64 {
     fn get_test_instance(rng: &mut ChaCha8Rng) -> Self {
         max(1, rng.next_u64()).try_into().expect("Failed to convert a non-zero u64 to NonZeroU64")
+    }
+}
+
+impl GetTestInstance for ResourceBounds {
+    // The default value is invalid in some cases, so we need to override it.
+    fn get_test_instance(rng: &mut ChaCha8Rng) -> Self {
+        Self {
+            max_amount: GasAmount(rng.next_u64()),
+            // TODO(alonl): change GasPrice generation to use u128 directly
+            max_price_per_unit: GasPrice(rng.next_u64().into()),
+        }
     }
 }

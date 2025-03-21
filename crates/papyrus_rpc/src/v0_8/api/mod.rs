@@ -18,6 +18,7 @@ use papyrus_storage::state::StateStorageReader;
 use papyrus_storage::StorageTxn;
 use serde::{Deserialize, Serialize};
 use starknet_api::block::{BlockHashAndNumber, BlockNumber};
+use starknet_api::contract_class::SierraVersion;
 use starknet_api::core::{ClassHash, ContractAddress, Nonce};
 use starknet_api::deprecated_contract_class::{
     ContractClass as StarknetApiDeprecatedContractClass,
@@ -257,13 +258,13 @@ pub trait JsonRpc {
         block_id: BlockId,
     ) -> RpcResult<Vec<TransactionTraceWithHash>>;
 
-    /// Returns the compiled contract class associated with the given class hash.
+    /// Returns the compiled class associated with the given class hash.
     #[method(name = "getCompiledContractClass")]
-    fn get_compiled_contract_class(
+    fn get_compiled_class(
         &self,
         block_id: BlockId,
         class_hash: ClassHash,
-    ) -> RpcResult<CompiledContractClass>;
+    ) -> RpcResult<(CompiledContractClass, SierraVersion)>;
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -331,10 +332,8 @@ impl TryFrom<BroadcastedTransaction> for ExecutableTransactionInput {
         // TODO(yair): pass the right value for only_query field.
         match value {
             BroadcastedTransaction::Declare(tx) => Ok(tx.try_into()?),
-            BroadcastedTransaction::DeployAccount(tx) => {
-                Ok(Self::DeployAccount(tx.try_into()?, false))
-            }
-            BroadcastedTransaction::Invoke(tx) => Ok(Self::Invoke(tx.try_into()?, false)),
+            BroadcastedTransaction::DeployAccount(tx) => Ok(Self::DeployAccount(tx.into(), false)),
+            BroadcastedTransaction::Invoke(tx) => Ok(Self::Invoke(tx.into(), false)),
         }
     }
 }
@@ -379,7 +378,7 @@ pub(crate) fn stored_txn_to_executable_txn(
                         value.class_hash
                     ))
                 })?;
-            let (sierra_program_length, abi_length) =
+            let (sierra_program_length, abi_length, sierra_version) =
                 get_class_lengths(storage_txn, state_number, value.class_hash)?;
             Ok(ExecutableTransactionInput::DeclareV2(
                 value,
@@ -387,6 +386,7 @@ pub(crate) fn stored_txn_to_executable_txn(
                 sierra_program_length,
                 abi_length,
                 false,
+                sierra_version,
             ))
         }
         starknet_api::transaction::Transaction::Declare(
@@ -401,7 +401,7 @@ pub(crate) fn stored_txn_to_executable_txn(
                         value.class_hash
                     ))
                 })?;
-            let (sierra_program_length, abi_length) =
+            let (sierra_program_length, abi_length, sierra_version) =
                 get_class_lengths(storage_txn, state_number, value.class_hash)?;
             Ok(ExecutableTransactionInput::DeclareV3(
                 value,
@@ -409,6 +409,7 @@ pub(crate) fn stored_txn_to_executable_txn(
                 sierra_program_length,
                 abi_length,
                 false,
+                sierra_version,
             ))
         }
         starknet_api::transaction::Transaction::Deploy(_) => {
@@ -453,9 +454,10 @@ fn get_class_lengths(
     storage_txn: &StorageTxn<'_, RO>,
     state_number: StateNumber,
     class_hash: ClassHash,
-) -> Result<(SierraSize, AbiSize), ErrorObjectOwned> {
+) -> Result<(SierraSize, AbiSize, SierraVersion), ErrorObjectOwned> {
     let state_number_after_block =
         StateNumber::unchecked_right_after_block(state_number.block_after());
+
     storage_txn
         .get_state_reader()
         .map_err(internal_server_error)?
@@ -464,7 +466,14 @@ fn get_class_lengths(
         .ok_or_else(|| {
             internal_server_error(format!("Missing deprecated class definition of {class_hash}."))
         })
-        .map(|contract_class| (contract_class.sierra_program.len(), contract_class.abi.len()))
+        .and_then(|contract_class| {
+            let sierra_program_len = contract_class.sierra_program.len();
+            let abi_len = contract_class.abi.len();
+            let sierra_program =
+                SierraVersion::extract_from_program(&contract_class.sierra_program)
+                    .map_err(internal_server_error)?;
+            Ok((sierra_program_len, abi_len, sierra_program))
+        })
 }
 
 impl TryFrom<BroadcastedDeclareTransaction> for ExecutableTransactionInput {
@@ -521,10 +530,9 @@ fn user_deprecated_contract_class_to_sn_api(
     })
 }
 
-impl TryFrom<DeployAccountTransaction> for starknet_api::transaction::DeployAccountTransaction {
-    type Error = ErrorObjectOwned;
-    fn try_from(tx: DeployAccountTransaction) -> Result<Self, Self::Error> {
-        Ok(match tx {
+impl From<DeployAccountTransaction> for starknet_api::transaction::DeployAccountTransaction {
+    fn from(tx: DeployAccountTransaction) -> Self {
+        match tx {
             DeployAccountTransaction::Version1(DeployAccountTransactionV1 {
                 max_fee,
                 signature,
@@ -554,7 +562,7 @@ impl TryFrom<DeployAccountTransaction> for starknet_api::transaction::DeployAcco
                 nonce_data_availability_mode,
                 fee_data_availability_mode,
             }) => Self::V3(starknet_api::transaction::DeployAccountTransactionV3 {
-                resource_bounds: resource_bounds.try_into()?,
+                resource_bounds: resource_bounds.into(),
                 tip,
                 signature,
                 nonce,
@@ -565,14 +573,13 @@ impl TryFrom<DeployAccountTransaction> for starknet_api::transaction::DeployAcco
                 fee_data_availability_mode,
                 paymaster_data,
             }),
-        })
+        }
     }
 }
 
-impl TryFrom<InvokeTransaction> for starknet_api::transaction::InvokeTransaction {
-    type Error = ErrorObjectOwned;
-    fn try_from(value: InvokeTransaction) -> Result<Self, Self::Error> {
-        Ok(match value {
+impl From<InvokeTransaction> for starknet_api::transaction::InvokeTransaction {
+    fn from(value: InvokeTransaction) -> Self {
+        match value {
             InvokeTransaction::Version0(InvokeTransactionV0 {
                 max_fee,
                 version: _,
@@ -614,7 +621,7 @@ impl TryFrom<InvokeTransaction> for starknet_api::transaction::InvokeTransaction
                 nonce_data_availability_mode,
                 fee_data_availability_mode,
             }) => Self::V3(starknet_api::transaction::InvokeTransactionV3 {
-                resource_bounds: resource_bounds.try_into()?,
+                resource_bounds: resource_bounds.into(),
                 tip,
                 signature,
                 nonce,
@@ -625,7 +632,7 @@ impl TryFrom<InvokeTransaction> for starknet_api::transaction::InvokeTransaction
                 paymaster_data,
                 account_deployment_data,
             }),
-        })
+        }
     }
 }
 

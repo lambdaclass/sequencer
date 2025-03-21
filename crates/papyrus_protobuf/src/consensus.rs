@@ -1,19 +1,18 @@
-use futures::channel::{mpsc, oneshot};
+use std::fmt::Display;
+
+use bytes::{Buf, BufMut};
+use prost::DecodeError;
 use starknet_api::block::{BlockHash, BlockNumber};
+use starknet_api::consensus_transaction::ConsensusTransaction;
 use starknet_api::core::ContractAddress;
-use starknet_api::executable_transaction::Transaction as ExecutableTransaction;
-use starknet_api::transaction::{Transaction, TransactionHash};
+use starknet_api::data_availability::L1DataAvailabilityMode;
 
 use crate::converters::ProtobufConversionError;
 
-#[derive(Debug, Default, Hash, Clone, Eq, PartialEq)]
-pub struct Proposal {
-    pub height: u64,
-    pub round: u32,
-    pub proposer: ContractAddress,
-    pub transactions: Vec<Transaction>,
-    pub block_hash: BlockHash,
-    pub valid_round: Option<u32>,
+pub trait IntoFromProto: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError> {}
+impl<T> IntoFromProto for T where
+    T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>
+{
 }
 
 #[derive(Debug, Default, Hash, Clone, Eq, PartialEq)]
@@ -33,35 +32,20 @@ pub struct Vote {
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub enum ConsensusMessage {
-    Proposal(Proposal),
-    Vote(Vote),
-}
-
-impl ConsensusMessage {
-    pub fn height(&self) -> u64 {
-        match self {
-            ConsensusMessage::Proposal(proposal) => proposal.height,
-            ConsensusMessage::Vote(vote) => vote.height,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum StreamMessageBody<T> {
     Content(T),
     Fin,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct StreamMessage<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> {
+pub struct StreamMessage<T: IntoFromProto, StreamId: IntoFromProto + Clone> {
     pub message: StreamMessageBody<T>,
-    pub stream_id: u64,
+    pub stream_id: StreamId,
     pub message_id: u64,
 }
 
 /// This message must be sent first when proposing a new block.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProposalInit {
     /// The height of the consensus (block number).
     pub height: BlockNumber,
@@ -73,22 +57,50 @@ pub struct ProposalInit {
     pub proposer: ContractAddress,
 }
 
+/// This struct differs from `BlockInfo` in `starknet_api` because we send L1 gas prices in ETH and
+/// include the ETH to STRK conversion rate. This allows for more informative validations, as we can
+/// distinguish whether an issue comes from the L1 price reading or the conversion rate instead of
+/// comparing after multiplication.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConsensusBlockInfo {
+    pub height: BlockNumber,
+    pub timestamp: u64,
+    pub builder: ContractAddress,
+    pub l1_da_mode: L1DataAvailabilityMode,
+    pub l2_gas_price_fri: u128,
+    pub l1_gas_price_wei: u128,
+    pub l1_data_gas_price_wei: u128,
+    pub eth_to_fri_rate: u128,
+}
+
+/// A temporary constant to use as a validator ID. Zero is not a valid contract address.
+// TODO(Matan): Remove this once we have a proper validator set.
+pub const DEFAULT_VALIDATOR_ID: u64 = 100;
+
+impl Default for ProposalInit {
+    fn default() -> Self {
+        ProposalInit {
+            height: Default::default(),
+            round: Default::default(),
+            valid_round: Default::default(),
+            proposer: ContractAddress::from(DEFAULT_VALIDATOR_ID),
+        }
+    }
+}
+
 /// There is one or more batches of transactions in a proposed block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransactionBatch {
     /// The transactions in the batch.
-    pub transactions: Vec<Transaction>,
-    // TODO(guyn): remove this once we settle how to convert transactions to ExecutableTransactions
-    /// The hashes of each transaction.
-    pub tx_hashes: Vec<TransactionHash>,
+    pub transactions: Vec<ConsensusTransaction>,
 }
 
-/// The propsal is done when receiving this fin message, which contains the block hash.
+/// The proposal is done when receiving this fin message, which contains the block hash.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProposalFin {
     /// The block hash of the proposed block.
-    /// TODO(guyn): Consider changing the content ID
-    pub proposal_content_id: BlockHash,
+    /// TODO(Matan): Consider changing the content ID to a signature.
+    pub proposal_commitment: BlockHash,
 }
 
 /// A part of the proposal.
@@ -96,18 +108,41 @@ pub struct ProposalFin {
 pub enum ProposalPart {
     /// The initialization part of the proposal.
     Init(ProposalInit),
+    /// Identifies the content of the proposal; contains `id(v)` in Tendermint terms.
+    Fin(ProposalFin),
+    /// The block info part of the proposal.
+    BlockInfo(ConsensusBlockInfo),
     /// A part of the proposal that contains one or more transactions.
     Transactions(TransactionBatch),
-    /// The final part of the proposal, including the block hash.
-    Fin(ProposalFin),
 }
 
-impl<T> std::fmt::Display for StreamMessage<T>
+impl TryInto<ProposalInit> for ProposalPart {
+    type Error = ProtobufConversionError;
+
+    fn try_into(self: ProposalPart) -> Result<ProposalInit, Self::Error> {
+        match self {
+            ProposalPart::Init(init) => Ok(init),
+            _ => Err(ProtobufConversionError::WrongEnumVariant {
+                type_description: "ProposalPart",
+                expected: "Init",
+                value_as_str: format!("{:?}", self),
+            }),
+        }
+    }
+}
+
+impl From<ProposalInit> for ProposalPart {
+    fn from(value: ProposalInit) -> Self {
+        ProposalPart::Init(value)
+    }
+}
+
+impl<T, StreamId> std::fmt::Display for StreamMessage<T, StreamId>
 where
-    T: Clone + Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>,
+    T: Clone + IntoFromProto,
+    StreamId: IntoFromProto + Clone + Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO(guyn): add option to display when message is Fin and doesn't have content (PR #1048)
         if let StreamMessageBody::Content(message) = &self.message {
             let message: Vec<u8> = message.clone().into();
             write!(
@@ -127,52 +162,35 @@ where
     }
 }
 
-// TODO(Guy): Remove after implementing broadcast streams.
-#[allow(missing_docs)]
-pub struct ProposalWrapper(pub Proposal);
+/// HeighAndRound is a tuple struct used as the StreamId for consensus and context.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HeightAndRound(pub u64, pub u32);
 
-impl From<ProposalWrapper>
-    for (ProposalInit, mpsc::Receiver<Transaction>, oneshot::Receiver<BlockHash>)
-{
-    fn from(val: ProposalWrapper) -> Self {
-        let transactions: Vec<Transaction> = val.0.transactions.into_iter().collect();
-        let proposal_init = ProposalInit {
-            height: BlockNumber(val.0.height),
-            round: val.0.round,
-            proposer: val.0.proposer,
-            valid_round: val.0.valid_round,
-        };
-        let (mut content_sender, content_receiver) = mpsc::channel(transactions.len());
-        for tx in transactions {
-            content_sender.try_send(tx).expect("Send should succeed");
+impl TryFrom<Vec<u8>> for HeightAndRound {
+    type Error = ProtobufConversionError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        if value.len() != 12 {
+            return Err(ProtobufConversionError::DecodeError(DecodeError::new("Invalid length")));
         }
-        content_sender.close_channel();
-
-        let (fin_sender, fin_receiver) = oneshot::channel();
-        fin_sender.send(val.0.block_hash).expect("Send should succeed");
-
-        (proposal_init, content_receiver, fin_receiver)
+        let mut bytes = value.as_slice();
+        let height = bytes.get_u64();
+        let round = bytes.get_u32();
+        Ok(HeightAndRound(height, round))
     }
 }
 
-impl From<ProposalWrapper>
-    for (ProposalInit, mpsc::Receiver<Vec<ExecutableTransaction>>, oneshot::Receiver<BlockHash>)
-{
-    fn from(val: ProposalWrapper) -> Self {
-        let proposal_init = ProposalInit {
-            height: BlockNumber(val.0.height),
-            round: val.0.round,
-            proposer: val.0.proposer,
-            valid_round: val.0.valid_round,
-        };
+impl From<HeightAndRound> for Vec<u8> {
+    fn from(value: HeightAndRound) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(12);
+        bytes.put_u64(value.0);
+        bytes.put_u32(value.1);
+        bytes
+    }
+}
 
-        let (_, content_receiver) = mpsc::channel(0);
-        // This should only be used for Milestone 1, and then removed once streaming is supported.
-        println!("Cannot build ExecutableTransaction from Transaction.");
-
-        let (fin_sender, fin_receiver) = oneshot::channel();
-        fin_sender.send(val.0.block_hash).expect("Send should succeed");
-
-        (proposal_init, content_receiver, fin_receiver)
+impl std::fmt::Display for HeightAndRound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(height: {}, round: {})", self.0, self.1)
     }
 }

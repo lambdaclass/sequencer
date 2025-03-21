@@ -9,13 +9,15 @@ version.workspace = true
 workspace = true
 
 [features]
-testing = []
+testing = ["blockifier/testing", "blockifier_test_utils"]
 
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
-blockifier = { workspace = true, features = ["testing"] }
+blockifier.workspace = true
+blockifier_test_utils = { workspace = true, optional = true }
 cairo-lang-starknet-classes.workspace = true
+futures.workspace = true
 mempool_test_utils.workspace = true
 papyrus_config.workspace = true
 papyrus_network_types.workspace = true
@@ -25,10 +27,15 @@ serde.workspace = true
 serde_json.workspace = true
 starknet-types-core.workspace = true
 starknet_api.workspace = true
+starknet_class_manager_types.workspace = true
 starknet_gateway_types.workspace = true
 starknet_mempool_types.workspace = true
 starknet_sequencer_infra.workspace = true
-starknet_sierra_compile.workspace = true
+starknet_sequencer_metrics.workspace = true
+starknet_sierra_multicompile.workspace = true
+starknet_state_sync_types.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -36,7 +43,12 @@ validator.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
+blockifier = { workspace = true, features = ["testing"] }
+blockifier_test_utils.workspace = true
 cairo-lang-sierra-to-casm.workspace = true
+criterion = { workspace = true, features = ["async_tokio"] }
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 mockall.workspace = true
 mockito.workspace = true
 num-bigint.workspace = true
@@ -44,6 +56,14 @@ papyrus_network_types = { workspace = true, features = ["testing"] }
 papyrus_test_utils.workspace = true
 pretty_assertions.workspace = true
 rstest.workspace = true
+starknet_class_manager_types = { workspace = true, features = ["testing"] }
 starknet_mempool.workspace = true
 starknet_mempool_types = { workspace = true, features = ["testing"] }
+starknet_state_sync_types = { workspace = true, features = ["testing"] }
 tracing-test.workspace = true
+
+[[bench]]
+harness = false
+name = "starknet_gateway"
+path = "benches/main.rs"
+required-features = ["testing"]

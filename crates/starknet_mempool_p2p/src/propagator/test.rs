@@ -1,4 +1,5 @@
 use futures::stream::StreamExt;
+use mockall::predicate;
 use papyrus_network::network_manager::test_utils::{
     mock_register_broadcast_topic,
     BroadcastNetworkMock,
@@ -6,9 +7,10 @@ use papyrus_network::network_manager::test_utils::{
 };
 use papyrus_network::network_manager::BroadcastTopicChannels;
 use papyrus_network_types::network_types::BroadcastedMessageMetadata;
-use papyrus_protobuf::mempool::RpcTransactionWrapper;
+use papyrus_protobuf::mempool::RpcTransactionBatch;
 use papyrus_test_utils::{get_rng, GetTestInstance};
-use starknet_api::rpc_transaction::RpcTransaction;
+use starknet_api::rpc_transaction::{InternalRpcTransaction, RpcTransaction};
+use starknet_class_manager_types::transaction_converter::MockTransactionConverterTrait;
 use starknet_mempool_p2p_types::communication::MempoolP2pPropagatorRequest;
 use starknet_sequencer_infra::component_definitions::ComponentRequestHandler;
 use tokio::time::timeout;
@@ -24,13 +26,22 @@ async fn process_handle_add_tx() {
     let BroadcastTopicChannels { broadcasted_messages_receiver: _, broadcast_topic_client } =
         subscriber_channels;
     let BroadcastNetworkMock { mut messages_to_broadcast_receiver, .. } = mock_network;
+    let internal_tx = InternalRpcTransaction::get_test_instance(&mut get_rng());
     let rpc_transaction = RpcTransaction::get_test_instance(&mut get_rng());
-    let mut mempool_p2p_propagator = MempoolP2pPropagator::new(broadcast_topic_client);
+    let cloned_rpc_transaction = rpc_transaction.clone();
+    let mut transaction_converter = MockTransactionConverterTrait::new();
+    transaction_converter
+        .expect_convert_internal_rpc_tx_to_rpc_tx()
+        .with(predicate::eq(internal_tx.clone()))
+        .times(1)
+        .return_once(move |_| Ok(rpc_transaction));
+    let mut mempool_p2p_propagator =
+        MempoolP2pPropagator::new(broadcast_topic_client, Box::new(transaction_converter), 1);
     mempool_p2p_propagator
-        .handle_request(MempoolP2pPropagatorRequest::AddTransaction(rpc_transaction.clone()))
+        .handle_request(MempoolP2pPropagatorRequest::AddTransaction(internal_tx))
         .await;
     let message = timeout(TIMEOUT, messages_to_broadcast_receiver.next()).await.unwrap().unwrap();
-    assert_eq!(message, RpcTransactionWrapper(rpc_transaction));
+    assert_eq!(message, RpcTransactionBatch(vec![cloned_rpc_transaction]));
 }
 
 #[tokio::test]
@@ -41,7 +52,9 @@ async fn process_handle_continue_propagation() {
         subscriber_channels;
     let BroadcastNetworkMock { mut continue_propagation_receiver, .. } = mock_network;
     let propagation_metadata = BroadcastedMessageMetadata::get_test_instance(&mut get_rng());
-    let mut mempool_p2p_propagator = MempoolP2pPropagator::new(broadcast_topic_client);
+    let transaction_converter = MockTransactionConverterTrait::new();
+    let mut mempool_p2p_propagator =
+        MempoolP2pPropagator::new(broadcast_topic_client, Box::new(transaction_converter), 1);
     mempool_p2p_propagator
         .handle_request(MempoolP2pPropagatorRequest::ContinuePropagation(
             propagation_metadata.clone(),

@@ -4,8 +4,8 @@ expression: dumped_default_config
 ---
 {
   "base_layer.node_url": {
-    "description": "A required param! Ethereum node URL. A schema to match to Infura node: https://mainnet.infura.io/v3/<your_api_key>, but any other node can be used.",
-    "param_type": "String",
+    "description": "Ethereum node URL. A schema to match to Infura node: https://mainnet.infura.io/v3/<your_api_key>, but any other node can be used.",
+    "value": "https://mainnet.infura.io/v3/%3Cyour_api_key%3E",
     "privacy": "Private"
   },
   "base_layer.starknet_contract_address": {
@@ -89,129 +89,38 @@ expression: dumped_default_config
     "value": true,
     "privacy": "TemporaryValue"
   },
-  "consensus.consensus_delay": {
+  "consensus.future_height_limit": {
+    "description": "How many heights in the future should we cache.",
+    "value": {
+      "$serde_json::private::Number": "10"
+    },
+    "privacy": "Public"
+  },
+  "consensus.future_height_round_limit": {
+    "description": "How many rounds should we cache for future heights.",
+    "value": {
+      "$serde_json::private::Number": "1"
+    },
+    "privacy": "Public"
+  },
+  "consensus.future_round_limit": {
+    "description": "How many rounds in the future (for current height) should we cache.",
+    "value": {
+      "$serde_json::private::Number": "10"
+    },
+    "privacy": "Public"
+  },
+  "consensus.startup_delay": {
     "description": "Delay (seconds) before starting consensus to give time for network peering.",
     "value": {
       "$serde_json::private::Number": "5"
     },
     "privacy": "Public"
   },
-  "consensus.network_config.advertised_multiaddr": {
-    "description": "The external address other peers see this node. If this is set, the node will not try to find out which addresses it has and will write this address as external instead",
-    "value": "",
-    "privacy": "Public"
-  },
-  "consensus.network_config.advertised_multiaddr.#is_none": {
-    "description": "Flag for an optional field.",
-    "value": true,
-    "privacy": "TemporaryValue"
-  },
-  "consensus.network_config.bootstrap_peer_multiaddr": {
-    "description": "The multiaddress of the peer node. It should include the peer's id. For more info: https://docs.libp2p.io/concepts/fundamentals/peers/",
-    "value": "",
-    "privacy": "Public"
-  },
-  "consensus.network_config.bootstrap_peer_multiaddr.#is_none": {
-    "description": "Flag for an optional field.",
-    "value": true,
-    "privacy": "TemporaryValue"
-  },
-  "consensus.network_config.chain_id": {
-    "description": "The chain to follow. For more details see https://docs.starknet.io/documentation/architecture_and_concepts/Blocks/transactions/#chain-id.",
-    "value": "SN_MAIN",
-    "privacy": "Public"
-  },
-  "consensus.network_config.discovery_config.bootstrap_dial_retry_config.base_delay_millis": {
-    "description": "The base delay in milliseconds for the exponential backoff strategy.",
+  "consensus.sync_retry_interval": {
+    "description": "The duration (seconds) between sync attempts.",
     "value": {
-      "$serde_json::private::Number": "2"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.discovery_config.bootstrap_dial_retry_config.factor": {
-    "description": "The factor for the exponential backoff strategy.",
-    "value": {
-      "$serde_json::private::Number": "5"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.discovery_config.bootstrap_dial_retry_config.max_delay_seconds": {
-    "description": "The maximum delay in seconds for the exponential backoff strategy.",
-    "value": {
-      "$serde_json::private::Number": "5"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.discovery_config.heartbeat_interval": {
-    "description": "The interval between each discovery (Kademlia) query in milliseconds.",
-    "value": {
-      "$serde_json::private::Number": "100"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.idle_connection_timeout": {
-    "description": "Amount of time in seconds that a connection with no active sessions will stay alive.",
-    "value": {
-      "$serde_json::private::Number": "120"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.peer_manager_config.malicious_timeout_seconds": {
-    "description": "The duration in seconds a peer is blacklisted after being marked as malicious.",
-    "value": {
-      "$serde_json::private::Number": "31536000"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.peer_manager_config.unstable_timeout_millis": {
-    "description": "The duration in milliseconds a peer blacklisted after being reported as unstable.",
-    "value": {
-      "$serde_json::private::Number": "1000"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.quic_port": {
-    "description": "The port that the node listens on for incoming quic connections.",
-    "value": {
-      "$serde_json::private::Number": "10101"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.secret_key": {
-    "description": "The secret key used for building the peer id. If it's an empty string a random one will be used.",
-    "value": "",
-    "privacy": "Private"
-  },
-  "consensus.network_config.session_timeout": {
-    "description": "Maximal time in seconds that each session can take before failing on timeout.",
-    "value": {
-      "$serde_json::private::Number": "120"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_config.tcp_port": {
-    "description": "The port that the node listens on for incoming tcp connections.",
-    "value": {
-      "$serde_json::private::Number": "10100"
-    },
-    "privacy": "Public"
-  },
-  "consensus.network_topic": {
-    "description": "The network topic of the consensus.",
-    "value": "consensus",
-    "privacy": "Public"
-  },
-  "consensus.num_validators": {
-    "description": "The number of validators in the consensus.",
-    "value": {
-      "$serde_json::private::Number": "1"
-    },
-    "privacy": "Public"
-  },
-  "consensus.start_height": {
-    "description": "The height to start the consensus from.",
-    "value": {
-      "$serde_json::private::Number": "0"
+      "$serde_json::private::Number": "1.0"
     },
     "privacy": "Public"
   },
@@ -238,7 +147,62 @@ expression: dumped_default_config
   },
   "consensus.validator_id": {
     "description": "The validator id of the node.",
+    "value": "0x64",
+    "privacy": "Public"
+  },
+  "context.#is_none": {
+    "description": "Flag for an optional field.",
+    "value": true,
+    "privacy": "TemporaryValue"
+  },
+  "context.block_timestamp_window": {
+    "description": "Maximum allowed deviation (seconds) of a proposed block's timestamp from the current time.",
+    "value": {
+      "$serde_json::private::Number": "1"
+    },
+    "privacy": "Public"
+  },
+  "context.build_proposal_margin": {
+    "description": "Safety margin (in ms) to make sure that the batcher completes building the proposal with enough time for the Fin to be checked by validators.",
+    "value": {
+      "$serde_json::private::Number": "1000"
+    },
+    "privacy": "Public"
+  },
+  "context.builder_address": {
+    "description": "The address of the contract that builds the block.",
     "value": "0x0",
+    "privacy": "Public"
+  },
+  "context.chain_id": {
+    "description": "The chain id of the Starknet chain.",
+    "value": "SN_MAIN",
+    "privacy": "Public"
+  },
+  "context.l1_da_mode": {
+    "description": "The data availability mode, true: Blob, false: Calldata.",
+    "value": true,
+    "privacy": "Public"
+  },
+  "context.num_validators": {
+    "description": "The number of validators.",
+    "value": {
+      "$serde_json::private::Number": "1"
+    },
+    "privacy": "Public"
+  },
+  "context.proposal_buffer_size": {
+    "description": "The buffer size for streaming outbound proposals.",
+    "value": {
+      "$serde_json::private::Number": "100"
+    },
+    "privacy": "Public"
+  },
+  "context.validate_proposal_margin": {
+    "description": "Safety margin (in ms) to make sure that consensus determines when to timeout validating a proposal.",
+    "value": {
+      "$serde_json::private::Number": "10000"
+    },
     "privacy": "Public"
   },
   "monitoring_gateway.collect_metrics": {
@@ -334,7 +298,7 @@ expression: dumped_default_config
   "network.peer_manager_config.malicious_timeout_seconds": {
     "description": "The duration in seconds a peer is blacklisted after being marked as malicious.",
     "value": {
-      "$serde_json::private::Number": "31536000"
+      "$serde_json::private::Number": "1"
     },
     "privacy": "Public"
   },
@@ -345,10 +309,10 @@ expression: dumped_default_config
     },
     "privacy": "Public"
   },
-  "network.quic_port": {
-    "description": "The port that the node listens on for incoming quic connections.",
+  "network.port": {
+    "description": "The port that the node listens on for incoming tcp connections.",
     "value": {
-      "$serde_json::private::Number": "10001"
+      "$serde_json::private::Number": "10000"
     },
     "privacy": "Public"
   },
@@ -361,13 +325,6 @@ expression: dumped_default_config
     "description": "Maximal time in seconds that each session can take before failing on timeout.",
     "value": {
       "$serde_json::private::Number": "120"
-    },
-    "privacy": "Public"
-  },
-  "network.tcp_port": {
-    "description": "The port that the node listens on for incoming tcp connections.",
-    "value": {
-      "$serde_json::private::Number": "10000"
     },
     "privacy": "Public"
   },
@@ -411,22 +368,17 @@ expression: dumped_default_config
     },
     "privacy": "Public"
   },
-  "p2p_sync.stop_sync_at_block_number": {
-    "description": "Stops the sync at given block number and closes the node cleanly. Used to run profiling on the node.",
+  "p2p_sync.wait_period_for_new_data": {
+    "description": "Time in millisseconds to wait when a query returned with partial data before sending a new query",
     "value": {
-      "$serde_json::private::Number": "1000"
+      "$serde_json::private::Number": "50"
     },
     "privacy": "Public"
   },
-  "p2p_sync.stop_sync_at_block_number.#is_none": {
-    "description": "Flag for an optional field.",
-    "value": true,
-    "privacy": "TemporaryValue"
-  },
-  "p2p_sync.wait_period_for_new_data": {
-    "description": "Time in seconds to wait when a query returned with partial data before sending a new query",
+  "p2p_sync.wait_period_for_other_protocol": {
+    "description": "Time in millisseconds to wait for a dependency protocol to advance (e.g.state diff sync depends on header sync)",
     "value": {
-      "$serde_json::private::Number": "5"
+      "$serde_json::private::Number": "50"
     },
     "privacy": "Public"
   },
@@ -607,6 +559,11 @@ expression: dumped_default_config
     "value": {
       "$serde_json::private::Number": "1000"
     },
+    "privacy": "Public"
+  },
+  "sync.store_sierras_and_casms": {
+    "description": "Whether to store sierras and casms to the storage. This allows maintaining backward-compatibility with native-blockifier",
+    "value": true,
     "privacy": "Public"
   },
   "sync.verify_blocks": {

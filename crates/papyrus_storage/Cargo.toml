@@ -8,12 +8,7 @@ description = "A storage implementation for a Starknet node."
 
 [features]
 document_calls = ["lazy_static"]
-testing = ["tempfile"]
-
-[[bin]]
-name = "dump_declared_classes"
-path = "src/bin/dump_declared_classes.rs"
-required-features = ["clap"]
+testing = ["starknet_api/testing", "tempfile"]
 
 [[bin]]
 name = "storage_benchmark"
@@ -67,8 +62,10 @@ pretty_assertions.workspace = true
 prometheus-parse.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+rstest.workspace = true
 schemars = { workspace = true, features = ["preserve_order"] }
 simple_logger.workspace = true
+starknet_api = { workspace = true, features = ["testing"] }
 tempfile = { workspace = true }
 test-case.workspace = true
 test-log.workspace = true

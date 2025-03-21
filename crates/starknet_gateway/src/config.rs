@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use blockifier::blockifier_versioned_constants::VersionedConstantsOverrides;
 use blockifier::context::ChainInfo;
-use blockifier::versioned_constants::VersionedConstantsOverrides;
 use papyrus_config::dumping::{append_sub_config_name, ser_param, SerializeConfig};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,8 @@ use starknet_types_core::felt::Felt;
 use validator::Validate;
 
 use crate::compiler_version::VersionId;
+
+const JSON_RPC_VERSION: &str = "2.0";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, Validate, PartialEq)]
 pub struct GatewayConfig {
@@ -119,16 +121,28 @@ impl SerializeConfig for StatelessTransactionValidatorConfig {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Validate, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, Validate, PartialEq)]
 pub struct RpcStateReaderConfig {
     pub url: String,
     pub json_rpc_version: String,
 }
 
+impl RpcStateReaderConfig {
+    pub fn from_url(url: String) -> Self {
+        Self { url, ..Default::default() }
+    }
+}
+
+impl Default for RpcStateReaderConfig {
+    fn default() -> Self {
+        Self { url: Default::default(), json_rpc_version: JSON_RPC_VERSION.to_string() }
+    }
+}
+
 #[cfg(any(feature = "testing", test))]
 impl RpcStateReaderConfig {
     pub fn create_for_testing() -> Self {
-        Self { url: "http://localhost:8080".to_string(), json_rpc_version: "2.0".to_string() }
+        Self::from_url("http://localhost:8080".to_string())
     }
 }
 

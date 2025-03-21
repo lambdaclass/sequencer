@@ -50,7 +50,9 @@ use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use papyrus_proc_macros::latency_histogram;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::ClassHash;
+use starknet_api::state::SierraContractClass;
 
+use crate::class::ClassStorageReader;
 use crate::db::serialization::VersionZeroWrapper;
 use crate::db::table_types::{SimpleTable, Table};
 use crate::db::{DbTransaction, TableHandle, TransactionKind, RW};
@@ -61,6 +63,15 @@ use crate::{FileHandlers, MarkerKind, MarkersTable, OffsetKind, StorageResult, S
 pub trait CasmStorageReader {
     /// Returns the Cairo assembly of a class given its Sierra class hash.
     fn get_casm(&self, class_hash: &ClassHash) -> StorageResult<Option<CasmContractClass>>;
+
+    /// Returns the CASM and Sierra contract classes for the given hash.
+    /// If both exist, returns `(Some(casm), Some(sierra))`.
+    /// If neither, returns `(None, None)`.
+    /// If only one exists, returns `(Some, None)` or `(None, Some)`.
+    fn get_casm_and_sierra(
+        &self,
+        class_hash: &ClassHash,
+    ) -> StorageResult<(Option<CasmContractClass>, Option<SierraContractClass>)>;
     /// The block marker is the first block number that doesn't exist yet.
     ///
     /// Note: If the last blocks don't contain any declared classes, the marker will point at the
@@ -78,11 +89,18 @@ where
     fn append_casm(self, class_hash: &ClassHash, casm: &CasmContractClass) -> StorageResult<Self>;
 }
 
-impl<'env, Mode: TransactionKind> CasmStorageReader for StorageTxn<'env, Mode> {
+impl<Mode: TransactionKind> CasmStorageReader for StorageTxn<'_, Mode> {
     fn get_casm(&self, class_hash: &ClassHash) -> StorageResult<Option<CasmContractClass>> {
         let casm_table = self.open_table(&self.tables.casms)?;
         let casm_location = casm_table.get(&self.txn, class_hash)?;
         casm_location.map(|location| self.file_handlers.get_casm_unchecked(location)).transpose()
+    }
+
+    fn get_casm_and_sierra(
+        &self,
+        class_hash: &ClassHash,
+    ) -> StorageResult<(Option<CasmContractClass>, Option<SierraContractClass>)> {
+        Ok((self.get_casm(class_hash)?, self.get_class(class_hash)?))
     }
 
     fn get_compiled_class_marker(&self) -> StorageResult<BlockNumber> {
@@ -91,7 +109,7 @@ impl<'env, Mode: TransactionKind> CasmStorageReader for StorageTxn<'env, Mode> {
     }
 }
 
-impl<'env> CasmStorageWriter for StorageTxn<'env, RW> {
+impl CasmStorageWriter for StorageTxn<'_, RW> {
     #[latency_histogram("storage_append_casm_latency_seconds", false)]
     fn append_casm(self, class_hash: &ClassHash, casm: &CasmContractClass) -> StorageResult<Self> {
         let casm_table = self.open_table(&self.tables.casms)?;

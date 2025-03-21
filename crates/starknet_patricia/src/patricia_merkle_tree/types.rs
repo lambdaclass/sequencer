@@ -1,6 +1,7 @@
 use ethnum::U256;
+use starknet_types_core::felt::Felt;
 
-use crate::felt::Felt;
+use crate::felt::u256_from_felt;
 use crate::patricia_merkle_tree::errors::TypesError;
 use crate::patricia_merkle_tree::node_data::inner_node::{EdgePathLength, PathToBottom};
 
@@ -8,6 +9,7 @@ use crate::patricia_merkle_tree::node_data::inner_node::{EdgePathLength, PathToB
 #[path = "types_test.rs"]
 pub mod types_test;
 
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, derive_more::Sub, derive_more::Display)]
 pub struct SubTreeHeight(pub(crate) u8);
 
@@ -25,6 +27,12 @@ impl SubTreeHeight {
 impl From<SubTreeHeight> for u8 {
     fn from(value: SubTreeHeight) -> Self {
         value.0
+    }
+}
+
+impl From<SubTreeHeight> for Felt {
+    fn from(value: SubTreeHeight) -> Self {
+        value.0.into()
     }
 }
 
@@ -131,7 +139,7 @@ impl NodeIndex {
     }
 
     pub(crate) fn from_felt_value(felt: &Felt) -> Self {
-        Self(U256::from(felt))
+        Self(u256_from_felt(felt))
     }
 }
 

@@ -1,7 +1,13 @@
 use assert_matches::assert_matches;
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::calldata::create_calldata;
+use blockifier_test_utils::contracts::FeatureContract;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-use starknet_api::test_utils::NonceManager;
+use starknet_api::test_utils::declare::executable_declare_tx;
+use starknet_api::test_utils::deploy_account::executable_deploy_account_tx;
+use starknet_api::test_utils::invoke::executable_invoke_tx;
+use starknet_api::test_utils::DEFAULT_STRK_L1_GAS_PRICE;
 use starknet_api::transaction::fields::Fee;
 use starknet_api::transaction::TransactionVersion;
 use starknet_api::{declare_tx_args, deploy_account_tx_args, felt, invoke_tx_args, nonce};
@@ -17,21 +23,13 @@ use crate::bouncer::{Bouncer, BouncerWeights};
 use crate::context::BlockContext;
 use crate::state::cached_state::CachedState;
 use crate::state::state_api::StateReader;
-use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::declare::declare_tx;
-use crate::test_utils::deploy_account::deploy_account_tx;
+use crate::test_utils::contracts::FeatureContractTrait;
 use crate::test_utils::initial_test_state::test_state;
 use crate::test_utils::l1_handler::l1handler_tx;
-use crate::test_utils::{
-    create_calldata,
-    maybe_dummy_block_hash_and_number,
-    CairoVersion,
-    BALANCE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-};
+use crate::test_utils::{maybe_dummy_block_hash_and_number, BALANCE};
+use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::errors::TransactionExecutionError;
 use crate::transaction::test_utils::{
-    account_invoke_tx,
     block_context,
     calculate_class_info_for_testing,
     create_test_init_data,
@@ -40,6 +38,7 @@ use crate::transaction::test_utils::{
     TestInitData,
 };
 use crate::transaction::transaction_execution::Transaction;
+
 fn tx_executor_test_body<S: StateReader>(
     state: CachedState<S>,
     block_context: BlockContext,
@@ -58,7 +57,7 @@ fn tx_executor_test_body<S: StateReader>(
     // TODO(Arni, 30/03/2024): Consider adding a test for the transaction execution info. If A test
     // should not be added, rename the test to `test_bouncer_info`.
     // TODO(Arni, 30/03/2024): Test all bouncer weights.
-    let _tx_execution_info = tx_executor.execute(&tx).unwrap();
+    let _tx_execution_output = tx_executor.execute(&tx).unwrap();
     let bouncer_weights = tx_executor.bouncer.get_accumulated_weights();
     assert_eq!(bouncer_weights.state_diff_size, expected_bouncer_weights.state_diff_size);
     assert_eq!(
@@ -91,7 +90,7 @@ fn tx_executor_test_body<S: StateReader>(
 )]
 #[case::tx_version_2(
     TransactionVersion::TWO,
-    CairoVersion::Cairo1,
+    CairoVersion::Cairo1(RunnableCairo1::Casm),
     BouncerWeights {
         state_diff_size: 4,
         message_segment_length: 0,
@@ -101,7 +100,7 @@ fn tx_executor_test_body<S: StateReader>(
 )]
 #[case::tx_version_3(
     TransactionVersion::THREE,
-    CairoVersion::Cairo1,
+    CairoVersion::Cairo1(RunnableCairo1::Casm),
     BouncerWeights {
         state_diff_size: 4,
         message_segment_length: 0,
@@ -111,7 +110,8 @@ fn tx_executor_test_body<S: StateReader>(
 )]
 fn test_declare(
     block_context: BlockContext,
-    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1)] account_cairo_version: CairoVersion,
+    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1(RunnableCairo1::Casm))]
+    account_cairo_version: CairoVersion,
     #[case] tx_version: TransactionVersion,
     #[case] cairo_version: CairoVersion,
     #[case] expected_bouncer_weights: BouncerWeights,
@@ -120,7 +120,7 @@ fn test_declare(
     let declared_contract = FeatureContract::Empty(cairo_version);
     let state = test_state(&block_context.chain_info, BALANCE, &[(account_contract, 1)]);
 
-    let tx = declare_tx(
+    let declare_tx = executable_declare_tx(
         declare_tx_args! {
             sender_address: account_contract.get_instance_address(0),
             class_hash: declared_contract.get_class_hash(),
@@ -129,8 +129,8 @@ fn test_declare(
             resource_bounds: l1_resource_bounds(0_u8.into(), DEFAULT_STRK_L1_GAS_PRICE.into()),
         },
         calculate_class_info_for_testing(declared_contract.get_class()),
-    )
-    .into();
+    );
+    let tx = AccountTransaction::new_for_sequencing(declare_tx).into();
     tx_executor_test_body(state, block_context, tx, expected_bouncer_weights);
 }
 
@@ -138,20 +138,18 @@ fn test_declare(
 fn test_deploy_account(
     block_context: BlockContext,
     #[values(TransactionVersion::ONE, TransactionVersion::THREE)] version: TransactionVersion,
-    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1)] cairo_version: CairoVersion,
+    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1(RunnableCairo1::Casm))]
+    cairo_version: CairoVersion,
 ) {
     let account_contract = FeatureContract::AccountWithoutValidations(cairo_version);
     let state = test_state(&block_context.chain_info, BALANCE, &[(account_contract, 0)]);
 
-    let tx = deploy_account_tx(
-        deploy_account_tx_args! {
-            class_hash: account_contract.get_class_hash(),
-            resource_bounds: l1_resource_bounds(0_u8.into(), DEFAULT_STRK_L1_GAS_PRICE.into()),
-            version,
-        },
-        &mut NonceManager::default(),
-    )
-    .into();
+    let deploy_account_tx = executable_deploy_account_tx(deploy_account_tx_args! {
+        class_hash: account_contract.get_class_hash(),
+        resource_bounds: l1_resource_bounds(0_u8.into(), DEFAULT_STRK_L1_GAS_PRICE.into()),
+        version,
+    });
+    let tx = AccountTransaction::new_for_sequencing(deploy_account_tx).into();
     let expected_bouncer_weights = BouncerWeights {
         state_diff_size: 3,
         message_segment_length: 0,
@@ -202,7 +200,8 @@ fn test_deploy_account(
 fn test_invoke(
     block_context: BlockContext,
     #[values(TransactionVersion::ONE, TransactionVersion::THREE)] version: TransactionVersion,
-    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1)] cairo_version: CairoVersion,
+    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1(RunnableCairo1::Casm))]
+    cairo_version: CairoVersion,
     #[case] entry_point_name: &str,
     #[case] entry_point_args: Vec<Felt>,
     #[case] expected_bouncer_weights: BouncerWeights,
@@ -217,18 +216,18 @@ fn test_invoke(
 
     let calldata =
         create_calldata(test_contract.get_instance_address(0), entry_point_name, &entry_point_args);
-    let tx = account_invoke_tx(invoke_tx_args! {
+    let invoke_tx = executable_invoke_tx(invoke_tx_args! {
         sender_address: account_contract.get_instance_address(0),
         calldata,
         version,
-    })
-    .into();
+    });
+    let tx = AccountTransaction::new_for_sequencing(invoke_tx).into();
     tx_executor_test_body(state, block_context, tx, expected_bouncer_weights);
 }
 
 #[rstest]
 fn test_l1_handler(block_context: BlockContext) {
-    let test_contract = FeatureContract::TestContract(CairoVersion::Cairo1);
+    let test_contract = FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let state = test_state(&block_context.chain_info, BALANCE, &[(test_contract, 1)]);
 
     let tx = Transaction::L1Handler(l1handler_tx(
@@ -263,7 +262,10 @@ fn test_bouncing(#[case] initial_bouncer_weights: BouncerWeights, #[case] n_even
     let block_context = BlockContext::create_for_bouncer_testing(max_n_events_in_block);
 
     let TestInitData { state, account_address, contract_address, mut nonce_manager } =
-        create_test_init_data(&block_context.chain_info, CairoVersion::Cairo1);
+        create_test_init_data(
+            &block_context.chain_info,
+            CairoVersion::Cairo1(RunnableCairo1::Casm),
+        );
 
     // TODO(Yoni, 15/6/2024): turn on concurrency mode.
     let mut tx_executor =
@@ -291,8 +293,10 @@ fn test_execute_txs_bouncing(#[values(true, false)] concurrency_enabled: bool) {
     let max_n_events_in_block = 10;
     let block_context = BlockContext::create_for_bouncer_testing(max_n_events_in_block);
 
-    let TestInitData { state, account_address, contract_address, .. } =
-        create_test_init_data(&block_context.chain_info, CairoVersion::Cairo1);
+    let TestInitData { state, account_address, contract_address, .. } = create_test_init_data(
+        &block_context.chain_info,
+        CairoVersion::Cairo1(RunnableCairo1::Casm),
+    );
 
     let mut tx_executor = TransactionExecutor::new(state, block_context, config);
 
@@ -363,4 +367,46 @@ fn test_execute_txs_bouncing(#[values(true, false)] concurrency_enabled: bool) {
             .unwrap(),
         nonce!(4_u32)
     );
+}
+
+#[cfg(feature = "cairo_native")]
+#[rstest::rstest]
+/// Tests that Native can handle deep recursion calls without causing a stack overflow.
+/// The recursive function must be complex enough to prevent the compiler from optimizing it into a
+/// loop. This function was manually tested with increased maximum gas to ensure it reaches a stack
+/// overflow.
+///
+/// Note: Testing the VM is unnecessary here as it simulates the stack where the stack in the heap
+/// as a memory segment.
+fn test_stack_overflow(#[values(true, false)] concurrency_enabled: bool) {
+    let block_context = BlockContext::create_for_account_testing();
+    let cairo_version = CairoVersion::Cairo1(RunnableCairo1::Native);
+    let TestInitData { state, account_address, contract_address, mut nonce_manager } =
+        create_test_init_data(&block_context.chain_info, cairo_version);
+    let depth = felt!(1000000_u128);
+    let entry_point_args = vec![depth];
+    let calldata = create_calldata(contract_address, "test_stack_overflow", &entry_point_args);
+    let invoke_tx = executable_invoke_tx(invoke_tx_args! {
+        sender_address: account_address,
+        calldata,
+        nonce: nonce_manager.next(account_address),
+    });
+    let account_tx = AccountTransaction::new_for_sequencing(invoke_tx);
+    // Ensure the transaction is allocated the maximum gas limits.
+    assert!(
+        account_tx.resource_bounds().get_l2_bounds().max_amount
+            >= block_context.versioned_constants.os_constants.execute_max_sierra_gas
+                + block_context.versioned_constants.os_constants.validate_max_sierra_gas
+    );
+    // Run.
+    let config = TransactionExecutorConfig::create_for_testing(concurrency_enabled);
+    let mut executor = TransactionExecutor::new(state, block_context, config);
+    let results = executor.execute_txs(&vec![account_tx.into()]);
+
+    let (tx_execution_info, _state_diff) = results[0].as_ref().unwrap();
+    assert!(tx_execution_info.is_reverted());
+    let err = tx_execution_info.revert_error.clone().unwrap().to_string();
+
+    // Recursion is terminated by resource bounds before stack overflow occurs.
+    assert!(err.contains("'Out of gas'"));
 }

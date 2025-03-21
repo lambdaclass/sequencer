@@ -1,7 +1,10 @@
 use ethnum::U256;
 use serde::{Deserialize, Serialize};
+use starknet_patricia_storage::db_object::{DBObject, HasDynamicPrefix};
+use starknet_patricia_storage::errors::DeserializationError;
+use starknet_patricia_storage::storage_trait::{DbKey, DbKeyPrefix, DbValue};
+use starknet_types_core::felt::Felt;
 
-use crate::felt::Felt;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::filled_tree::node::FilledNode;
 use crate::patricia_merkle_tree::node_data::inner_node::{
@@ -12,9 +15,6 @@ use crate::patricia_merkle_tree::node_data::inner_node::{
     PathToBottom,
 };
 use crate::patricia_merkle_tree::node_data::leaf::Leaf;
-use crate::storage::db_object::DBObject;
-use crate::storage::errors::DeserializationError;
-use crate::storage::storage_trait::{StarknetPrefix, StorageKey, StorageValue};
 
 // Const describe the size of the serialized node.
 pub(crate) const SERIALIZE_HASH_BYTES: usize = 32;
@@ -24,6 +24,21 @@ pub(crate) const EDGE_PATH_BYTES: usize = 32;
 pub(crate) const EDGE_BYTES: usize = SERIALIZE_HASH_BYTES + EDGE_PATH_BYTES + EDGE_LENGTH_BYTES;
 #[allow(dead_code)]
 pub(crate) const STORAGE_LEAF_SIZE: usize = SERIALIZE_HASH_BYTES;
+
+#[derive(Debug)]
+pub enum PatriciaPrefix {
+    InnerNode,
+    Leaf(DbKeyPrefix),
+}
+
+impl From<PatriciaPrefix> for DbKeyPrefix {
+    fn from(value: PatriciaPrefix) -> Self {
+        match value {
+            PatriciaPrefix::InnerNode => Self::new(b"patricia_node"),
+            PatriciaPrefix::Leaf(prefix) => prefix,
+        }
+    }
+}
 
 /// Temporary struct to serialize the leaf CompiledClass.
 /// Required to comply to existing storage layout.
@@ -37,8 +52,18 @@ impl<L: Leaf> FilledNode<L> {
         self.hash.0.to_bytes_be()
     }
 
-    pub fn db_key(&self) -> StorageKey {
+    pub fn db_key(&self) -> DbKey {
         self.get_db_key(&self.suffix())
+    }
+}
+
+impl<L: Leaf> HasDynamicPrefix for FilledNode<L> {
+    fn get_prefix(&self) -> DbKeyPrefix {
+        match &self.data {
+            NodeData::Binary(_) | NodeData::Edge(_) => PatriciaPrefix::InnerNode,
+            NodeData::Leaf(_) => PatriciaPrefix::Leaf(L::get_static_prefix()),
+        }
+        .into()
     }
 }
 
@@ -47,7 +72,7 @@ impl<L: Leaf> DBObject for FilledNode<L> {
     /// - For binary nodes: Concatenates left and right hashes.
     /// - For edge nodes: Concatenates bottom hash, path, and path length.
     /// - For leaf nodes: use leaf.serialize() method.
-    fn serialize(&self) -> StorageValue {
+    fn serialize(&self) -> DbValue {
         match &self.data {
             NodeData::Binary(BinaryData { left_hash, right_hash }) => {
                 // Serialize left and right hashes to byte arrays.
@@ -56,7 +81,7 @@ impl<L: Leaf> DBObject for FilledNode<L> {
 
                 // Concatenate left and right hashes.
                 let serialized = [left, right].concat();
-                StorageValue(serialized)
+                DbValue(serialized)
             }
 
             NodeData::Edge(EdgeData { bottom_hash, path_to_bottom }) => {
@@ -68,19 +93,10 @@ impl<L: Leaf> DBObject for FilledNode<L> {
 
                 // Concatenate bottom hash, path, and path length.
                 let serialized = [bottom.to_vec(), path.to_vec(), length.to_vec()].concat();
-                StorageValue(serialized)
+                DbValue(serialized)
             }
 
             NodeData::Leaf(leaf_data) => leaf_data.serialize(),
-        }
-    }
-
-    fn get_prefix(&self) -> Vec<u8> {
-        match &self.data {
-            NodeData::Binary(_) | NodeData::Edge(_) => {
-                StarknetPrefix::InnerNode.to_storage_prefix()
-            }
-            NodeData::Leaf(leaf_data) => leaf_data.get_prefix(),
         }
     }
 }
@@ -89,7 +105,7 @@ impl<L: Leaf> FilledNode<L> {
     /// Deserializes filled nodes.
     pub(crate) fn deserialize(
         node_hash: HashOutput,
-        value: &StorageValue,
+        value: &DbValue,
         is_leaf: bool,
     ) -> Result<Self, DeserializationError> {
         if is_leaf {
@@ -130,8 +146,10 @@ impl<L: Leaf> FilledNode<L> {
                                 .expect("Slice with incorrect length."),
                         )
                         .into(),
-                        EdgePathLength::new(value.0[EDGE_BYTES - 1])?,
-                    )?,
+                        EdgePathLength::new(value.0[EDGE_BYTES - 1])
+                            .map_err(|error| DeserializationError::ValueError(Box::new(error)))?,
+                    )
+                    .map_err(|error| DeserializationError::ValueError(Box::new(error)))?,
                 }),
             })
         }

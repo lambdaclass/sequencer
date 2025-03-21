@@ -4,7 +4,7 @@ use std::time::Duration;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::ToSwarm;
+use libp2p::swarm::{ConnectionId, ToSwarm};
 use libp2p::PeerId;
 use papyrus_config::converters::{
     deserialize_milliseconds_to_duration,
@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 pub use self::behaviour_impl::ToOtherBehaviourEvent;
-use self::peer::PeerTrait;
 use crate::discovery::identify_impl::IdentifyToOtherBehaviourEvent;
 use crate::mixed_behaviour::BridgedBehaviour;
 use crate::sqmr::OutboundSessionId;
@@ -43,7 +42,7 @@ pub enum ReputationModifier {
 
 pub struct PeerManager {
     peers: HashMap<PeerId, Peer>,
-    // TODO: consider implementing a cleanup mechanism to not store all queries forever
+    // TODO(Shahak): consider implementing a cleanup mechanism to not store all queries forever
     session_to_peer_map: HashMap<OutboundSessionId, PeerId>,
     config: PeerManagerConfig,
     last_peer_index: usize,
@@ -52,6 +51,8 @@ pub struct PeerManager {
     peers_pending_dial_with_sessions: HashMap<PeerId, Vec<OutboundSessionId>>,
     sessions_received_when_no_peers: Vec<OutboundSessionId>,
     sleep_waiting_for_unblocked_peer: Option<BoxFuture<'static, ()>>,
+    // A peer is known only after we get the identify message.
+    connections_for_unknown_peers: HashMap<PeerId, Vec<ConnectionId>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -75,8 +76,8 @@ pub(crate) enum PeerManagerError {
 impl Default for PeerManagerConfig {
     fn default() -> Self {
         Self {
-            // 1 year.
-            malicious_timeout_seconds: Duration::from_secs(3600 * 24 * 365),
+            // TODO(shahak): Increase this once we're in a non-trusted setup.
+            malicious_timeout_seconds: Duration::from_secs(1),
             unstable_timeout_millis: Duration::from_millis(1000),
         }
     }
@@ -114,6 +115,7 @@ impl PeerManager {
             peers_pending_dial_with_sessions: HashMap::new(),
             sessions_received_when_no_peers: Vec::new(),
             sleep_waiting_for_unblocked_peer: None,
+            connections_for_unknown_peers: HashMap::default(),
         }
     }
 
@@ -135,7 +137,7 @@ impl PeerManager {
     // TODO(shahak): Remove return value and use events in tests.
     // TODO(shahak): Split this function for readability.
     fn assign_peer_to_session(&mut self, outbound_session_id: OutboundSessionId) -> Option<PeerId> {
-        // TODO: consider moving this logic to be async (on a different tokio task)
+        // TODO(Shahak): consider moving this logic to be async (on a different tokio task)
         // until then we can return the assignment even if we use events for the notification.
         if self.peers.is_empty() {
             info!("No peers. Waiting for a new peer to be connected for {outbound_session_id:?}");
@@ -169,15 +171,11 @@ impl PeerManager {
             return None;
         }
         peer.map(|(peer_id, peer)| {
-            // TODO: consider not allowing reassignment of the same session
+            // TODO(Shahak): consider not allowing reassignment of the same session
             self.session_to_peer_map.insert(outbound_session_id, *peer_id);
             let peer_connection_ids = peer.connection_ids();
             if !peer_connection_ids.is_empty() {
                 let connection_id = peer_connection_ids[0];
-                info!(
-                    "Session {:?} assigned to peer {:?} with connection id: {:?}",
-                    outbound_session_id, peer_id, connection_id
-                );
                 self.pending_events.push(ToSwarm::GenerateEvent(
                     ToOtherBehaviourEvent::SessionAssigned {
                         outbound_session_id,
@@ -215,18 +213,22 @@ impl PeerManager {
         peer_id: PeerId,
         reason: ReputationModifier,
     ) -> Result<(), PeerManagerError> {
-        self.pending_events
-            .push(ToSwarm::GenerateEvent(ToOtherBehaviourEvent::PeerBlacklisted { peer_id }));
         if let Some(peer) = self.peers.get_mut(&peer_id) {
             match reason {
                 ReputationModifier::Misconduct { misconduct_score } => {
                     peer.report(misconduct_score);
                     if peer.is_malicious() {
+                        self.pending_events.push(ToSwarm::GenerateEvent(
+                            ToOtherBehaviourEvent::PeerBlacklisted { peer_id },
+                        ));
                         peer.blacklist_peer(self.config.malicious_timeout_seconds);
                         peer.reset_misconduct_score();
                     }
                 }
                 ReputationModifier::Unstable => {
+                    self.pending_events.push(ToSwarm::GenerateEvent(
+                        ToOtherBehaviourEvent::PeerBlacklisted { peer_id },
+                    ));
                     peer.blacklist_peer(self.config.unstable_timeout_millis);
                 }
             }
@@ -281,7 +283,10 @@ impl BridgedBehaviour for PeerManager {
                     return;
                 };
 
-                let peer = Peer::new(*peer_id, address.clone());
+                let mut peer = Peer::new(*peer_id, address.clone());
+                if let Some(connection_ids) = self.connections_for_unknown_peers.remove(peer_id) {
+                    *peer.connection_ids_mut() = connection_ids;
+                }
                 self.add_peer(peer);
             }
             _ => {}

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::executable_transaction::AccountTransaction as ApiTransaction;
+use starknet_api::execution_resources::GasAmount;
 use thiserror::Error;
 
 use crate::blockifier::config::TransactionExecutorConfig;
@@ -52,34 +53,31 @@ impl<S: StateReader> StatefulValidator<S> {
         Self { tx_executor }
     }
 
-    pub fn perform_validations(
-        &mut self,
-        tx: AccountTransaction,
-        skip_validate: bool,
-    ) -> StatefulValidatorResult<()> {
+    pub fn perform_validations(&mut self, tx: AccountTransaction) -> StatefulValidatorResult<()> {
         // Deploy account transactions should be fully executed, since the constructor must run
         // before `__validate_deploy__`. The execution already includes all necessary validations,
         // so they are skipped here.
         if let ApiTransaction::DeployAccount(_) = tx.tx {
-            self.execute(tx)?;
-            return Ok(());
+            return self.execute(tx);
         }
 
-        let tx_context = self.tx_executor.block_context.to_tx_context(&tx);
-        self.perform_pre_validation_stage(&tx, &tx_context)?;
-
-        if skip_validate {
+        let tx_context = Arc::new(self.tx_executor.block_context.to_tx_context(&tx));
+        tx.perform_pre_validation_stage(self.state(), &tx_context)?;
+        if !tx.execution_flags.validate {
             return Ok(());
         }
 
         // `__validate__` call.
-        let (_optional_call_info, actual_cost) =
-            self.validate(&tx, tx_context.initial_sierra_gas())?;
+        let (_optional_call_info, actual_cost) = self.validate(&tx, tx_context.clone())?;
 
         // Post validations.
-        PostValidationReport::verify(&tx_context, &actual_cost)?;
+        PostValidationReport::verify(&tx_context, &actual_cost, tx.execution_flags.charge_fee)?;
 
         Ok(())
+    }
+
+    fn state(&mut self) -> &mut CachedState<S> {
+        self.tx_executor.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR)
     }
 
     fn execute(&mut self, tx: AccountTransaction) -> StatefulValidatorResult<()> {
@@ -87,53 +85,27 @@ impl<S: StateReader> StatefulValidator<S> {
         Ok(())
     }
 
-    fn perform_pre_validation_stage(
-        &mut self,
-        tx: &AccountTransaction,
-        tx_context: &TransactionContext,
-    ) -> StatefulValidatorResult<()> {
-        let strict_nonce_check = false;
-        // Run pre-validation in charge fee mode to perform fee and balance related checks.
-        let charge_fee = tx.enforce_fee();
-        tx.perform_pre_validation_stage(
-            self.tx_executor.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
-            tx_context,
-            charge_fee,
-            strict_nonce_check,
-        )?;
-
-        Ok(())
-    }
-
     fn validate(
         &mut self,
         tx: &AccountTransaction,
-        mut remaining_gas: u64,
+        tx_context: Arc<TransactionContext>,
     ) -> StatefulValidatorResult<(Option<CallInfo>, TransactionReceipt)> {
-        let tx_context = Arc::new(self.tx_executor.block_context.to_tx_context(tx));
-
-        let limit_steps_by_resources = tx.enforce_fee();
         let validate_call_info = tx.validate_tx(
-            self.tx_executor.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
+            self.state(),
             tx_context.clone(),
-            &mut remaining_gas,
-            limit_steps_by_resources,
+            &mut tx_context.initial_sierra_gas().0,
         )?;
 
         let tx_receipt = TransactionReceipt::from_account_tx(
             tx,
             &tx_context,
-            &self
-                .tx_executor
-                .block_state
-                .as_mut()
-                .expect(BLOCK_STATE_ACCESS_ERR)
-                .get_actual_state_changes()?,
+            &self.state().get_actual_state_changes()?,
             CallInfo::summarize_many(
                 validate_call_info.iter(),
                 &tx_context.block_context.versioned_constants,
             ),
             0,
+            GasAmount(0),
         );
 
         Ok((validate_call_info, tx_receipt))
@@ -143,11 +115,6 @@ impl<S: StateReader> StatefulValidator<S> {
         &mut self,
         account_address: ContractAddress,
     ) -> StatefulValidatorResult<Nonce> {
-        Ok(self
-            .tx_executor
-            .block_state
-            .as_ref()
-            .expect(BLOCK_STATE_ACCESS_ERR)
-            .get_nonce_at(account_address)?)
+        Ok(self.state().get_nonce_at(account_address)?)
     }
 }

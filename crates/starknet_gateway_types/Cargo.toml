@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
-axum.workspace = true
 enum-assoc.workspace = true
 mockall = { workspace = true, optional = true }
 papyrus_network_types.workspace = true
@@ -27,5 +26,4 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-# Enable self with "testing" feature in tests.
-starknet_gateway_types = { workspace = true, features = ["testing"] }
+mockall.workspace = true

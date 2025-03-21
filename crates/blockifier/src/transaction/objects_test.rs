@@ -6,6 +6,7 @@ use starknet_api::transaction::L2ToL1Payload;
 use starknet_api::{class_hash, contract_address, storage_key};
 use starknet_types_core::felt::Felt;
 
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::execution::call_info::{
     CallExecution,
     CallInfo,
@@ -15,14 +16,14 @@ use crate::execution::call_info::{
     MessageToL1,
     OrderedEvent,
     OrderedL2ToL1Message,
+    StorageAccessTracker,
 };
 use crate::execution::entry_point::CallEntryPoint;
 use crate::transaction::objects::TransactionExecutionInfo;
-use crate::versioned_constants::VersionedConstants;
 
 #[derive(Debug, Default)]
 pub struct TestExecutionSummary {
-    pub gas_for_fee: GasAmount,
+    pub gas_consumed: GasAmount,
     pub num_of_events: usize,
     pub num_of_messages: usize,
     pub class_hash: ClassHash,
@@ -32,7 +33,7 @@ pub struct TestExecutionSummary {
 
 impl TestExecutionSummary {
     pub fn new(
-        gas_for_fee: u64,
+        gas_consumed: u64,
         num_of_events: usize,
         num_of_messages: usize,
         class_hash: ClassHash,
@@ -40,7 +41,7 @@ impl TestExecutionSummary {
         storage_key: &str,
     ) -> Self {
         TestExecutionSummary {
-            gas_for_fee: GasAmount(gas_for_fee),
+            gas_consumed: GasAmount(gas_consumed),
             num_of_events,
             num_of_messages,
             class_hash,
@@ -67,13 +68,13 @@ impl TestExecutionSummary {
                         },
                     })
                     .collect(),
+                gas_consumed: self.gas_consumed.0,
                 ..Default::default()
             },
-            charged_resources: ChargedResources {
-                gas_for_fee: self.gas_for_fee,
+            storage_access_tracker: StorageAccessTracker {
+                accessed_storage_keys: vec![self.storage_key].into_iter().collect(),
                 ..Default::default()
             },
-            accessed_storage_keys: vec![self.storage_key].into_iter().collect(),
             ..Default::default()
         }
     }
@@ -201,9 +202,9 @@ fn test_summarize(
 
     let expected_summary = ExecutionSummary {
         charged_resources: ChargedResources {
-            gas_for_fee: validate_params.gas_for_fee
-                + execute_params.gas_for_fee
-                + fee_transfer_params.gas_for_fee,
+            gas_consumed: validate_params.gas_consumed
+                + execute_params.gas_consumed
+                + fee_transfer_params.gas_consumed,
             ..Default::default()
         },
         executed_class_hashes: vec![

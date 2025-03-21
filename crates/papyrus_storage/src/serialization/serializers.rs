@@ -163,6 +163,8 @@ auto_storage_serde! {
         pub l1_gas_price: GasPricePerToken,
         pub l1_data_gas_price: GasPricePerToken,
         pub l2_gas_price: GasPricePerToken,
+        pub l2_gas_consumed: u64,
+        pub next_l2_gas_price: u64,
         pub state_root: GlobalRoot,
         pub sequencer: SequencerContractAddress,
         pub timestamp: BlockTimestamp,
@@ -325,6 +327,8 @@ auto_storage_serde! {
         Class = 4,
         CompiledClass = 5,
         BaseLayerBlock = 6,
+        ClassManagerBlock = 7,
+        CompilerBackwardCompatibility = 8,
     }
     pub struct MessageToL1 {
         pub to_address: EthAddress,
@@ -412,6 +416,8 @@ auto_storage_serde! {
         V0_13_2_1 = 17,
         V0_13_3 = 18,
         V0_13_4 = 19,
+        V0_13_5 = 20,
+        V0_14_0 = 21,
     }
     pub struct StateDiffCommitment(pub PoseidonHash);
     pub struct Tip(pub u64);
@@ -1101,7 +1107,6 @@ impl StorageSerde for ThinStateDiff {
         self.declared_classes.serialize_into(&mut to_compress)?;
         self.deprecated_declared_classes.serialize_into(&mut to_compress)?;
         self.nonces.serialize_into(&mut to_compress)?;
-        self.replaced_classes.serialize_into(&mut to_compress)?;
         if to_compress.len() > crate::compression_utils::MAX_DECOMPRESSED_SIZE {
             warn!(
                 "ThinStateDiff serialization size is too large and will lead to deserialization \
@@ -1125,7 +1130,6 @@ impl StorageSerde for ThinStateDiff {
             declared_classes: IndexMap::deserialize_from(data)?,
             deprecated_declared_classes: Vec::deserialize_from(data)?,
             nonces: IndexMap::deserialize_from(data)?,
-            replaced_classes: IndexMap::deserialize_from(data)?,
         })
     }
 }

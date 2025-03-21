@@ -1,14 +1,35 @@
 use std::fs::File;
 use std::process::Command;
 
-pub(crate) use alloy_primitives::Address as EthereumContractAddress;
+use alloy::node_bindings::{Anvil, AnvilInstance, NodeError as AnvilError};
+pub(crate) use alloy::primitives::Address as EthereumContractAddress;
+use alloy::providers::RootProvider;
+use alloy::transports::http::{Client, Http};
+use colored::*;
 use ethers::utils::{Ganache, GanacheInstance};
 use tar::Archive;
 use tempfile::{tempdir, TempDir};
+use url::Url;
+
+use crate::ethereum_base_layer_contract::{
+    EthereumBaseLayerConfig,
+    EthereumBaseLayerContract,
+    Starknet,
+};
 
 type TestEthereumNodeHandle = (GanacheInstance, TempDir);
 
 const MINIMAL_GANACHE_VERSION: u8 = 7;
+
+// See Anvil documentation:
+// https://docs.rs/ethers-core/latest/ethers_core/utils/struct.Anvil.html#method.new.
+const DEFAULT_ANVIL_PORT: u16 = 8545;
+// This address is commonly used as the L1 address of the Starknet core contract.
+pub const DEFAULT_ANVIL_L1_DEPLOYED_ADDRESS: &str = "0x5fbdb2315678afecb367f032d93f642f64180aa3";
+
+/// An interface that plays the role of the starknet L1 contract. It is able to create messages to
+/// L2 from this contract, which appear on the corresponding base layer.
+pub type StarknetL1Contract = Starknet::StarknetInstance<Http<Client>, RootProvider<Http<Client>>>;
 
 // Returns a Ganache instance, preset with a Starknet core contract and some state updates:
 // Starknet contract address: 0xe2aF2c1AE11fE13aFDb7598D0836398108a4db0A
@@ -18,9 +39,9 @@ const MINIMAL_GANACHE_VERSION: u8 = 7;
 //      30                      300                     0x300
 // The blockchain is at Ethereum block number 31.
 // Note: Requires Ganache@7.4.3 installed.
-// TODO: `Ganache` and `ethers` have both been deprecated. Also, `ethers`s' replacement, `alloy`,
-// no longer supports `Ganache`. Once we decide on a Ganache replacement, fix this test and fully
-// remove `ethers`.
+// TODO(Gilad): `Ganache` and `ethers` have both been deprecated. Also, `ethers`s' replacement,
+// `alloy`, no longer supports `Ganache`. Once we decide on a Ganache replacement, fix this test and
+// fully remove `ethers`.
 pub fn get_test_ethereum_node() -> (TestEthereumNodeHandle, EthereumContractAddress) {
     const SN_CONTRACT_ADDR: &str = "0xe2aF2c1AE11fE13aFDb7598D0836398108a4db0A";
     // Verify correct Ganache version.
@@ -60,4 +81,56 @@ pub fn get_test_ethereum_node() -> (TestEthereumNodeHandle, EthereumContractAddr
     let ganache = Ganache::new().args(["--db", db_path.to_str().unwrap()]).spawn();
 
     ((ganache, ganache_db), SN_CONTRACT_ADDR.to_string().parse().unwrap())
+}
+
+// TODO(Arni): Make port non-optional.
+// Spin up Anvil instance, a local Ethereum node, dies when dropped.
+fn anvil(port: Option<u16>) -> AnvilInstance {
+    let mut anvil = Anvil::new();
+    // If the port is not set explicitly, a random value will be used.
+    if let Some(port) = port {
+        anvil = anvil.port(port);
+    }
+
+    anvil.try_spawn().unwrap_or_else(|error| match error {
+        AnvilError::SpawnError(e) if e.to_string().contains("No such file or directory") => {
+            panic!(
+                "\n{}\n{}\n",
+                "Anvil binary not found!".bold().red(),
+                "Install instructions (for local development):\n
+                 cargo install --git \
+                 https://github.com/foundry-rs/foundry anvil --locked --tag=v0.3.0"
+                    .yellow()
+            )
+        }
+        _ => panic!("Failed to spawn Anvil: {}", error.to_string().red()),
+    })
+}
+
+pub fn ethereum_base_layer_config_for_anvil(port: Option<u16>) -> EthereumBaseLayerConfig {
+    // Use the specified port if provided; otherwise, default to Anvil's default port.
+    let non_optional_port = port.unwrap_or(DEFAULT_ANVIL_PORT);
+    let endpoint = format!("http://localhost:{}", non_optional_port);
+    EthereumBaseLayerConfig {
+        node_url: Url::parse(&endpoint).unwrap(),
+        starknet_contract_address: DEFAULT_ANVIL_L1_DEPLOYED_ADDRESS.parse().unwrap(),
+    }
+}
+
+pub fn anvil_instance_from_config(config: &EthereumBaseLayerConfig) -> AnvilInstance {
+    let port = config.node_url.port();
+    let anvil = anvil(port);
+    assert_eq!(config.node_url, anvil.endpoint_url(), "Unexpected config for Anvil instance.");
+    anvil
+}
+
+pub async fn spawn_anvil_and_deploy_starknet_l1_contract(
+    config: &EthereumBaseLayerConfig,
+) -> (AnvilInstance, StarknetL1Contract) {
+    let anvil = anvil_instance_from_config(config);
+    let ethereum_base_layer_contract = EthereumBaseLayerContract::new(config.clone());
+    let starknet_l1_contract =
+        Starknet::deploy(ethereum_base_layer_contract.contract.provider().clone()).await.unwrap();
+
+    (anvil, starknet_l1_contract)
 }

@@ -12,7 +12,6 @@
 mod execution_test;
 pub mod execution_utils;
 mod state_reader;
-
 #[cfg(test)]
 mod test_utils;
 #[cfg(any(feature = "testing", test))]
@@ -23,7 +22,8 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use blockifier::blockifier::block::{pre_process_block, BlockInfo, GasPrices};
+use blockifier::blockifier::block::{pre_process_block, validated_gas_prices};
+use blockifier::blockifier_versioned_constants::{VersionedConstants, VersionedConstantsError};
 use blockifier::bouncer::BouncerConfig;
 use blockifier::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
 use blockifier::execution::call_info::CallExecution;
@@ -31,8 +31,10 @@ use blockifier::execution::entry_point::{
     CallEntryPoint,
     CallType as BlockifierCallType,
     EntryPointExecutionContext,
+    SierraGasRevertTracker,
 };
 use blockifier::state::cached_state::CachedState;
+use blockifier::transaction::account_transaction::ExecutionFlags;
 use blockifier::transaction::errors::TransactionExecutionError as BlockifierTransactionExecutionError;
 use blockifier::transaction::objects::{
     DeprecatedTransactionInfo,
@@ -41,7 +43,6 @@ use blockifier::transaction::objects::{
 };
 use blockifier::transaction::transaction_execution::Transaction as BlockifierTransaction;
 use blockifier::transaction::transactions::ExecutableTransaction;
-use blockifier::versioned_constants::{VersionedConstants, VersionedConstantsError};
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use cairo_vm::types::builtin_name::BuiltinName;
 use execution_utils::{get_trace_constructor, induced_state_diff};
@@ -51,11 +52,18 @@ use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use papyrus_storage::header::HeaderStorageReader;
 use papyrus_storage::{StorageError, StorageReader};
 use serde::{Deserialize, Serialize};
-use starknet_api::block::{BlockHashAndNumber, BlockNumber, NonzeroGasPrice, StarknetVersion};
-use starknet_api::contract_class::{ClassInfo, EntryPointType};
+use starknet_api::block::{
+    BlockHashAndNumber,
+    BlockInfo,
+    BlockNumber,
+    NonzeroGasPrice,
+    StarknetVersion,
+};
+use starknet_api::contract_class::{ClassInfo, EntryPointType, SierraVersion};
 use starknet_api::core::{ChainId, ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::data_availability::L1DataAvailabilityMode;
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::state::{StateNumber, ThinStateDiff};
 use starknet_api::transaction::fields::{Calldata, Fee};
 use starknet_api::transaction::{
@@ -266,8 +274,9 @@ pub fn execute_call(
     let limit_steps_by_resources = false; // Default resource bounds.
 
     let mut context = EntryPointExecutionContext::new_invoke(
-        Arc::new(TransactionContext { block_context, tx_info }),
+        Arc::new(TransactionContext { block_context: Arc::new(block_context), tx_info }),
         limit_steps_by_resources,
+        SierraGasRevertTracker::new(GasAmount(remaining_gas)),
     );
 
     let res = call_entry_point
@@ -369,7 +378,7 @@ fn create_block_context(
         use_kzg_da,
         block_number,
         // TODO(yair): What to do about blocks pre 0.13.1 where the data gas price were 0?
-        gas_prices: GasPrices::new(
+        gas_prices: validated_gas_prices(
             NonzeroGasPrice::new(l1_gas_price.price_in_wei).unwrap_or(NonzeroGasPrice::MIN),
             NonzeroGasPrice::new(l1_gas_price.price_in_fri).unwrap_or(NonzeroGasPrice::MIN),
             NonzeroGasPrice::new(l1_data_gas_price.price_in_wei).unwrap_or(NonzeroGasPrice::MIN),
@@ -399,7 +408,12 @@ fn create_block_context(
     );
     let next_block_number = block_context.block_info().block_number;
 
-    pre_process_block(cached_state, ten_blocks_ago, next_block_number)?;
+    pre_process_block(
+        cached_state,
+        ten_blocks_ago,
+        next_block_number,
+        &versioned_constants.os_constants,
+    )?;
     Ok(block_context)
 }
 
@@ -422,8 +436,22 @@ pub enum ExecutableTransactionInput {
     // todo(yair): Do we need to support V0?
     DeclareV0(DeclareTransactionV0V1, DeprecatedContractClass, AbiSize, OnlyQuery),
     DeclareV1(DeclareTransactionV0V1, DeprecatedContractClass, AbiSize, OnlyQuery),
-    DeclareV2(DeclareTransactionV2, CasmContractClass, SierraSize, AbiSize, OnlyQuery),
-    DeclareV3(DeclareTransactionV3, CasmContractClass, SierraSize, AbiSize, OnlyQuery),
+    DeclareV2(
+        DeclareTransactionV2,
+        CasmContractClass,
+        SierraSize,
+        AbiSize,
+        OnlyQuery,
+        SierraVersion,
+    ),
+    DeclareV3(
+        DeclareTransactionV3,
+        CasmContractClass,
+        SierraSize,
+        AbiSize,
+        OnlyQuery,
+        SierraVersion,
+    ),
     DeployAccount(DeployAccountTransaction, OnlyQuery),
     L1Handler(L1HandlerTransaction, Fee, OnlyQuery),
 }
@@ -479,13 +507,24 @@ impl ExecutableTransactionInput {
                 sierra_program_length,
                 abi_length,
                 only_query,
+                sierra_version,
             ) => {
                 let as_transaction = Transaction::Declare(DeclareTransaction::V2(tx));
                 let res = func(&as_transaction, only_query);
                 let Transaction::Declare(DeclareTransaction::V2(tx)) = as_transaction else {
                     unreachable!("Should be declare v2 transaction.")
                 };
-                (Self::DeclareV2(tx, class, sierra_program_length, abi_length, only_query), res)
+                (
+                    Self::DeclareV2(
+                        tx,
+                        class,
+                        sierra_program_length,
+                        abi_length,
+                        only_query,
+                        sierra_version,
+                    ),
+                    res,
+                )
             }
             ExecutableTransactionInput::DeclareV3(
                 tx,
@@ -493,13 +532,24 @@ impl ExecutableTransactionInput {
                 sierra_program_length,
                 abi_length,
                 only_query,
+                sierra_version,
             ) => {
                 let as_transaction = Transaction::Declare(DeclareTransaction::V3(tx));
                 let res = func(&as_transaction, only_query);
                 let Transaction::Declare(DeclareTransaction::V3(tx)) = as_transaction else {
                     unreachable!("Should be declare v3 transaction.")
                 };
-                (Self::DeclareV3(tx, class, sierra_program_length, abi_length, only_query), res)
+                (
+                    Self::DeclareV3(
+                        tx,
+                        class,
+                        sierra_program_length,
+                        abi_length,
+                        only_query,
+                        sierra_version,
+                    ),
+                    res,
+                )
             }
             ExecutableTransactionInput::DeployAccount(tx, only_query) => {
                 let as_transaction = Transaction::DeployAccount(tx);
@@ -664,7 +714,7 @@ fn execute_transactions(
     for (transaction_index, (tx, tx_hash)) in txs.into_iter().zip(tx_hashes.into_iter()).enumerate()
     {
         let transaction_version = tx.transaction_version();
-        // TODO: consider supporting match instead.
+        // TODO(DanB): consider supporting match instead.
         let price_unit = if transaction_version == TransactionVersion::ZERO
             || transaction_version == TransactionVersion::ONE
             || transaction_version == TransactionVersion::TWO
@@ -689,10 +739,10 @@ fn execute_transactions(
             ) => Some(*class_hash),
             _ => None,
         };
-        let blockifier_tx = to_blockifier_tx(tx, tx_hash, transaction_index)?;
+        let blockifier_tx = to_blockifier_tx(tx, tx_hash, transaction_index, charge_fee, validate)?;
         // TODO(Yoni): use the TransactionExecutor instead.
         let tx_execution_info_result =
-            blockifier_tx.execute(&mut transactional_state, &block_context, charge_fee, validate);
+            blockifier_tx.execute(&mut transactional_state, &block_context);
         let state_diff =
             induced_state_diff(&mut transactional_state, deprecated_declared_class_hash)?;
         transactional_state.commit();
@@ -751,30 +801,37 @@ fn to_blockifier_tx(
     tx: ExecutableTransactionInput,
     tx_hash: TransactionHash,
     transaction_index: usize,
+    charge_fee: bool,
+    validate: bool,
 ) -> ExecutionResult<BlockifierTransaction> {
     // TODO(yair): support only_query version bit (enable in the RPC v0.6 and use the correct
     // value).
+    let strict_nonce_check = true;
     match tx {
         ExecutableTransactionInput::Invoke(invoke_tx, only_query) => {
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::Invoke(invoke_tx),
                 tx_hash,
                 None,
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
 
         ExecutableTransactionInput::DeployAccount(deploy_acc_tx, only_query) => {
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::DeployAccount(deploy_acc_tx),
                 tx_hash,
                 None,
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
@@ -789,19 +846,22 @@ fn to_blockifier_tx(
                 &deprecated_class.into(),
                 DEPRECATED_CONTRACT_SIERRA_SIZE,
                 abi_length,
+                SierraVersion::DEPRECATED,
             )
             .map_err(|err| ExecutionError::BadDeclareTransaction {
                 tx: DeclareTransaction::V0(declare_tx.clone()),
                 err,
             })?;
 
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::Declare(DeclareTransaction::V0(declare_tx)),
                 tx_hash,
                 Some(class_info),
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
@@ -815,18 +875,21 @@ fn to_blockifier_tx(
                 &deprecated_class.into(),
                 DEPRECATED_CONTRACT_SIERRA_SIZE,
                 abi_length,
+                SierraVersion::DEPRECATED,
             )
             .map_err(|err| ExecutionError::BadDeclareTransaction {
                 tx: DeclareTransaction::V1(declare_tx.clone()),
                 err,
             })?;
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::Declare(DeclareTransaction::V1(declare_tx)),
                 tx_hash,
                 Some(class_info),
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
@@ -836,21 +899,27 @@ fn to_blockifier_tx(
             sierra_program_length,
             abi_length,
             only_query,
+            sierra_version,
         ) => {
-            let class_info =
-                ClassInfo::new(&compiled_class.into(), sierra_program_length, abi_length).map_err(
-                    |err| ExecutionError::BadDeclareTransaction {
-                        tx: DeclareTransaction::V2(declare_tx.clone()),
-                        err,
-                    },
-                )?;
+            let class_info = ClassInfo::new(
+                &(compiled_class, sierra_version.clone()).into(),
+                sierra_program_length,
+                abi_length,
+                sierra_version,
+            )
+            .map_err(|err| ExecutionError::BadDeclareTransaction {
+                tx: DeclareTransaction::V2(declare_tx.clone()),
+                err,
+            })?;
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::Declare(DeclareTransaction::V2(declare_tx)),
                 tx_hash,
                 Some(class_info),
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
@@ -860,32 +929,40 @@ fn to_blockifier_tx(
             sierra_program_length,
             abi_length,
             only_query,
+            sierra_version,
         ) => {
-            let class_info =
-                ClassInfo::new(&compiled_class.into(), sierra_program_length, abi_length).map_err(
-                    |err| ExecutionError::BadDeclareTransaction {
-                        tx: DeclareTransaction::V3(declare_tx.clone()),
-                        err,
-                    },
-                )?;
+            let class_info = ClassInfo::new(
+                &(compiled_class, sierra_version.clone()).into(),
+                sierra_program_length,
+                abi_length,
+                sierra_version,
+            )
+            .map_err(|err| ExecutionError::BadDeclareTransaction {
+                tx: DeclareTransaction::V3(declare_tx.clone()),
+                err,
+            })?;
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::Declare(DeclareTransaction::V3(declare_tx)),
                 tx_hash,
                 Some(class_info),
                 None,
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }
         ExecutableTransactionInput::L1Handler(l1_handler_tx, paid_fee, only_query) => {
+            let execution_flags =
+                ExecutionFlags { only_query, charge_fee, validate, strict_nonce_check };
             BlockifierTransaction::from_api(
                 Transaction::L1Handler(l1_handler_tx),
                 tx_hash,
                 None,
                 Some(paid_fee),
                 None,
-                only_query,
+                execution_flags,
             )
             .map_err(|err| ExecutionError::from((transaction_index, err)))
         }

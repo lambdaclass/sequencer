@@ -1,8 +1,11 @@
 use ethnum::U256;
 use rand::rngs::ThreadRng;
 use rstest::{fixture, rstest};
+use starknet_patricia_storage::db_object::{DBObject, Deserializable, HasStaticPrefix};
+use starknet_patricia_storage::errors::DeserializationError;
+use starknet_patricia_storage::storage_trait::{DbKeyPrefix, DbValue};
+use starknet_types_core::felt::Felt;
 
-use crate::felt::Felt;
 use crate::generate_trie_config;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::external_test_utils::get_random_u256;
@@ -19,31 +22,25 @@ use crate::patricia_merkle_tree::updated_skeleton_tree::hash_function::{
 };
 use crate::patricia_merkle_tree::updated_skeleton_tree::node::UpdatedSkeletonNode;
 use crate::patricia_merkle_tree::updated_skeleton_tree::tree::UpdatedSkeletonTreeImpl;
-use crate::storage::db_object::{DBObject, Deserializable};
-use crate::storage::storage_trait::StorageValue;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default, Eq)]
 pub struct MockLeaf(pub(crate) Felt);
 
-impl DBObject for MockLeaf {
-    fn serialize(&self) -> StorageValue {
-        StorageValue(self.0.to_bytes_be().to_vec())
+impl HasStaticPrefix for MockLeaf {
+    fn get_static_prefix() -> DbKeyPrefix {
+        DbKeyPrefix::new(&[0])
     }
+}
 
-    fn get_prefix(&self) -> Vec<u8> {
-        vec![0]
+impl DBObject for MockLeaf {
+    fn serialize(&self) -> DbValue {
+        DbValue(self.0.to_bytes_be().to_vec())
     }
 }
 
 impl Deserializable for MockLeaf {
-    fn deserialize(
-        value: &StorageValue,
-    ) -> Result<Self, crate::storage::errors::DeserializationError> {
+    fn deserialize(value: &DbValue) -> Result<Self, DeserializationError> {
         Ok(Self(Felt::from_bytes_be_slice(&value.0)))
-    }
-
-    fn prefix() -> Vec<u8> {
-        vec![0]
     }
 }
 
@@ -60,7 +57,7 @@ impl Leaf for MockLeaf {
         if input == Felt::MAX {
             return Err(LeafError::LeafComputationError("Leaf computation error".to_string()));
         }
-        Ok((Self(input), input.to_hex()))
+        Ok((Self(input), input.to_hex_string()))
     }
 }
 

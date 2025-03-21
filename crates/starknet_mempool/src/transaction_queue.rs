@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
-use starknet_api::block::GasPrice;
+use starknet_api::block::NonzeroGasPrice;
 use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::transaction::fields::Tip;
 use starknet_api::transaction::TransactionHash;
@@ -15,9 +15,9 @@ pub mod transaction_queue_test_utils;
 // A queue holding the transaction that with nonces that match account nonces.
 // Note: the derived comparison functionality considers the order guaranteed by the data structures
 // used.
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
 pub struct TransactionQueue {
-    gas_price_threshold: GasPrice,
+    gas_price_threshold: NonzeroGasPrice,
     // Transactions with gas price above gas price threshold (sorted by tip).
     priority_queue: BTreeSet<PriorityTransaction>,
     // Transactions with gas price below gas price threshold (sorted by price).
@@ -47,6 +47,14 @@ impl TransactionQueue {
             new_tx_successfully_inserted,
             "Keys should be unique; duplicates are checked prior."
         );
+    }
+
+    pub fn priority_queue_len(&self) -> usize {
+        self.priority_queue.len()
+    }
+
+    pub fn pending_queue_len(&self) -> usize {
+        self.pending_queue.len()
     }
 
     // TODO(gilad): remove collect, if returning an iterator is possible.
@@ -81,11 +89,22 @@ impl TransactionQueue {
             || self.pending_queue.remove(&tx_reference.into())
     }
 
+    /// Removes the given transactions from the queue.
+    /// If a transaction is not found, it is ignored.
+    pub fn remove_txs(&mut self, txs: &[TransactionReference]) {
+        for tx in txs {
+            let queued_tx = self.address_to_tx.get(&tx.address);
+            if queued_tx.is_some_and(|queued_tx| queued_tx.tx_hash == tx.tx_hash) {
+                self.remove(tx.address);
+            };
+        }
+    }
+
     pub fn has_ready_txs(&self) -> bool {
         !self.priority_queue.is_empty()
     }
 
-    pub fn update_gas_price_threshold(&mut self, threshold: GasPrice) {
+    pub fn update_gas_price_threshold(&mut self, threshold: NonzeroGasPrice) {
         match threshold.cmp(&self.gas_price_threshold) {
             Ordering::Less => self.promote_txs_to_priority(threshold),
             Ordering::Greater => self.demote_txs_to_pending(threshold),
@@ -95,7 +114,7 @@ impl TransactionQueue {
         self.gas_price_threshold = threshold;
     }
 
-    fn promote_txs_to_priority(&mut self, threshold: GasPrice) {
+    fn promote_txs_to_priority(&mut self, threshold: NonzeroGasPrice) {
         let tmp_split_tx = PendingTransaction(TransactionReference {
             max_l2_gas_price: threshold,
             address: ContractAddress::default(),
@@ -114,7 +133,7 @@ impl TransactionQueue {
         self.priority_queue.extend(txs_over_threshold.map(|tx| PriorityTransaction::from(tx.0)));
     }
 
-    fn demote_txs_to_pending(&mut self, threshold: GasPrice) {
+    fn demote_txs_to_pending(&mut self, threshold: NonzeroGasPrice) {
         let mut txs_to_remove = Vec::new();
 
         // Remove all transactions from the priority queue that are below the threshold.

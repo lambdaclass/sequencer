@@ -5,53 +5,100 @@ use papyrus_config::{ParamPath, SerializedParam};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::config::component_execution_config::ComponentExecutionConfig;
+use crate::config::component_execution_config::{
+    ActiveComponentExecutionConfig,
+    ReactiveComponentExecutionConfig,
+};
 
 /// The components configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, Validate, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Validate, PartialEq)]
 pub struct ComponentConfig {
+    // Reactive component configs.
     #[validate]
-    pub batcher: ComponentExecutionConfig,
+    pub batcher: ReactiveComponentExecutionConfig,
     #[validate]
-    pub consensus_manager: ComponentExecutionConfig,
+    pub class_manager: ReactiveComponentExecutionConfig,
     #[validate]
-    pub gateway: ComponentExecutionConfig,
+    pub gateway: ReactiveComponentExecutionConfig,
     #[validate]
-    pub http_server: ComponentExecutionConfig,
+    pub mempool: ReactiveComponentExecutionConfig,
     #[validate]
-    pub mempool: ComponentExecutionConfig,
+    pub mempool_p2p: ReactiveComponentExecutionConfig,
     #[validate]
-    pub mempool_p2p: ComponentExecutionConfig,
+    pub sierra_compiler: ReactiveComponentExecutionConfig,
     #[validate]
-    pub monitoring_endpoint: ComponentExecutionConfig,
-}
+    pub state_sync: ReactiveComponentExecutionConfig,
+    #[validate]
+    pub l1_provider: ReactiveComponentExecutionConfig,
+    #[validate]
+    pub l1_gas_price_provider: ReactiveComponentExecutionConfig,
 
-impl Default for ComponentConfig {
-    fn default() -> Self {
-        Self {
-            batcher: ComponentExecutionConfig::batcher_default_config(),
-            consensus_manager: ComponentExecutionConfig::consensus_manager_default_config(),
-            gateway: ComponentExecutionConfig::gateway_default_config(),
-            http_server: ComponentExecutionConfig::http_server_default_config(),
-            mempool: ComponentExecutionConfig::mempool_default_config(),
-            mempool_p2p: ComponentExecutionConfig::mempool_p2p_default_config(),
-            monitoring_endpoint: ComponentExecutionConfig::monitoring_endpoint_default_config(),
-        }
-    }
+    // Active component configs.
+    #[validate]
+    pub consensus_manager: ActiveComponentExecutionConfig,
+    #[validate]
+    pub http_server: ActiveComponentExecutionConfig,
+    #[validate]
+    pub l1_scraper: ActiveComponentExecutionConfig,
+    #[validate]
+    pub l1_gas_price_scraper: ActiveComponentExecutionConfig,
+    #[validate]
+    pub monitoring_endpoint: ActiveComponentExecutionConfig,
 }
 
 impl SerializeConfig for ComponentConfig {
     fn dump(&self) -> BTreeMap<ParamPath, SerializedParam> {
         let sub_configs = vec![
             append_sub_config_name(self.batcher.dump(), "batcher"),
+            append_sub_config_name(self.class_manager.dump(), "class_manager"),
             append_sub_config_name(self.consensus_manager.dump(), "consensus_manager"),
             append_sub_config_name(self.gateway.dump(), "gateway"),
             append_sub_config_name(self.http_server.dump(), "http_server"),
             append_sub_config_name(self.mempool.dump(), "mempool"),
+            append_sub_config_name(self.l1_provider.dump(), "l1_provider"),
+            append_sub_config_name(self.l1_gas_price_provider.dump(), "l1_gas_price_provider"),
+            append_sub_config_name(self.l1_scraper.dump(), "l1_scraper"),
+            append_sub_config_name(self.l1_gas_price_scraper.dump(), "l1_gas_price_scraper"),
             append_sub_config_name(self.mempool_p2p.dump(), "mempool_p2p"),
             append_sub_config_name(self.monitoring_endpoint.dump(), "monitoring_endpoint"),
+            append_sub_config_name(self.sierra_compiler.dump(), "sierra_compiler"),
+            append_sub_config_name(self.state_sync.dump(), "state_sync"),
         ];
 
         sub_configs.into_iter().flatten().collect()
+    }
+}
+
+impl ComponentConfig {
+    pub fn disabled() -> ComponentConfig {
+        ComponentConfig {
+            batcher: ReactiveComponentExecutionConfig::disabled(),
+            class_manager: ReactiveComponentExecutionConfig::disabled(),
+            gateway: ReactiveComponentExecutionConfig::disabled(),
+            mempool: ReactiveComponentExecutionConfig::disabled(),
+            mempool_p2p: ReactiveComponentExecutionConfig::disabled(),
+            sierra_compiler: ReactiveComponentExecutionConfig::disabled(),
+            state_sync: ReactiveComponentExecutionConfig::disabled(),
+            l1_provider: ReactiveComponentExecutionConfig::disabled(),
+            l1_gas_price_provider: ReactiveComponentExecutionConfig::disabled(),
+            l1_scraper: ActiveComponentExecutionConfig::disabled(),
+            l1_gas_price_scraper: ActiveComponentExecutionConfig::disabled(),
+            consensus_manager: ActiveComponentExecutionConfig::disabled(),
+            http_server: ActiveComponentExecutionConfig::disabled(),
+            monitoring_endpoint: ActiveComponentExecutionConfig::disabled(),
+        }
+    }
+
+    #[cfg(any(feature = "testing", test))]
+    pub fn set_urls_to_localhost(&mut self) {
+        self.batcher.set_url_to_localhost();
+        self.class_manager.set_url_to_localhost();
+        self.gateway.set_url_to_localhost();
+        self.mempool.set_url_to_localhost();
+        self.mempool_p2p.set_url_to_localhost();
+        self.sierra_compiler.set_url_to_localhost();
+        self.state_sync.set_url_to_localhost();
+        self.l1_provider.set_url_to_localhost();
+        self.l1_gas_price_provider.set_url_to_localhost();
     }
 }

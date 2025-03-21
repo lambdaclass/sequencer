@@ -1,29 +1,21 @@
 use std::collections::HashMap;
 
-use starknet_patricia::felt::Felt;
+use starknet_api::core::{ClassHash, ContractAddress};
 use starknet_patricia::impl_from_hex_for_felt_wrapper;
 use starknet_patricia::patricia_merkle_tree::filled_tree::tree::FilledTreeImpl;
 use starknet_patricia::patricia_merkle_tree::types::NodeIndex;
-use starknet_types_core::felt::FromStrError;
+use starknet_types_core::felt::{Felt, FromStrError};
 
-use crate::block_committer::input::{ContractAddress, StarknetStorageValue};
+use crate::block_committer::input::StarknetStorageValue;
 use crate::patricia_merkle_tree::leaf::leaf_impl::ContractState;
 
-// TODO(Nimrod, 1/6/2024): Use the ClassHash defined in starknet-types-core when available.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ClassHash(pub Felt);
-
-impl From<&ClassHash> for NodeIndex {
-    fn from(val: &ClassHash) -> Self {
-        NodeIndex::from_leaf_felt(&val.0)
-    }
+pub fn fixed_hex_string_no_prefix(felt: &Felt) -> String {
+    format!("{:064x}", felt)
 }
 
-impl_from_hex_for_felt_wrapper!(ClassHash);
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Nonce(pub Felt);
-
-impl_from_hex_for_felt_wrapper!(Nonce);
+pub fn class_hash_into_node_index(class_hash: &ClassHash) -> NodeIndex {
+    NodeIndex::from_leaf_felt(&class_hash.0)
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CompiledClassHash(pub Felt);

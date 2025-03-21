@@ -1,8 +1,7 @@
-use blockifier::blockifier::block::BlockInfo;
 use blockifier::execution::contract_class::{
-    ContractClassV0,
-    ContractClassV1,
-    RunnableContractClass,
+    CompiledClassV0,
+    CompiledClassV1,
+    RunnableCompiledClass,
 };
 use blockifier::state::errors::StateError;
 use blockifier::state::state_api::{StateReader as BlockifierStateReader, StateResult};
@@ -10,9 +9,11 @@ use papyrus_rpc::CompiledContractClass;
 use reqwest::blocking::Client as BlockingClient;
 use serde::Serialize;
 use serde_json::{json, Value};
-use starknet_api::block::BlockNumber;
+use starknet_api::block::{BlockInfo, BlockNumber};
+use starknet_api::contract_class::SierraVersion;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
+use starknet_state_sync_types::communication::StateSyncClientResult;
 use starknet_types_core::felt::Felt;
 
 use crate::config::RpcStateReaderConfig;
@@ -22,7 +23,7 @@ use crate::rpc_objects::{
     BlockId,
     GetBlockWithTxHashesParams,
     GetClassHashAtParams,
-    GetCompiledContractClassParams,
+    GetCompiledClassParams,
     GetNonceParams,
     GetStorageAtParams,
     RpcResponse,
@@ -33,6 +34,7 @@ use crate::rpc_objects::{
 };
 use crate::state_reader::{MempoolStateReader, StateReaderFactory};
 
+#[derive(Clone)]
 pub struct RpcStateReader {
     pub config: RpcStateReaderConfig,
     pub block_id: BlockId,
@@ -139,23 +141,21 @@ impl BlockifierStateReader for RpcStateReader {
         }
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<RunnableContractClass> {
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass> {
         let get_compiled_class_params =
-            GetCompiledContractClassParams { class_hash, block_id: self.block_id };
+            GetCompiledClassParams { class_hash, block_id: self.block_id };
 
         let result =
             self.send_rpc_request("starknet_getCompiledContractClass", get_compiled_class_params)?;
-        let contract_class: CompiledContractClass =
+        let (contract_class, sierra_version): (CompiledContractClass, SierraVersion) =
             serde_json::from_value(result).map_err(serde_err_to_state_err)?;
         match contract_class {
-            CompiledContractClass::V1(contract_class_v1) => Ok(RunnableContractClass::V1(
-                ContractClassV1::try_from(contract_class_v1).map_err(StateError::ProgramError)?,
+            CompiledContractClass::V1(contract_class_v1) => Ok(RunnableCompiledClass::V1(
+                CompiledClassV1::try_from((contract_class_v1, sierra_version))
+                    .map_err(StateError::ProgramError)?,
             )),
-            CompiledContractClass::V0(contract_class_v0) => Ok(RunnableContractClass::V0(
-                ContractClassV0::try_from(contract_class_v0).map_err(StateError::ProgramError)?,
+            CompiledContractClass::V0(contract_class_v0) => Ok(RunnableCompiledClass::V0(
+                CompiledClassV0::try_from(contract_class_v0).map_err(StateError::ProgramError)?,
             )),
         }
     }
@@ -186,8 +186,10 @@ pub struct RpcStateReaderFactory {
 }
 
 impl StateReaderFactory for RpcStateReaderFactory {
-    fn get_state_reader_from_latest_block(&self) -> Box<dyn MempoolStateReader> {
-        Box::new(RpcStateReader::from_latest(&self.config))
+    fn get_state_reader_from_latest_block(
+        &self,
+    ) -> StateSyncClientResult<Box<dyn MempoolStateReader>> {
+        Ok(Box::new(RpcStateReader::from_latest(&self.config)))
     }
 
     fn get_state_reader(&self, block_number: BlockNumber) -> Box<dyn MempoolStateReader> {

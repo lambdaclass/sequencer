@@ -3,11 +3,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use assert_matches::assert_matches;
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::contracts::FeatureContract;
 use rstest::{fixture, rstest};
 use starknet_api::abi::abi_utils::{get_fee_token_var_address, get_storage_var_address};
-use starknet_api::core::{calculate_contract_address, ClassHash, ContractAddress};
-use starknet_api::test_utils::NonceManager;
-use starknet_api::transaction::fields::{ContractAddressSalt, ValidResourceBounds};
+use starknet_api::core::{ClassHash, ContractAddress};
+use starknet_api::test_utils::deploy_account::executable_deploy_account_tx;
+use starknet_api::test_utils::DEFAULT_STRK_L1_GAS_PRICE;
+use starknet_api::transaction::fields::ValidResourceBounds;
 use starknet_api::{
     calldata,
     class_hash,
@@ -39,11 +42,11 @@ use crate::state::cached_state::{
 };
 use crate::state::errors::StateError;
 use crate::state::state_api::{State, StateReader, UpdatableState};
-use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::deploy_account::deploy_account_tx;
+use crate::test_utils::contracts::FeatureContractTrait;
 use crate::test_utils::dict_state_reader::DictStateReader;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{CairoVersion, BALANCE, DEFAULT_STRK_L1_GAS_PRICE};
+use crate::test_utils::BALANCE;
+use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::objects::HasRelatedFeeType;
 use crate::transaction::test_utils::{default_all_resource_bounds, l1_resource_bounds};
 use crate::transaction::transactions::ExecutableTransaction;
@@ -97,12 +100,9 @@ fn test_versioned_state_proxy() {
         versioned_state_proxys[5].get_compiled_class_hash(class_hash).unwrap(),
         compiled_class_hash
     );
-    assert_eq!(
-        versioned_state_proxys[7].get_compiled_contract_class(class_hash).unwrap(),
-        contract_class
-    );
+    assert_eq!(versioned_state_proxys[7].get_compiled_class(class_hash).unwrap(), contract_class);
     assert_matches!(
-        versioned_state_proxys[7].get_compiled_contract_class(another_class_hash).unwrap_err(),
+        versioned_state_proxys[7].get_compiled_class(another_class_hash).unwrap_err(),
         StateError::UndeclaredClassHash(class_hash) if
         another_class_hash == class_hash
     );
@@ -118,7 +118,8 @@ fn test_versioned_state_proxy() {
     let class_hash_v10 = class_hash!(29_u8);
     let compiled_class_hash_v18 = compiled_class_hash!(30_u8);
     let contract_class_v11 =
-        FeatureContract::TestContract(CairoVersion::Cairo1).get_runnable_class();
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm))
+            .get_runnable_class();
 
     versioned_state_proxys[3].state().apply_writes(
         3,
@@ -197,7 +198,7 @@ fn test_versioned_state_proxy() {
         compiled_class_hash_v18
     );
     assert_eq!(
-        versioned_state_proxys[15].get_compiled_contract_class(class_hash).unwrap(),
+        versioned_state_proxys[15].get_compiled_class(class_hash).unwrap(),
         contract_class_v11
     );
 }
@@ -207,7 +208,6 @@ fn test_versioned_state_proxy() {
 fn test_run_parallel_txs(default_all_resource_bounds: ValidResourceBounds) {
     let block_context = BlockContext::create_for_account_testing();
     let chain_info = &block_context.chain_info;
-    let zero_bounds = true;
 
     // Test Accounts
     let grindy_account = FeatureContract::AccountWithLongValidate(CairoVersion::Cairo0);
@@ -228,34 +228,31 @@ fn test_run_parallel_txs(default_all_resource_bounds: ValidResourceBounds) {
     let mut state_2 = TransactionalState::create_transactional(&mut versioned_state_proxy_2);
 
     // Prepare transactions
-    let deploy_account_tx_1 = deploy_account_tx(
-        deploy_account_tx_args! {
-            class_hash: account_without_validation.get_class_hash(),
-            resource_bounds: l1_resource_bounds(
-                u8::from(!zero_bounds).into(),
-                DEFAULT_STRK_L1_GAS_PRICE.into()
-            ),
-        },
-        &mut NonceManager::default(),
-    );
+    let max_amount = 0_u8.into();
+    let max_price_per_unit = DEFAULT_STRK_L1_GAS_PRICE.into();
+    let tx = executable_deploy_account_tx(deploy_account_tx_args! {
+        class_hash: account_without_validation.get_class_hash(),
+        resource_bounds: l1_resource_bounds(max_amount, max_price_per_unit),
+    });
+    let deploy_account_tx_1 = AccountTransaction::new_for_sequencing(tx);
     let enforce_fee = deploy_account_tx_1.enforce_fee();
 
-    let class_hash = grindy_account.get_class_hash();
     let ctor_storage_arg = felt!(1_u8);
     let ctor_grind_arg = felt!(0_u8); // Do not grind in deploy phase.
     let constructor_calldata = calldata![ctor_grind_arg, ctor_storage_arg];
     let deploy_tx_args = deploy_account_tx_args! {
-        class_hash,
+        class_hash: grindy_account.get_class_hash(),
         resource_bounds: default_all_resource_bounds,
-        constructor_calldata: constructor_calldata.clone(),
+        constructor_calldata: constructor_calldata,
     };
-    let nonce_manager = &mut NonceManager::default();
-    let delpoy_account_tx_2 = deploy_account_tx(deploy_tx_args, nonce_manager);
-    let account_address = delpoy_account_tx_2.sender_address();
-    let tx_context = block_context.to_tx_context(&delpoy_account_tx_2);
+    let tx = executable_deploy_account_tx(deploy_tx_args);
+    let deploy_account_tx_2 = AccountTransaction::new_for_sequencing(tx);
+
+    let deployed_contract_address = deploy_account_tx_2.sender_address();
+    let tx_context = block_context.to_tx_context(&deploy_account_tx_2);
     let fee_type = tx_context.tx_info.fee_type();
 
-    let deployed_account_balance_key = get_fee_token_var_address(account_address);
+    let deployed_account_balance_key = get_fee_token_var_address(deployed_contract_address);
     let fee_token_address = chain_info.fee_token_address(&fee_type);
     state_2
         .set_storage_at(fee_token_address, deployed_account_balance_key, felt!(BALANCE.0))
@@ -267,21 +264,16 @@ fn test_run_parallel_txs(default_all_resource_bounds: ValidResourceBounds) {
     // Execute transactions
     thread::scope(|s| {
         s.spawn(move || {
-            let result =
-                deploy_account_tx_1.execute(&mut state_1, &block_context_1, enforce_fee, true);
-            assert_eq!(result.is_err(), enforce_fee); // Transaction fails iff we enforced the fee charge (as the acount is not funded).
+            let result = deploy_account_tx_1.execute(&mut state_1, &block_context_1);
+            // TODO(Arni): Check that the storage updated as expected.
+            // Transaction fails iff we enforced the fee charge (as the account is not funded).
+            assert!(!enforce_fee, "Expected fee enforcement to be disabled for this transaction.");
+            assert!(result.is_ok());
         });
         s.spawn(move || {
-            delpoy_account_tx_2.execute(&mut state_2, &block_context_2, true, true).unwrap();
+            deploy_account_tx_2.execute(&mut state_2, &block_context_2).unwrap();
             // Check that the constructor wrote ctor_arg to the storage.
             let storage_key = get_storage_var_address("ctor_arg", &[]);
-            let deployed_contract_address = calculate_contract_address(
-                ContractAddressSalt::default(),
-                class_hash,
-                &constructor_calldata,
-                ContractAddress::default(),
-            )
-            .unwrap();
             let read_storage_arg =
                 state_2.get_storage_at(deployed_contract_address, storage_key).unwrap();
             assert_eq!(ctor_storage_arg, read_storage_arg);
@@ -321,7 +313,7 @@ fn test_validate_reads(
 
     assert!(transactional_state.cache.borrow().initial_reads.declared_contracts.is_empty());
     assert_matches!(
-        transactional_state.get_compiled_contract_class(class_hash),
+        transactional_state.get_compiled_class(class_hash),
         Err(StateError::UndeclaredClassHash(err_class_hash)) if
         err_class_hash == class_hash
     );
@@ -404,7 +396,8 @@ fn test_false_validate_reads_declared_contracts(
     };
     let version_state_proxy = safe_versioned_state.pin_version(0);
     let compiled_contract_calss =
-        FeatureContract::TestContract(CairoVersion::Cairo1).get_runnable_class();
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm))
+            .get_runnable_class();
     let class_hash_to_class = HashMap::from([(class_hash!(1_u8), compiled_contract_calss)]);
     version_state_proxy.state().apply_writes(0, &tx_0_writes, &class_hash_to_class);
     assert!(!safe_versioned_state.pin_version(1).validate_reads(&tx_1_reads));
@@ -429,7 +422,9 @@ fn test_apply_writes(
     assert_eq!(transactional_states[0].cache.borrow().writes.class_hashes.len(), 1);
 
     // Transaction 0 contract class.
-    let contract_class_0 = FeatureContract::TestContract(CairoVersion::Cairo1).get_runnable_class();
+    let contract_class_0 =
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm))
+            .get_runnable_class();
     assert!(transactional_states[0].class_hash_to_class.borrow().is_empty());
     transactional_states[0].set_contract_class(class_hash, contract_class_0.clone()).unwrap();
     assert_eq!(transactional_states[0].class_hash_to_class.borrow().len(), 1);
@@ -437,13 +432,9 @@ fn test_apply_writes(
     safe_versioned_state.pin_version(0).apply_writes(
         &transactional_states[0].cache.borrow().writes,
         &transactional_states[0].class_hash_to_class.borrow().clone(),
-        &HashMap::default(),
     );
     assert!(transactional_states[1].get_class_hash_at(contract_address).unwrap() == class_hash_0);
-    assert!(
-        transactional_states[1].get_compiled_contract_class(class_hash).unwrap()
-            == contract_class_0
-    );
+    assert!(transactional_states[1].get_compiled_class(class_hash).unwrap() == contract_class_0);
 }
 
 #[rstest]
@@ -469,13 +460,12 @@ fn test_apply_writes_reexecute_scenario(
     safe_versioned_state.pin_version(0).apply_writes(
         &transactional_states[0].cache.borrow().writes,
         &transactional_states[0].class_hash_to_class.borrow().clone(),
-        &HashMap::default(),
     );
     // Although transaction 0 wrote to the shared state, version 1 needs to be re-executed to see
     // the new value (its read value has already been cached).
     assert!(transactional_states[1].get_class_hash_at(contract_address).unwrap() == class_hash);
 
-    // TODO: Use re-execution native util once it's ready.
+    // TODO(Noa): Use re-execution native util once it's ready.
     // "Re-execute" the transaction.
     let mut versioned_state_proxy = safe_versioned_state.pin_version(1);
     transactional_states[1] = TransactionalState::create_transactional(&mut versioned_state_proxy);
@@ -501,7 +491,8 @@ fn test_delete_writes(
         (contract_address!("0x100"), class_hash!(20_u8)),
         (contract_address!("0x200"), class_hash!(21_u8)),
     ];
-    let feature_contract = FeatureContract::TestContract(CairoVersion::Cairo1);
+    let feature_contract =
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm));
     for (i, tx_state) in transactional_states.iter_mut().enumerate() {
         // Modify the `cache` member of the CachedState.
         for (contract_address, class_hash) in contract_addresses.iter() {
@@ -514,11 +505,9 @@ fn test_delete_writes(
                 feature_contract.get_runnable_class(),
             )
             .unwrap();
-        safe_versioned_state.pin_version(i).apply_writes(
-            &tx_state.cache.borrow().writes,
-            &tx_state.class_hash_to_class.borrow(),
-            &HashMap::default(),
-        );
+        safe_versioned_state
+            .pin_version(i)
+            .apply_writes(&tx_state.cache.borrow().writes, &tx_state.class_hash_to_class.borrow());
     }
 
     safe_versioned_state.pin_version(tx_index_to_delete_writes).delete_writes(
@@ -556,7 +545,8 @@ fn test_delete_writes(
 fn test_delete_writes_completeness(
     safe_versioned_state: ThreadSafeVersionedState<CachedState<DictStateReader>>,
 ) {
-    let feature_contract = FeatureContract::TestContract(CairoVersion::Cairo1);
+    let feature_contract =
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let state_maps_writes = StateMaps {
         nonces: HashMap::from([(contract_address!("0x1"), nonce!(1_u8))]),
         class_hashes: HashMap::from([(
@@ -576,11 +566,7 @@ fn test_delete_writes_completeness(
     let tx_index = 0;
     let mut versioned_state_proxy = safe_versioned_state.pin_version(tx_index);
 
-    versioned_state_proxy.apply_writes(
-        &state_maps_writes,
-        &class_hash_to_class_writes,
-        &HashMap::default(),
-    );
+    versioned_state_proxy.apply_writes(&state_maps_writes, &class_hash_to_class_writes);
     assert_eq!(
         safe_versioned_state.0.lock().unwrap().get_writes_of_index(tx_index),
         state_maps_writes
@@ -636,7 +622,8 @@ fn test_versioned_proxy_state_flow(
     // Clients contract class values.
     let contract_class_0 = FeatureContract::TestContract(CairoVersion::Cairo0).get_runnable_class();
     let contract_class_2 =
-        FeatureContract::AccountWithLongValidate(CairoVersion::Cairo1).get_runnable_class();
+        FeatureContract::AccountWithLongValidate(CairoVersion::Cairo1(RunnableCairo1::Casm))
+            .get_runnable_class();
 
     transactional_states[0].set_contract_class(class_hash, contract_class_0).unwrap();
     transactional_states[2].set_contract_class(class_hash, contract_class_2.clone()).unwrap();
@@ -654,12 +641,9 @@ fn test_versioned_proxy_state_flow(
     for proxy in versioned_proxy_states {
         drop(proxy);
     }
-    let modified_block_state = safe_versioned_state
-        .into_inner_state()
-        .commit_chunk_and_recover_block_state(4, HashMap::new());
+    let modified_block_state =
+        safe_versioned_state.into_inner_state().commit_chunk_and_recover_block_state(4);
 
     assert!(modified_block_state.get_class_hash_at(contract_address).unwrap() == class_hash_3);
-    assert!(
-        modified_block_state.get_compiled_contract_class(class_hash).unwrap() == contract_class_2
-    );
+    assert!(modified_block_state.get_compiled_class(class_hash).unwrap() == contract_class_2);
 }

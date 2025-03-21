@@ -93,7 +93,7 @@ pub trait EventsReader<'txn, 'env> {
     ) -> StorageResult<EventIter<'txn, 'env>>;
 }
 
-// TODO: support all read transactions (including RW).
+// TODO(DanB): support all read transactions (including RW).
 impl<'txn, 'env> EventsReader<'txn, 'env> for StorageTxn<'env, RO> {
     fn iter_events(
         &'env self,
@@ -152,7 +152,7 @@ pub struct EventIterByContractAddress<'env, 'txn> {
     transaction_metadata_table: TransactionMetadataTable<'env>,
 }
 
-impl<'env, 'txn> EventIterByContractAddress<'env, 'txn> {
+impl EventIterByContractAddress<'_, '_> {
     /// Returns the next event. If there are no more events, returns None.
     ///
     /// # Errors

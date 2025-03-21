@@ -42,6 +42,7 @@
 //!     file,
 //!     Command::new("Program"),
 //!     vec!["Program".to_owned(), "--key".to_owned(), "770".to_owned()],
+//!     false,
 //! )
 //! .unwrap();
 //! assert_eq!(loaded_config.key, 770);
@@ -180,8 +181,7 @@ pub enum ConfigError {
     CommandMatches(#[from] MatchesError),
     #[error(transparent)]
     IOError(#[from] std::io::Error),
-    // TODO(Eitan): Improve error message
-    #[error("Insert a new param is not allowed: {param_path}.")]
+    #[error("Param does not exist: {param_path}.")]
     ParamNotFound { param_path: String },
     #[error("{target_param} is not found.")]
     PointerTargetNotFound { target_param: String },

@@ -2,13 +2,19 @@ use crate::contract_address;
 use crate::contract_class::ClassInfo;
 use crate::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use crate::data_availability::DataAvailabilityMode;
-use crate::executable_transaction::DeclareTransaction as ExecutableDeclareTransaction;
+use crate::executable_transaction::{
+    AccountTransaction,
+    DeclareTransaction as ExecutableDeclareTransaction,
+};
 use crate::rpc_transaction::{
-    ContractClass,
+    InternalRpcDeclareTransactionV3,
+    InternalRpcTransaction,
+    InternalRpcTransactionWithoutTxHash,
     RpcDeclareTransaction,
     RpcDeclareTransactionV3,
     RpcTransaction,
 };
+use crate::state::SierraContractClass;
 use crate::transaction::fields::{
     AccountDeploymentData,
     Fee,
@@ -86,7 +92,7 @@ macro_rules! declare_tx_args {
 }
 
 pub fn declare_tx(declare_tx_args: DeclareTxArgs) -> DeclareTransaction {
-    // TODO: Make TransactionVersion an enum and use match here.
+    // TODO(Arni): Make TransactionVersion an enum and use match here.
     if declare_tx_args.version == TransactionVersion::ZERO {
         DeclareTransaction::V0(DeclareTransactionV0V1 {
             max_fee: declare_tx_args.max_fee,
@@ -134,15 +140,17 @@ pub fn declare_tx(declare_tx_args: DeclareTxArgs) -> DeclareTransaction {
 pub fn executable_declare_tx(
     declare_tx_args: DeclareTxArgs,
     class_info: ClassInfo,
-) -> ExecutableDeclareTransaction {
+) -> AccountTransaction {
     let tx_hash = declare_tx_args.tx_hash;
     let tx = declare_tx(declare_tx_args);
-    ExecutableDeclareTransaction { tx, tx_hash, class_info }
+    let declare_tx = ExecutableDeclareTransaction { tx, tx_hash, class_info };
+
+    AccountTransaction::Declare(declare_tx)
 }
 
 pub fn rpc_declare_tx(
     declare_tx_args: DeclareTxArgs,
-    contract_class: ContractClass,
+    contract_class: SierraContractClass,
 ) -> RpcTransaction {
     if declare_tx_args.version != TransactionVersion::THREE {
         panic!("Unsupported transaction version: {:?}.", declare_tx_args.version);
@@ -165,4 +173,29 @@ pub fn rpc_declare_tx(
         nonce: declare_tx_args.nonce,
         compiled_class_hash: declare_tx_args.compiled_class_hash,
     }))
+}
+
+pub fn internal_rpc_declare_tx(declare_tx_args: DeclareTxArgs) -> InternalRpcTransaction {
+    let rpc_declare_tx = rpc_declare_tx(declare_tx_args.clone(), SierraContractClass::default());
+
+    if let RpcTransaction::Declare(RpcDeclareTransaction::V3(rpc_declare_tx)) = rpc_declare_tx {
+        InternalRpcTransaction {
+            tx: InternalRpcTransactionWithoutTxHash::Declare(InternalRpcDeclareTransactionV3 {
+                signature: rpc_declare_tx.signature,
+                sender_address: rpc_declare_tx.sender_address,
+                resource_bounds: rpc_declare_tx.resource_bounds,
+                tip: rpc_declare_tx.tip,
+                nonce_data_availability_mode: rpc_declare_tx.nonce_data_availability_mode,
+                fee_data_availability_mode: rpc_declare_tx.fee_data_availability_mode,
+                paymaster_data: rpc_declare_tx.paymaster_data,
+                account_deployment_data: rpc_declare_tx.account_deployment_data,
+                nonce: rpc_declare_tx.nonce,
+                compiled_class_hash: rpc_declare_tx.compiled_class_hash,
+                class_hash: declare_tx_args.class_hash,
+            }),
+            tx_hash: declare_tx_args.tx_hash,
+        }
+    } else {
+        panic!("Unexpected RpcTransaction type.")
+    }
 }

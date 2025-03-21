@@ -3,7 +3,10 @@ use starknet_api::core::ContractAddress;
 use starknet_api::execution_resources::{GasAmount, GasVector};
 use starknet_api::transaction::fields::GasVectorComputationMode;
 
+use crate::blockifier_versioned_constants::{AllocationCost, VersionedConstants};
 use crate::execution::call_info::{EventSummary, ExecutionSummary};
+#[cfg(test)]
+use crate::execution::contract_class::TrackedResource;
 use crate::fee::eth_gas_constants;
 use crate::fee::fee_utils::get_vm_resources_cost;
 use crate::fee::gas_usage::{
@@ -16,7 +19,6 @@ use crate::fee::gas_usage::{
 use crate::state::cached_state::{StateChanges, StateChangesCountForFee};
 use crate::transaction::errors::TransactionFeeError;
 use crate::utils::u64_from_usize;
-use crate::versioned_constants::{ArchivalDataGasCosts, VersionedConstants};
 
 pub type TransactionFeeResult<T> = Result<T, TransactionFeeError>;
 
@@ -73,14 +75,21 @@ impl ComputationResources {
             self.n_reverted_steps,
             computation_mode,
         );
-        let sierra_gas_cost = GasVector::from_l2_gas(
+
+        let total_sierra_gas =
             self.sierra_gas.checked_add(self.reverted_sierra_gas).unwrap_or_else(|| {
                 panic!(
                     "Sierra gas overflowed: tried to add {} to {}",
                     self.sierra_gas, self.reverted_sierra_gas
                 )
-            }),
-        );
+            });
+        let sierra_gas_cost = match computation_mode {
+            GasVectorComputationMode::All => GasVector::from_l2_gas(total_sierra_gas),
+            GasVectorComputationMode::NoL2Gas => GasVector::from_l1_gas(
+                versioned_constants.sierra_gas_to_l1_gas_amount_round_up(total_sierra_gas),
+            ),
+        };
+
         vm_cost.checked_add(sierra_gas_cost).unwrap_or_else(|| {
             panic!(
                 "Computation resources to gas vector overflowed: tried to add {sierra_gas_cost:?} \
@@ -89,9 +98,15 @@ impl ComputationResources {
         })
     }
 
+    /// Returns total consumed + reverted units of steps or sierra gas.
     #[cfg(test)]
-    pub fn total_charged_steps(&self) -> usize {
-        self.n_reverted_steps + self.vm_resources.n_steps
+    pub fn total_charged_computation_units(&self, resource: TrackedResource) -> usize {
+        match resource {
+            TrackedResource::CairoSteps => self.vm_resources.n_steps + self.n_reverted_steps,
+            TrackedResource::SierraGas => {
+                usize::try_from(self.sierra_gas.0 + self.reverted_sierra_gas.0).unwrap()
+            }
+        }
     }
 }
 
@@ -139,7 +154,7 @@ impl StarknetResources {
     ) -> GasVector {
         [
             self.archival_data.to_gas_vector(versioned_constants, mode),
-            self.state.to_gas_vector(use_kzg_da),
+            self.state.to_gas_vector(use_kzg_da, &versioned_constants.allocation_cost),
             self.messages.to_gas_vector(),
         ]
         .iter()
@@ -186,9 +201,30 @@ impl StateResources {
     }
 
     /// Returns the gas cost of the transaction's state changes.
-    pub fn to_gas_vector(&self, use_kzg_da: bool) -> GasVector {
-        // TODO(Nimrod, 29/3/2024): delete `get_da_gas_cost` and move it's logic here.
-        // TODO(Yoav): Add the cost of allocating keys.
+    pub fn to_gas_vector(&self, use_kzg_da: bool, allocation_cost: &AllocationCost) -> GasVector {
+        let n_allocated_keys: u64 = self
+            .state_changes_for_fee
+            .n_allocated_keys
+            .try_into()
+            .expect("n_allocated_keys overflowed");
+        let allocation_gas_vector = allocation_cost.get_cost(use_kzg_da);
+        let total_allocation_cost =
+            allocation_gas_vector.checked_scalar_mul(n_allocated_keys).unwrap_or_else(|| {
+                panic!(
+                    "State resources to gas vector overflowed: tried to multiply \
+                     {allocation_gas_vector:?} by {n_allocated_keys:?}",
+                )
+            });
+        let da_gas_cost = self.da_gas_vector(use_kzg_da);
+        total_allocation_cost.checked_add(da_gas_cost).unwrap_or_else(|| {
+            panic!(
+                "State resources to gas vector overflowed: tried to add {total_allocation_cost:?} \
+                 to {da_gas_cost:?}",
+            )
+        })
+    }
+
+    pub fn da_gas_vector(&self, use_kzg_da: bool) -> GasVector {
         get_da_gas_cost(&self.state_changes_for_fee.state_changes_count, use_kzg_da)
     }
 
@@ -202,8 +238,8 @@ impl StateResources {
 pub struct ArchivalDataResources {
     pub event_summary: EventSummary,
     pub calldata_length: usize,
-    signature_length: usize,
-    code_size: usize,
+    pub signature_length: usize,
+    pub code_size: usize,
 }
 
 impl ArchivalDataResources {
@@ -214,60 +250,60 @@ impl ArchivalDataResources {
         versioned_constants: &VersionedConstants,
         mode: &GasVectorComputationMode,
     ) -> GasVector {
-        let archival_gas_costs = match mode {
-            // Computation is in L2 gas units.
-            GasVectorComputationMode::All => &versioned_constants.archival_data_gas_costs,
-            // Computation is in L1 gas units.
-            GasVectorComputationMode::NoL2Gas => {
-                &versioned_constants.deprecated_l2_resource_gas_costs
-            }
-        };
-        let gas_amount = [
-            self.get_calldata_and_signature_gas_cost(archival_gas_costs),
-            self.get_code_gas_cost(archival_gas_costs),
-            self.get_events_gas_cost(archival_gas_costs),
+        [
+            self.get_calldata_and_signature_gas_cost(versioned_constants, mode),
+            self.get_code_gas_cost(versioned_constants, mode),
+            self.event_summary.to_gas_vector(versioned_constants, mode),
         ]
         .into_iter()
-        .fold(GasAmount::ZERO, |accumulator, cost| {
+        .fold(GasVector::ZERO, |accumulator, cost| {
             accumulator.checked_add(cost).unwrap_or_else(|| {
                 panic!(
                     "Archival data resources to gas vector overflowed: tried to add \
-                     {accumulator:?} gas to {cost:?} gas.",
+                     {accumulator:?} gas vector to {cost:?} gas vector.",
                 )
             })
-        });
+        })
+    }
+
+    /// Returns the cost for transaction calldata and transaction signature. Each felt costs a
+    /// fixed and configurable amount of gas. This cost represents the cost of storing the
+    /// calldata and the signature on L2.
+    fn get_calldata_and_signature_gas_cost(
+        &self,
+        versioned_constants: &VersionedConstants,
+        mode: &GasVectorComputationMode,
+    ) -> GasVector {
+        let archival_gas_costs = versioned_constants.get_archival_data_gas_costs(mode);
+
+        // TODO(Avi, 20/2/2024): Calculate the number of bytes instead of the number of felts.
+        let total_data_size = u64_from_usize(self.calldata_length + self.signature_length);
+        let gas_amount =
+            (archival_gas_costs.gas_per_data_felt * total_data_size).to_integer().into();
+
         match mode {
             GasVectorComputationMode::All => GasVector::from_l2_gas(gas_amount),
             GasVectorComputationMode::NoL2Gas => GasVector::from_l1_gas(gas_amount),
         }
     }
 
-    /// Returns the cost for transaction calldata and transaction signature. Each felt costs a
-    /// fixed and configurable amount of gas. This cost represents the cost of storing the
-    /// calldata and the signature on L2.  The result is given in L1/L2 gas units, depending on the
-    /// mode.
-    fn get_calldata_and_signature_gas_cost(
+    /// Returns the cost of declared class codes.
+    fn get_code_gas_cost(
         &self,
-        archival_gas_costs: &ArchivalDataGasCosts,
-    ) -> GasAmount {
-        // TODO(Avi, 20/2/2024): Calculate the number of bytes instead of the number of felts.
-        let total_data_size = u64_from_usize(self.calldata_length + self.signature_length);
-        (archival_gas_costs.gas_per_data_felt * total_data_size).to_integer().into()
-    }
+        versioned_constants: &VersionedConstants,
+        mode: &GasVectorComputationMode,
+    ) -> GasVector {
+        let archival_gas_costs = versioned_constants.get_archival_data_gas_costs(mode);
 
-    /// Returns the cost of declared class codes in L1/L2 gas units, depending on the mode.
-    fn get_code_gas_cost(&self, archival_gas_costs: &ArchivalDataGasCosts) -> GasAmount {
-        (archival_gas_costs.gas_per_code_byte * u64_from_usize(self.code_size)).to_integer().into()
-    }
+        let gas_amount: GasAmount = (archival_gas_costs.gas_per_code_byte
+            * u64_from_usize(self.code_size))
+        .to_integer()
+        .into();
 
-    /// Returns the cost of the transaction's emmited events in L1/L2 gas units, depending on the
-    /// mode.
-    fn get_events_gas_cost(&self, archival_gas_costs: &ArchivalDataGasCosts) -> GasAmount {
-        (archival_gas_costs.gas_per_data_felt
-            * (archival_gas_costs.event_key_factor * self.event_summary.total_event_keys
-                + self.event_summary.total_event_data_size))
-            .to_integer()
-            .into()
+        match mode {
+            GasVectorComputationMode::All => GasVector::from_l2_gas(gas_amount),
+            GasVectorComputationMode::NoL2Gas => GasVector::from_l1_gas(gas_amount),
+        }
     }
 }
 

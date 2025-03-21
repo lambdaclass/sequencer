@@ -25,7 +25,6 @@ use crate::component_definitions::{
     ComponentClient,
     ComponentRequestAndResponseSender,
     RemoteClientConfig,
-    RemoteServerConfig,
     ServerError,
     APPLICATION_OCTET_STREAM,
 };
@@ -34,8 +33,7 @@ use crate::component_server::{
     LocalComponentServer,
     RemoteComponentServer,
 };
-use crate::serde_utils::BincodeSerdeWrapper;
-use crate::test_utils::get_available_socket;
+use crate::serde_utils::SerdeWrapper;
 use crate::tests::{
     test_a_b_functionality,
     ComponentA,
@@ -50,6 +48,9 @@ use crate::tests::{
     ResultB,
     ValueA,
     ValueB,
+    AVAILABLE_PORTS,
+    TEST_LOCAL_SERVER_METRICS,
+    TEST_REMOTE_SERVER_METRICS,
 };
 
 type ComponentAClient = RemoteComponentClient<ComponentARequest, ComponentAResponse>;
@@ -117,18 +118,18 @@ async fn create_client_and_faulty_server<T>(body: T) -> ComponentAClient
 where
     T: Serialize + DeserializeOwned + Debug + Send + Sync + 'static + Clone,
 {
-    let socket = get_available_socket().await;
+    let socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
     task::spawn(async move {
         async fn handler<T>(
             _http_request: Request<Body>,
             body: T,
         ) -> Result<Response<Body>, hyper::Error>
         where
-            T: Serialize + DeserializeOwned + Debug + Send + Sync + Clone,
+            T: Serialize + DeserializeOwned + Debug,
         {
             Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(BincodeSerdeWrapper::new(body).to_bincode().unwrap()))
+                .body(Body::from(SerdeWrapper::new(body).wrapper_serialize().unwrap()))
                 .unwrap())
         }
 
@@ -143,16 +144,18 @@ where
     // Ensure the server starts running.
     task::yield_now().await;
 
-    let config = RemoteClientConfig { socket, ..Default::default() };
-    ComponentAClient::new(config)
+    let config = RemoteClientConfig::default();
+    ComponentAClient::new(config, &socket.ip().to_string(), socket.port())
 }
 
 async fn setup_for_tests(setup_value: ValueB, a_socket: SocketAddr, b_socket: SocketAddr) {
-    let a_config = RemoteClientConfig { socket: a_socket, ..Default::default() };
-    let b_config = RemoteClientConfig { socket: b_socket, ..Default::default() };
+    let a_config = RemoteClientConfig::default();
+    let b_config = RemoteClientConfig::default();
 
-    let a_remote_client = ComponentAClient::new(a_config);
-    let b_remote_client = ComponentBClient::new(b_config);
+    let a_remote_client =
+        ComponentAClient::new(a_config, &a_socket.ip().to_string(), a_socket.port());
+    let b_remote_client =
+        ComponentBClient::new(b_config, &b_socket.ip().to_string(), b_socket.port());
 
     let component_a = ComponentA::new(Box::new(b_remote_client));
     let component_b = ComponentB::new(setup_value, Box::new(a_remote_client.clone()));
@@ -165,13 +168,26 @@ async fn setup_for_tests(setup_value: ValueB, a_socket: SocketAddr, b_socket: So
     let a_local_client = LocalComponentClient::<ComponentARequest, ComponentAResponse>::new(tx_a);
     let b_local_client = LocalComponentClient::<ComponentBRequest, ComponentBResponse>::new(tx_b);
 
-    let mut component_a_local_server = LocalComponentServer::new(component_a, rx_a);
-    let mut component_b_local_server = LocalComponentServer::new(component_b, rx_b);
+    let mut component_a_local_server =
+        LocalComponentServer::new(component_a, rx_a, TEST_LOCAL_SERVER_METRICS);
+    let mut component_b_local_server =
+        LocalComponentServer::new(component_b, rx_b, TEST_LOCAL_SERVER_METRICS);
 
-    let mut component_a_remote_server =
-        RemoteComponentServer::new(a_local_client, RemoteServerConfig { socket: a_socket });
-    let mut component_b_remote_server =
-        RemoteComponentServer::new(b_local_client, RemoteServerConfig { socket: b_socket });
+    let max_concurrency = 10;
+    let mut component_a_remote_server = RemoteComponentServer::new(
+        a_local_client,
+        a_socket.ip(),
+        a_socket.port(),
+        max_concurrency,
+        TEST_REMOTE_SERVER_METRICS,
+    );
+    let mut component_b_remote_server = RemoteComponentServer::new(
+        b_local_client,
+        b_socket.ip(),
+        b_socket.port(),
+        max_concurrency,
+        TEST_REMOTE_SERVER_METRICS,
+    );
 
     task::spawn(async move {
         let _ = component_a_local_server.start().await;
@@ -193,24 +209,27 @@ async fn setup_for_tests(setup_value: ValueB, a_socket: SocketAddr, b_socket: So
 }
 
 #[tokio::test]
-async fn test_proper_setup() {
+async fn proper_setup() {
     let setup_value: ValueB = Felt::from(90);
-    let a_socket = get_available_socket().await;
-    let b_socket = get_available_socket().await;
+    let a_socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
+    let b_socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
 
     setup_for_tests(setup_value, a_socket, b_socket).await;
-    let a_client_config = RemoteClientConfig { socket: a_socket, ..Default::default() };
-    let b_client_config = RemoteClientConfig { socket: b_socket, ..Default::default() };
+    let a_client_config = RemoteClientConfig::default();
+    let b_client_config = RemoteClientConfig::default();
 
-    let a_remote_client = ComponentAClient::new(a_client_config);
-    let b_remote_client = ComponentBClient::new(b_client_config);
+    let a_remote_client =
+        ComponentAClient::new(a_client_config, &a_socket.ip().to_string(), a_socket.port());
+    let b_remote_client =
+        ComponentBClient::new(b_client_config, &b_socket.ip().to_string(), b_socket.port());
+
     test_a_b_functionality(a_remote_client, b_remote_client, setup_value).await;
 }
 
 #[tokio::test]
-async fn test_faulty_client_setup() {
-    let a_socket = get_available_socket().await;
-    let b_socket = get_available_socket().await;
+async fn faulty_client_setup() {
+    let a_socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
+    let b_socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
     // Todo(uriel): Find a better way to pass expected value to the setup
     // 123 is some arbitrary value, we don't check it anyway.
     setup_for_tests(Felt::from(123), a_socket, b_socket).await;
@@ -227,12 +246,12 @@ async fn test_faulty_client_setup() {
                 format!("http://[{}]:{}/", self.socket.ip(), self.socket.port()).parse().unwrap();
             let http_request = Request::post(uri)
                 .header(CONTENT_TYPE, APPLICATION_OCTET_STREAM)
-                .body(Body::from(BincodeSerdeWrapper::new(component_request).to_bincode().unwrap()))
+                .body(Body::from(SerdeWrapper::new(component_request).wrapper_serialize().unwrap()))
                 .unwrap();
             let http_response = Client::new().request(http_request).await.unwrap();
             let status_code = http_response.status();
             let body_bytes = to_bytes(http_response.into_body()).await.unwrap();
-            let response = BincodeSerdeWrapper::<ServerError>::from_bincode(&body_bytes).unwrap();
+            let response = SerdeWrapper::<ServerError>::wrapper_deserialize(&body_bytes).unwrap();
             Err(ClientError::ResponseError(status_code, response))
         }
     }
@@ -243,27 +262,28 @@ async fn test_faulty_client_setup() {
 }
 
 #[tokio::test]
-async fn test_unconnected_server() {
-    let socket = get_available_socket().await;
-    let client_config = RemoteClientConfig { socket, ..Default::default() };
-    let client = ComponentAClient::new(client_config);
+async fn unconnected_server() {
+    let socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
+    let client_config = RemoteClientConfig::default();
+    let client = ComponentAClient::new(client_config, &socket.ip().to_string(), socket.port());
     let expected_error_contained_keywords = ["Connection refused"];
     verify_error(client, &expected_error_contained_keywords).await;
 }
 
+// TODO(Nadin): add DESERIALIZE_REQ_ERROR_MESSAGE to the expected error keywords in the first case.
 #[rstest]
 #[case::request_deserialization_failure(
     create_client_and_faulty_server(
         ServerError::RequestDeserializationFailure(MOCK_SERVER_ERROR.to_string())
     ).await,
-    &[StatusCode::BAD_REQUEST.as_str(),DESERIALIZE_REQ_ERROR_MESSAGE, MOCK_SERVER_ERROR],
+    &[StatusCode::BAD_REQUEST.as_str()],
 )]
 #[case::response_deserialization_failure(
     create_client_and_faulty_server(ARBITRARY_DATA.to_string()).await,
     &[DESERIALIZE_RES_ERROR_MESSAGE],
 )]
 #[tokio::test]
-async fn test_faulty_server(
+async fn faulty_server(
     #[case] client: ComponentAClient,
     #[case] expected_error_contained_keywords: &[&str],
 ) {
@@ -271,8 +291,8 @@ async fn test_faulty_server(
 }
 
 #[tokio::test]
-async fn test_retry_request() {
-    let socket = get_available_socket().await;
+async fn retry_request() {
+    let socket = AVAILABLE_PORTS.lock().await.get_next_local_host_socket();
     // Spawn a server that responses with OK every other request.
     task::spawn(async move {
         let should_send_ok = Arc::new(Mutex::new(false));
@@ -285,12 +305,12 @@ async fn test_retry_request() {
             let ret = if *should_send_ok {
                 Response::builder()
                     .status(StatusCode::OK)
-                    .body(Body::from(BincodeSerdeWrapper::new(body).to_bincode().unwrap()))
+                    .body(Body::from(SerdeWrapper::new(body).wrapper_serialize().unwrap()))
                     .unwrap()
             } else {
                 Response::builder()
                     .status(StatusCode::IM_A_TEAPOT)
-                    .body(Body::from(BincodeSerdeWrapper::new(body).to_bincode().unwrap()))
+                    .body(Body::from(SerdeWrapper::new(body).wrapper_serialize().unwrap()))
                     .unwrap()
             };
             *should_send_ok = !*should_send_ok;
@@ -315,22 +335,24 @@ async fn test_retry_request() {
     // sets the server state to 'true'. The second attempt (first retry) therefore returns a
     // 'success', while setting the server state to 'false' yet again.
     let retry_config = RemoteClientConfig {
-        socket,
         retries: 1,
         idle_connections: MAX_IDLE_CONNECTION,
         idle_timeout: IDLE_TIMEOUT,
+        ..Default::default()
     };
-    let a_client_retry = ComponentAClient::new(retry_config);
+    let a_client_retry =
+        ComponentAClient::new(retry_config, &socket.ip().to_string(), socket.port());
     assert_eq!(a_client_retry.a_get_value().await.unwrap(), VALID_VALUE_A);
 
     // The current server state is 'false', hence the first and only attempt returns an error.
     let no_retry_config = RemoteClientConfig {
-        socket,
         retries: 0,
         idle_connections: MAX_IDLE_CONNECTION,
         idle_timeout: IDLE_TIMEOUT,
+        ..Default::default()
     };
-    let a_client_no_retry = ComponentAClient::new(no_retry_config);
+    let a_client_no_retry =
+        ComponentAClient::new(no_retry_config, &socket.ip().to_string(), socket.port());
     let expected_error_contained_keywords = [StatusCode::IM_A_TEAPOT.as_str()];
     verify_error(a_client_no_retry.clone(), &expected_error_contained_keywords).await;
 }

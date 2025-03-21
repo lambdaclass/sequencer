@@ -1,14 +1,18 @@
+use std::path::PathBuf;
+
 use glob::{glob, Paths};
 use pretty_assertions::assert_eq;
+use starknet_api::block::StarknetVersion;
+use starknet_infra_utils::compile_time_cargo_manifest_dir;
 
 use super::*;
 
-// TODO: Test Starknet OS validation.
-// TODO: Add an unallowed field scenario for GasCost parsing.
+// TODO(Gilad): Test Starknet OS validation.
+// TODO(OriF): Add an unallowed field scenario for GasCost parsing.
 
 /// Returns all JSON files in the resources directory (should be all versioned constants files).
 fn all_jsons_in_dir() -> Paths {
-    glob(format!("{}/resources/*.json", env!("CARGO_MANIFEST_DIR")).as_str()).unwrap()
+    glob(format!("{}/resources/*.json", compile_time_cargo_manifest_dir!()).as_str()).unwrap()
 }
 
 #[test]
@@ -19,7 +23,7 @@ fn test_successful_gas_costs_parsing() {
         "entry_point_initial_budget": {
             "step_gas_cost": 3
         },
-        "entry_point_gas_cost": {
+        "syscall_base_gas_cost": {
             "entry_point_initial_budget": 4,
             "step_gas_cost": 5
         },
@@ -29,11 +33,14 @@ fn test_successful_gas_costs_parsing() {
     let os_constants: Arc<OsConstants> = Arc::new(OsConstants { gas_costs, ..Default::default() });
     let versioned_constants = VersionedConstants { os_constants, ..Default::default() };
 
-    assert_eq!(versioned_constants.os_constants.gas_costs.step_gas_cost, 2);
-    assert_eq!(versioned_constants.os_constants.gas_costs.entry_point_initial_budget, 2 * 3); // step_gas_cost * 3.
+    assert_eq!(versioned_constants.os_constants.gas_costs.base.step_gas_cost, 2);
+    assert_eq!(versioned_constants.os_constants.gas_costs.base.entry_point_initial_budget, 2 * 3); // step_gas_cost * 3.
 
     // entry_point_initial_budget * 4 + step_gas_cost * 5.
-    assert_eq!(versioned_constants.os_constants.gas_costs.entry_point_gas_cost, 6 * 4 + 2 * 5);
+    assert_eq!(
+        versioned_constants.os_constants.gas_costs.base.syscall_base_gas_cost,
+        6 * 4 + 2 * 5
+    );
 }
 
 /// Assert versioned constants overrides are used when provided.
@@ -43,18 +50,21 @@ fn test_versioned_constants_overrides() {
     let updated_invoke_tx_max_n_steps = versioned_constants.invoke_tx_max_n_steps + 1;
     let updated_validate_max_n_steps = versioned_constants.validate_max_n_steps + 1;
     let updated_max_recursion_depth = versioned_constants.max_recursion_depth + 1;
+    let updated_max_n_events = versioned_constants.tx_event_limits.max_n_emitted_events + 1;
 
     // Create a versioned constants copy with overriden values.
     let result = VersionedConstants::get_versioned_constants(VersionedConstantsOverrides {
         validate_max_n_steps: updated_validate_max_n_steps,
         max_recursion_depth: updated_max_recursion_depth,
         invoke_tx_max_n_steps: updated_invoke_tx_max_n_steps,
+        max_n_events: updated_max_n_events,
     });
 
     // Assert the new values are used.
     assert_eq!(result.invoke_tx_max_n_steps, updated_invoke_tx_max_n_steps);
     assert_eq!(result.validate_max_n_steps, updated_validate_max_n_steps);
     assert_eq!(result.max_recursion_depth, updated_max_recursion_depth);
+    assert_eq!(result.tx_event_limits.max_n_emitted_events, updated_max_n_events);
 }
 
 #[test]
@@ -76,8 +86,15 @@ fn test_string_inside_composed_field() {
 
 fn check_constants_serde_error(json_data: &str, expected_error_message: &str) {
     let mut json_data_raw: IndexMap<String, Value> = serde_json::from_str(json_data).unwrap();
-    json_data_raw.insert("validate_block_number_rounding".to_string(), 0.into());
-    json_data_raw.insert("validate_timestamp_rounding".to_string(), 0.into());
+    json_data_raw.insert("validate_block_number_rounding".into(), 0.into());
+    json_data_raw.insert("validate_timestamp_rounding".into(), 0.into());
+    json_data_raw.insert(
+        "os_contract_addresses".into(),
+        serde_json::to_value(OsContractAddresses::default()).unwrap(),
+    );
+    json_data_raw.insert("v1_bound_accounts_cairo0".into(), serde_json::Value::Array(vec![]));
+    json_data_raw.insert("v1_bound_accounts_cairo1".into(), serde_json::Value::Array(vec![]));
+    json_data_raw.insert("v1_bound_accounts_max_tip".into(), "0x0".into());
 
     let json_data = &serde_json::to_string(&json_data_raw).unwrap();
 
@@ -156,8 +173,9 @@ fn test_all_jsons_in_enum() {
     // Check that all JSON files are in the enum and can be loaded.
     for file in all_jsons {
         let filename = file.file_stem().unwrap().to_str().unwrap().to_string();
-        assert!(filename.starts_with("versioned_constants_"));
-        let version_str = filename.trim_start_matches("versioned_constants_").replace("_", ".");
+        assert!(filename.starts_with("blockifier_versioned_constants_"));
+        let version_str =
+            filename.trim_start_matches("blockifier_versioned_constants_").replace("_", ".");
         let version = StarknetVersion::try_from(version_str).unwrap();
         assert!(VersionedConstants::get(&version).is_ok());
     }
@@ -166,4 +184,35 @@ fn test_all_jsons_in_enum() {
 #[test]
 fn test_latest_no_panic() {
     VersionedConstants::latest_constants();
+}
+
+#[test]
+fn test_syscall_gas_cost_calculation() {
+    const EXPECTED_CALL_CONTRACT_GAS_COST: u64 = 91420;
+    const EXPECTED_SECP256K1MUL_GAS_COST: u64 = 8143850;
+    const EXPECTED_SHA256PROCESSBLOCK_GAS_COST: u64 = 841295;
+
+    let versioned_constants = VersionedConstants::latest_constants().clone();
+
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::CallContract).base,
+        EXPECTED_CALL_CONTRACT_GAS_COST
+    );
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::Secp256k1Mul).base,
+        EXPECTED_SECP256K1MUL_GAS_COST
+    );
+    assert_eq!(
+        versioned_constants.get_syscall_gas_cost(&SyscallSelector::Sha256ProcessBlock).base,
+        EXPECTED_SHA256PROCESSBLOCK_GAS_COST
+    );
+}
+
+/// Linear gas cost factor of deploy syscall should not be trivial.
+#[test]
+fn test_call_data_factor_gas_cost_calculation() {
+    assert!(
+        VersionedConstants::latest_constants().os_constants.gas_costs.syscalls.deploy.linear_factor
+            > 0
+    )
 }

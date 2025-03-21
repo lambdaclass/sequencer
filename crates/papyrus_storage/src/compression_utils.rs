@@ -6,7 +6,8 @@ use crate::db::serialization::{StorageSerde, StorageSerdeError};
 
 // TODO(dvir): create one compressor/decompressor only once (maybe only once per thread) to prevent
 // buffer reallocation.
-// TODO: fine tune the compression hyperparameters (and maybe even the compression algorithm).
+// TODO(Dvir): fine tune the compression hyperparameters (and maybe even the compression
+// algorithm).
 
 // The maximum size of the decompressed data.
 // TODO(Dvir): consider defining this for each type separately and pass it as an argument to the
@@ -43,7 +44,7 @@ pub fn serialize_and_compress(object: &impl StorageSerde) -> Result<Vec<u8>, Sto
 ///
 /// # Arguments
 /// * data - bytes to decompress.
-
+///
 /// # Errors
 /// Returns [`std::io::Error`] if any read error is encountered.
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {

@@ -1,0 +1,78 @@
+name: Committer-And-OS-CLI-push
+
+on:
+  push:
+    branches:
+      - main
+      - main-v[0-9].**
+    tags:
+      - v[0-9].**
+
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - auto_merge_enabled
+      - edited
+    paths:
+      - '.github/workflows/committer_and_os_cli_push.yml'
+      - 'build_native_in_docker.sh'
+      - 'docker-ci/images/sequencer-ci.Dockerfile'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/starknet_committer_and_os_cli/**'
+      - 'crates/starknet_api/**'
+      - 'crates/starknet_committer/**'
+      - 'crates/starknet_os/**'
+      - 'crates/starknet_patricia/**'
+      - 'rust-toolchain.toml'
+      - 'scripts/dependencies.sh'
+
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
+# On PR events, cancel existing CI runs on this same PR for this workflow.
+# Also, create different concurrency groups for different pushed commits, on push events.
+concurrency:
+  group: >
+    ${{ github.workflow }}-
+    ${{ github.ref }}-
+    ${{ github.event_name == 'pull_request' && 'PR' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gcs-push:
+    runs-on: starkware-ubuntu-24.04-medium
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+
+        # Commit hash on pull request event would be the head commit of the branch.
+      - name: Get commit hash prefix for PR update
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: echo "SHORT_HASH=${COMMIT_SHA:0:7}" >> $GITHUB_ENV
+
+        # On push event (to main, for example) we should take the commit post-push.
+      - name: Get commit hash prefix for merge
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          COMMIT_SHA: ${{ github.event.after }}
+        run: echo "SHORT_HASH=${COMMIT_SHA:0:7}" >> $GITHUB_ENV
+
+      - name: Build CLI binary
+        run: ./build_native_in_docker.sh rustup toolchain install && cargo build -p starknet_committer_and_os_cli -r --bin starknet_committer_and_os_cli --target-dir CLI_TARGET
+
+      - id: auth
+        uses: "google-github-actions/auth@v2"
+        with:
+          credentials_json: ${{ secrets.COMMITER_PRODUCTS_EXT_WRITER_JSON }}
+
+      - name: Upload binary to GCP
+        id: upload_file
+        uses: "google-github-actions/upload-cloud-storage@v2"
+        with:
+          path: "CLI_TARGET/release/starknet_committer_and_os_cli"
+          destination: "committer-products-external/${{ env.SHORT_HASH }}/release/"

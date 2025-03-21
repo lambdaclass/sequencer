@@ -1,20 +1,22 @@
 use std::collections::BTreeMap;
 
+use blockifier::blockifier::config::ContractClassManagerConfig;
 use papyrus_config::dumping::{append_sub_config_name, ser_param, SerializeConfig};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 use crate::block_builder::BlockBuilderConfig;
 
 /// The batcher related configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, Validate, PartialEq)]
+#[validate(schema(function = "validate_batcher_config"))]
 pub struct BatcherConfig {
     pub storage: papyrus_storage::StorageConfig,
     pub outstream_content_buffer_size: usize,
     pub input_stream_content_buffer_size: usize,
     pub block_builder_config: BlockBuilderConfig,
-    pub global_contract_cache_size: usize,
+    pub contract_class_manager_config: ContractClassManagerConfig,
     pub max_l1_handler_txs_per_block_proposal: usize,
 }
 
@@ -36,13 +38,6 @@ impl SerializeConfig for BatcherConfig {
                 ParamPrivacyInput::Public,
             ),
             ser_param(
-                "global_contract_cache_size",
-                &self.global_contract_cache_size,
-                "Cache size for the global_class_hash_to_class. Initialized with this size on \
-                 creation.",
-                ParamPrivacyInput::Public,
-            ),
-            ser_param(
                 "max_l1_handler_txs_per_block_proposal",
                 &self.max_l1_handler_txs_per_block_proposal,
                 "The maximum number of L1 handler transactions to include in a block proposal.",
@@ -54,6 +49,10 @@ impl SerializeConfig for BatcherConfig {
             self.block_builder_config.dump(),
             "block_builder_config",
         ));
+        dump.append(&mut append_sub_config_name(
+            self.contract_class_manager_config.dump(),
+            "contract_class_manager_config",
+        ));
         dump
     }
 }
@@ -63,20 +62,30 @@ impl Default for BatcherConfig {
         Self {
             storage: papyrus_storage::StorageConfig {
                 db_config: papyrus_storage::db::DbConfig {
-                    path_prefix: ".".into(),
-                    // By default we don't want to create the DB if it doesn't exist.
-                    enforce_file_exists: true,
+                    path_prefix: "/data/batcher".into(),
+                    enforce_file_exists: false,
                     ..Default::default()
                 },
                 scope: papyrus_storage::StorageScope::StateOnly,
                 ..Default::default()
             },
-            // TODO: set a more reasonable default value.
+            // TODO(AlonH): set a more reasonable default value.
             outstream_content_buffer_size: 100,
             input_stream_content_buffer_size: 400,
             block_builder_config: BlockBuilderConfig::default(),
-            global_contract_cache_size: 400,
+            contract_class_manager_config: ContractClassManagerConfig::default(),
             max_l1_handler_txs_per_block_proposal: 3,
         }
     }
+}
+
+fn validate_batcher_config(batcher_config: &BatcherConfig) -> Result<(), ValidationError> {
+    if batcher_config.input_stream_content_buffer_size
+        < batcher_config.block_builder_config.tx_chunk_size
+    {
+        return Err(ValidationError::new(
+            "input_stream_content_buffer_size must be at least tx_chunk_size",
+        ));
+    }
+    Ok(())
 }

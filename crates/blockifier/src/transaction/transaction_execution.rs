@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use starknet_api::contract_class::ClassInfo;
-use starknet_api::core::{calculate_contract_address, ContractAddress, Nonce};
+use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::executable_transaction::{
     AccountTransaction as ApiExecutableTransaction,
     DeclareTransaction,
@@ -9,47 +9,54 @@ use starknet_api::executable_transaction::{
     InvokeTransaction,
     L1HandlerTransaction,
 };
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::Fee;
-use starknet_api::transaction::{Transaction as StarknetApiTransaction, TransactionHash};
+use starknet_api::transaction::{
+    CalculateContractAddress,
+    Transaction as StarknetApiTransaction,
+    TransactionHash,
+};
 
 use crate::bouncer::verify_tx_weights_within_max_capacity;
 use crate::context::BlockContext;
 use crate::execution::call_info::CallInfo;
-use crate::execution::entry_point::EntryPointExecutionContext;
+use crate::execution::common_hints::ExecutionMode;
+use crate::execution::entry_point::{EntryPointExecutionContext, SierraGasRevertTracker};
 use crate::fee::receipt::TransactionReceipt;
 use crate::state::cached_state::TransactionalState;
 use crate::state::state_api::UpdatableState;
-use crate::transaction::account_transaction::AccountTransaction;
-use crate::transaction::errors::TransactionFeeError;
+use crate::transaction::account_transaction::{
+    AccountTransaction,
+    ExecutionFlags as AccountExecutionFlags,
+};
+use crate::transaction::errors::{TransactionExecutionError, TransactionFeeError};
 use crate::transaction::objects::{
     TransactionExecutionInfo,
     TransactionExecutionResult,
     TransactionInfo,
     TransactionInfoCreator,
 };
-use crate::transaction::transactions::{Executable, ExecutableTransaction, ExecutionFlags};
+use crate::transaction::transactions::{Executable, ExecutableTransaction};
 
-// TODO: Move into transaction.rs, makes more sense to be defined there.
+// TODO(Gilad): Move into transaction.rs, makes more sense to be defined there.
 #[derive(Clone, Debug, derive_more::From)]
 pub enum Transaction {
     Account(AccountTransaction),
     L1Handler(L1HandlerTransaction),
 }
 
-impl From<starknet_api::executable_transaction::Transaction> for Transaction {
-    fn from(value: starknet_api::executable_transaction::Transaction) -> Self {
+impl Transaction {
+    pub fn new_for_sequencing(value: starknet_api::executable_transaction::Transaction) -> Self {
         match value {
             starknet_api::executable_transaction::Transaction::Account(tx) => {
-                Transaction::Account(tx.into())
+                Transaction::Account(AccountTransaction::new_for_sequencing(tx))
             }
             starknet_api::executable_transaction::Transaction::L1Handler(tx) => {
                 Transaction::L1Handler(tx)
             }
         }
     }
-}
 
-impl Transaction {
     pub fn nonce(&self) -> Nonce {
         match self {
             Self::Account(tx) => tx.nonce(),
@@ -77,7 +84,7 @@ impl Transaction {
         class_info: Option<ClassInfo>,
         paid_fee_on_l1: Option<Fee>,
         deployed_contract_address: Option<ContractAddress>,
-        only_query: bool,
+        execution_flags: AccountExecutionFlags,
     ) -> TransactionExecutionResult<Self> {
         let executable_tx = match tx {
             StarknetApiTransaction::L1Handler(l1_handler) => {
@@ -101,12 +108,7 @@ impl Transaction {
             StarknetApiTransaction::DeployAccount(deploy_account) => {
                 let contract_address = match deployed_contract_address {
                     Some(address) => address,
-                    None => calculate_contract_address(
-                        deploy_account.contract_address_salt(),
-                        deploy_account.class_hash(),
-                        &deploy_account.constructor_calldata(),
-                        ContractAddress::default(),
-                    )?,
+                    None => deploy_account.calculate_contract_address()?,
                 };
                 ApiExecutableTransaction::DeployAccount(DeployAccountTransaction {
                     tx: deploy_account,
@@ -119,11 +121,7 @@ impl Transaction {
             }
             _ => unimplemented!(),
         };
-        let account_tx = match only_query {
-            true => AccountTransaction::new_for_query(executable_tx),
-            false => AccountTransaction::new(executable_tx),
-        };
-        Ok(account_tx.into())
+        Ok(AccountTransaction { tx: executable_tx, execution_flags }.into())
     }
 }
 
@@ -141,13 +139,18 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
-        _execution_flags: ExecutionFlags,
+        _concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
         let tx_context = Arc::new(block_context.to_tx_context(self));
         let limit_steps_by_resources = false;
-        let mut context =
-            EntryPointExecutionContext::new_invoke(tx_context.clone(), limit_steps_by_resources);
-        let mut remaining_gas = tx_context.initial_sierra_gas();
+        // The Sierra gas limit for L1 handler transaction is set to max_execute_sierra_gas.
+        let mut remaining_gas =
+            block_context.versioned_constants.sierra_gas_limit(&ExecutionMode::Execute).0;
+        let mut context = EntryPointExecutionContext::new_invoke(
+            tx_context.clone(),
+            limit_steps_by_resources,
+            SierraGasRevertTracker::new(GasAmount(remaining_gas)),
+        );
         let execute_call_info = self.run_execute(state, &mut context, &mut remaining_gas)?;
         let l1_handler_payload_size = self.payload_size();
         let TransactionReceipt {
@@ -166,7 +169,9 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
         // For now, assert only that any amount of fee was paid.
         // The error message still indicates the required fee.
         if paid_fee == Fee(0) {
-            return Err(TransactionFeeError::InsufficientFee { paid_fee, actual_fee })?;
+            return Err(TransactionExecutionError::TransactionFeeError(
+                TransactionFeeError::InsufficientFee { paid_fee, actual_fee },
+            ));
         }
 
         Ok(TransactionExecutionInfo {
@@ -189,23 +194,22 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
-        execution_flags: ExecutionFlags,
+        concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
         // TODO(Yoni, 1/8/2024): consider unimplementing the ExecutableTransaction trait for inner
         // types, since now running Transaction::execute_raw is not identical to
         // AccountTransaction::execute_raw.
-        let concurrency_mode = execution_flags.concurrency_mode;
         let tx_execution_info = match self {
             Self::Account(account_tx) => {
-                account_tx.execute_raw(state, block_context, execution_flags)?
+                account_tx.execute_raw(state, block_context, concurrency_mode)?
             }
-            Self::L1Handler(tx) => tx.execute_raw(state, block_context, execution_flags)?,
+            Self::L1Handler(tx) => tx.execute_raw(state, block_context, concurrency_mode)?,
         };
 
         // Check if the transaction is too large to fit any block.
         // TODO(Yoni, 1/8/2024): consider caching these two.
         let tx_execution_summary = tx_execution_info.summarize(&block_context.versioned_constants);
-        let mut tx_state_changes_keys = state.get_actual_state_changes()?.state_maps.into_keys();
+        let mut tx_state_changes_keys = state.get_actual_state_changes()?.state_maps.keys();
         tx_state_changes_keys.update_sequencer_key_in_storage(
             &block_context.to_tx_context(self),
             &tx_execution_info,
@@ -217,6 +221,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
             &tx_execution_info.receipt.resources,
             &tx_state_changes_keys,
             &block_context.bouncer_config,
+            &block_context.versioned_constants,
         )?;
 
         Ok(tx_execution_info)

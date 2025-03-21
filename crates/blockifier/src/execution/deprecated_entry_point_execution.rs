@@ -9,17 +9,17 @@ use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::abi::constants::{CONSTRUCTOR_ENTRY_POINT_NAME, DEFAULT_ENTRY_POINT_SELECTOR};
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::EntryPointSelector;
-use starknet_api::execution_resources::GasAmount;
 use starknet_api::hash::StarkHash;
 
+use super::call_info::StorageAccessTracker;
 use super::execution_utils::SEGMENT_ARENA_BUILTIN_SIZE;
-use crate::execution::call_info::{CallExecution, CallInfo, ChargedResources};
-use crate::execution::contract_class::{ContractClassV0, TrackedResource};
+use crate::execution::call_info::{CallExecution, CallInfo};
+use crate::execution::contract_class::{CompiledClassV0, TrackedResource};
 use crate::execution::deprecated_syscalls::hint_processor::DeprecatedSyscallHintProcessor;
 use crate::execution::entry_point::{
-    CallEntryPoint,
     EntryPointExecutionContext,
     EntryPointExecutionResult,
+    ExecutableCallEntryPoint,
 };
 use crate::execution::errors::{PostExecutionError, PreExecutionError};
 use crate::execution::execution_utils::{read_execution_retdata, Args, ReadOnlySegments};
@@ -43,13 +43,13 @@ pub const CAIRO0_BUILTINS_NAMES: [BuiltinName; 6] = [
 
 /// Executes a specific call to a contract entry point and returns its output.
 pub fn execute_entry_point_call(
-    call: CallEntryPoint,
-    contract_class: ContractClassV0,
+    call: ExecutableCallEntryPoint,
+    compiled_class: CompiledClassV0,
     state: &mut dyn State,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
     let VmExecutionContext { mut runner, mut syscall_handler, initial_syscall_ptr, entry_point_pc } =
-        initialize_execution_context(&call, contract_class, state, context)?;
+        initialize_execution_context(&call, compiled_class, state, context)?;
 
     let (implicit_args, args) = prepare_call_arguments(
         &call,
@@ -66,14 +66,14 @@ pub fn execute_entry_point_call(
 }
 
 pub fn initialize_execution_context<'a>(
-    call: &CallEntryPoint,
-    contract_class: ContractClassV0,
+    call: &ExecutableCallEntryPoint,
+    compiled_class: CompiledClassV0,
     state: &'a mut dyn State,
     context: &'a mut EntryPointExecutionContext,
 ) -> Result<VmExecutionContext<'a>, PreExecutionError> {
     // Verify use of cairo0 builtins only.
     let program_builtins: HashSet<&BuiltinName> =
-        HashSet::from_iter(contract_class.program.iter_builtins());
+        HashSet::from_iter(compiled_class.program.iter_builtins());
     let unsupported_builtins =
         &program_builtins - &HashSet::from_iter(CAIRO0_BUILTINS_NAMES.iter());
     if !unsupported_builtins.is_empty() {
@@ -83,14 +83,14 @@ pub fn initialize_execution_context<'a>(
     }
 
     // Resolve initial PC from EP indicator.
-    let entry_point_pc = resolve_entry_point_pc(call, &contract_class)?;
+    let entry_point_pc = resolve_entry_point_pc(call, &compiled_class)?;
     // Instantiate Cairo runner.
     let proof_mode = false;
     let trace_enabled = false;
     let allow_missing_builtins = false;
     let program_base = None;
     let mut runner =
-        CairoRunner::new(&contract_class.program, LayoutName::starknet, proof_mode, trace_enabled)?;
+        CairoRunner::new(&compiled_class.program, LayoutName::starknet, proof_mode, trace_enabled)?;
 
     runner.initialize_builtins(allow_missing_builtins)?;
     runner.initialize_segments(program_base);
@@ -103,14 +103,15 @@ pub fn initialize_execution_context<'a>(
         initial_syscall_ptr,
         call.storage_address,
         call.caller_address,
+        call.class_hash,
     );
 
     Ok(VmExecutionContext { runner, syscall_handler, initial_syscall_ptr, entry_point_pc })
 }
 
 pub fn resolve_entry_point_pc(
-    call: &CallEntryPoint,
-    contract_class: &ContractClassV0,
+    call: &ExecutableCallEntryPoint,
+    compiled_class: &CompiledClassV0,
 ) -> Result<usize, PreExecutionError> {
     if call.entry_point_type == EntryPointType::Constructor
         && call.entry_point_selector != selector_from_name(CONSTRUCTOR_ENTRY_POINT_NAME)
@@ -118,7 +119,7 @@ pub fn resolve_entry_point_pc(
         return Err(PreExecutionError::InvalidConstructorEntryPointName);
     }
 
-    let entry_points_of_same_type = &contract_class.entry_points_by_type[&call.entry_point_type];
+    let entry_points_of_same_type = &compiled_class.entry_points_by_type[&call.entry_point_type];
     let filtered_entry_points: Vec<_> = entry_points_of_same_type
         .iter()
         .filter(|ep| ep.selector == call.entry_point_selector)
@@ -157,7 +158,7 @@ pub fn resolve_entry_point_pc(
 }
 
 pub fn prepare_call_arguments(
-    call: &CallEntryPoint,
+    call: &ExecutableCallEntryPoint,
     runner: &mut CairoRunner,
     initial_syscall_ptr: Relocatable,
     read_only_segments: &mut ReadOnlySegments,
@@ -218,7 +219,7 @@ pub fn run_entry_point(
 pub fn finalize_execution(
     mut runner: CairoRunner,
     syscall_handler: DeprecatedSyscallHintProcessor<'_>,
-    call: CallEntryPoint,
+    call: ExecutableCallEntryPoint,
     implicit_args: Vec<MaybeRelocatable>,
     n_total_args: usize,
 ) -> Result<CallInfo, PostExecutionError> {
@@ -252,17 +253,13 @@ pub fn finalize_execution(
     }
     // Take into account the syscall resources of the current call.
     vm_resources_without_inner_calls +=
-        &versioned_constants.get_additional_os_syscall_resources(&syscall_handler.syscall_counter);
+        &versioned_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
 
-    let charged_resources_without_inner_calls = ChargedResources {
-        vm_resources: vm_resources_without_inner_calls,
-        gas_for_fee: GasAmount(0),
-    };
-    let charged_resources = &charged_resources_without_inner_calls
-        + &CallInfo::summarize_charged_resources(syscall_handler.inner_calls.iter());
+    let vm_resources = &vm_resources_without_inner_calls
+        + &CallInfo::summarize_vm_resources(syscall_handler.inner_calls.iter());
 
     Ok(CallInfo {
-        call,
+        call: call.into(),
         execution: CallExecution {
             retdata: read_execution_retdata(&runner, retdata_size, &retdata_ptr)?,
             events: syscall_handler.events,
@@ -272,10 +269,12 @@ pub fn finalize_execution(
         },
         inner_calls: syscall_handler.inner_calls,
         tracked_resource: TrackedResource::CairoSteps,
-        charged_resources,
-        storage_read_values: syscall_handler.read_values,
-        accessed_storage_keys: syscall_handler.accessed_keys,
-        ..Default::default()
+        resources: vm_resources,
+        storage_access_tracker: StorageAccessTracker {
+            storage_read_values: syscall_handler.read_values,
+            accessed_storage_keys: syscall_handler.accessed_keys,
+            ..Default::default()
+        },
     })
 }
 

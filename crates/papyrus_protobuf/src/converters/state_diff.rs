@@ -8,7 +8,7 @@ use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::state::{StorageKey, ThinStateDiff};
 use starknet_types_core::felt::Felt;
 
-use super::common::volition_domain_to_enum_int;
+use super::common::{missing, volition_domain_to_enum_int};
 use super::ProtobufConversionError;
 use crate::sync::{
     ContractDiff,
@@ -35,9 +35,7 @@ impl TryFrom<protobuf::StateDiffsResponse> for DataOrFin<ThinStateDiff> {
                 declared_class,
             )) => Ok(DataOrFin(Some(declared_class.try_into()?))),
             Some(protobuf::state_diffs_response::StateDiffMessage::Fin(_)) => Ok(DataOrFin(None)),
-            None => Err(ProtobufConversionError::MissingField {
-                field_description: "StateDiffsResponse::state_diff_message",
-            }),
+            None => Err(missing("StateDiffsResponse::state_diff_message")),
         }
     }
 }
@@ -61,9 +59,7 @@ impl TryFrom<protobuf::StateDiffsResponse> for DataOrFin<StateDiffChunk> {
                 )))),
             },
             Some(protobuf::state_diffs_response::StateDiffMessage::Fin(_)) => Ok(DataOrFin(None)),
-            None => Err(ProtobufConversionError::MissingField {
-                field_description: "StateDiffsResponse::state_diff_message",
-            }),
+            None => Err(missing("StateDiffsResponse::state_diff_message")),
         }
     }
 }
@@ -95,12 +91,7 @@ auto_impl_into_and_try_from_vec_u8!(DataOrFin<StateDiffChunk>, protobuf::StateDi
 impl TryFrom<protobuf::ContractDiff> for ThinStateDiff {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::ContractDiff) -> Result<Self, Self::Error> {
-        let contract_address = value
-            .address
-            .ok_or(ProtobufConversionError::MissingField {
-                field_description: "ContractDiff::address",
-            })?
-            .try_into()?;
+        let contract_address = value.address.ok_or(missing("ContractDiff::address"))?.try_into()?;
 
         let deployed_contracts = value
             .class_hash
@@ -144,10 +135,6 @@ impl TryFrom<protobuf::ContractDiff> for ThinStateDiff {
             // These two fields come from DeclaredClass messages.
             declared_classes: Default::default(),
             deprecated_declared_classes: Default::default(),
-            // The p2p specs doesn't separate replaced classes from deployed contracts. In RPC v0.8
-            // the node will stop separating them as well. Until then nodes syncing from
-            // P2P won't be able to separate replaced classes from deployed contracts correctly
-            replaced_classes: Default::default(),
         })
     }
 }
@@ -155,16 +142,10 @@ impl TryFrom<protobuf::ContractDiff> for ThinStateDiff {
 impl TryFrom<protobuf::DeclaredClass> for ThinStateDiff {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::DeclaredClass) -> Result<Self, Self::Error> {
-        let class_hash = ClassHash(
-            value
-                .class_hash
-                .ok_or(ProtobufConversionError::MissingField {
-                    field_description: "DeclaredClass::class_hash",
-                })?
-                .try_into()?,
-        );
+        let class_hash =
+            ClassHash(value.class_hash.ok_or(missing("DeclaredClass::class_hash"))?.try_into()?);
 
-        // According to the P2P specs, if compiled_class_hash is missing, the declared class is a
+        // According to the p2p specs, if compiled_class_hash is missing, the declared class is a
         // cairo-0 class.
         match value.compiled_class_hash {
             Some(compiled_class_hash) => Ok(ThinStateDiff {
@@ -185,9 +166,7 @@ impl TryFrom<protobuf::DeclaredClass> for ThinStateDiff {
 impl TryFrom<protobuf::ContractStoredValue> for (StorageKey, Felt) {
     type Error = ProtobufConversionError;
     fn try_from(entry: protobuf::ContractStoredValue) -> Result<Self, Self::Error> {
-        let key_felt = Felt::try_from(entry.key.ok_or(ProtobufConversionError::MissingField {
-            field_description: "ContractStoredValue::key",
-        })?)?;
+        let key_felt = Felt::try_from(entry.key.ok_or(missing("ContractStoredValue::key"))?)?;
         let key = StorageKey(key_felt.try_into().map_err(|_| {
             ProtobufConversionError::OutOfRangeValue {
                 // TODO(shahak): Check if the type in the protobuf of the field
@@ -197,9 +176,7 @@ impl TryFrom<protobuf::ContractStoredValue> for (StorageKey, Felt) {
                 value_as_str: format!("{key_felt:?}"),
             }
         })?);
-        let value = Felt::try_from(entry.value.ok_or(ProtobufConversionError::MissingField {
-            field_description: "ContractStoredValue::value",
-        })?)?;
+        let value = Felt::try_from(entry.value.ok_or(missing("ContractStoredValue::value"))?)?;
         Ok((key, value))
     }
 }
@@ -216,12 +193,7 @@ impl TryFrom<protobuf::StateDiffsRequest> for StateDiffQuery {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::StateDiffsRequest) -> Result<Self, Self::Error> {
         Ok(StateDiffQuery(
-            value
-                .iteration
-                .ok_or(ProtobufConversionError::MissingField {
-                    field_description: "StateDiffsRequest::iteration",
-                })?
-                .try_into()?,
+            value.iteration.ok_or(missing("StateDiffsRequest::iteration"))?.try_into()?,
         ))
     }
 }
@@ -244,12 +216,7 @@ auto_impl_into_and_try_from_vec_u8!(StateDiffQuery, protobuf::StateDiffsRequest)
 impl TryFrom<protobuf::ContractDiff> for ContractDiff {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::ContractDiff) -> Result<Self, Self::Error> {
-        let contract_address = value
-            .address
-            .ok_or(ProtobufConversionError::MissingField {
-                field_description: "ContractDiff::address",
-            })?
-            .try_into()?;
+        let contract_address = value.address.ok_or(missing("ContractDiff::address"))?.try_into()?;
 
         // class_hash can be None if the contract wasn't deployed in this block
         let class_hash = value
@@ -293,20 +260,12 @@ impl From<ContractDiff> for protobuf::ContractDiff {
 impl TryFrom<protobuf::DeclaredClass> for DeclaredClass {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::DeclaredClass) -> Result<Self, Self::Error> {
-        let class_hash = ClassHash(
-            value
-                .class_hash
-                .ok_or(ProtobufConversionError::MissingField {
-                    field_description: "DeclaredClass::class_hash",
-                })?
-                .try_into()?,
-        );
+        let class_hash =
+            ClassHash(value.class_hash.ok_or(missing("DeclaredClass::class_hash"))?.try_into()?);
         let compiled_class_hash = CompiledClassHash(
             value
                 .compiled_class_hash
-                .ok_or(ProtobufConversionError::MissingField {
-                    field_description: "DeclaredClass::compiled_class_hash",
-                })?
+                .ok_or(missing("DeclaredClass::compiled_class_hash"))?
                 .try_into()?,
         );
         Ok(DeclaredClass { class_hash, compiled_class_hash })
@@ -327,12 +286,7 @@ impl TryFrom<protobuf::DeclaredClass> for DeprecatedDeclaredClass {
     fn try_from(value: protobuf::DeclaredClass) -> Result<Self, Self::Error> {
         Ok(DeprecatedDeclaredClass {
             class_hash: ClassHash(
-                value
-                    .class_hash
-                    .ok_or(ProtobufConversionError::MissingField {
-                        field_description: "DeclaredClass::class_hash",
-                    })?
-                    .try_into()?,
+                value.class_hash.ok_or(missing("DeclaredClass::class_hash"))?.try_into()?,
             ),
         })
     }

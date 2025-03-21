@@ -5,6 +5,7 @@ mod core_test;
 use std::fmt::Debug;
 use std::sync::LazyLock;
 
+use num_traits::ToPrimitive;
 use primitive_types::H160;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use starknet_types_core::felt::{Felt, NonZeroFelt};
@@ -20,6 +21,12 @@ use crate::{impl_from_through_intermediate, StarknetApiError};
 pub fn ascii_as_felt(ascii_str: &str) -> Result<Felt, StarknetApiError> {
     Felt::from_hex(hex::encode(ascii_str).as_str()).map_err(|_| StarknetApiError::OutOfRange {
         string: format!("The str {}, does not fit into a single felt", ascii_str),
+    })
+}
+
+pub fn felt_to_u128(felt: &Felt) -> Result<u128, StarknetApiError> {
+    felt.to_u128().ok_or(StarknetApiError::OutOfRange {
+        string: format!("Felt {} is too big to convert to 'u128'", *felt,),
     })
 }
 
@@ -75,19 +82,11 @@ impl ChainId {
     pub fn as_hex(&self) -> String {
         format!("0x{}", hex::encode(self.to_string()))
     }
-
-    #[cfg(any(feature = "testing", test))]
-    pub fn create_for_testing() -> Self {
-        const CHAIN_ID_NAME: &str = "SN_GOERLI";
-
-        ChainId::Other(CHAIN_ID_NAME.to_string())
-    }
 }
 
 /// The address of a contract, used for example in [StateDiff](`crate::state::StateDiff`),
 /// [DeclareTransaction](`crate::transaction::DeclareTransaction`), and
 /// [BlockHeader](`crate::block::BlockHeader`).
-
 // The block hash table is stored in address 0x1,
 // this is a special address that is not used for contracts.
 pub const BLOCK_HASH_TABLE_ADDRESS: ContractAddress = ContractAddress(PatriciaKey(StarkHash::ONE));
@@ -156,7 +155,7 @@ impl TryFrom<StarkHash> for ContractAddress {
     }
 }
 
-// TODO: Add a hash_function as a parameter
+// TODO(Noa): Add a hash_function as a parameter
 pub fn calculate_contract_address(
     salt: ContractAddressSalt,
     class_hash: ClassHash,
@@ -355,8 +354,16 @@ pub const PATRICIA_KEY_UPPER_BOUND: &str =
     "0x800000000000000000000000000000000000000000000000000000000000000";
 
 impl PatriciaKey {
+    pub const ZERO: Self = Self(StarkHash::ZERO);
+    pub const ONE: Self = Self(StarkHash::ONE);
+    pub const TWO: Self = Self(StarkHash::TWO);
+
     pub fn key(&self) -> &StarkHash {
         &self.0
+    }
+
+    pub const fn from_hex_unchecked(val: &str) -> Self {
+        Self(StarkHash::from_hex_unchecked(val))
     }
 }
 

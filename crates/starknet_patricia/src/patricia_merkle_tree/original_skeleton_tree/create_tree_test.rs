@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use ethnum::U256;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
+use starknet_patricia_storage::db_object::DBObject;
+use starknet_patricia_storage::map_storage::MapStorage;
+use starknet_patricia_storage::storage_trait::{DbKey, DbValue};
+use starknet_types_core::felt::Felt;
 
 use super::OriginalSkeletonTreeImpl;
-use crate::felt::Felt;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::external_test_utils::{
     create_binary_entry,
@@ -27,9 +30,6 @@ use crate::patricia_merkle_tree::original_skeleton_tree::create_tree::SubTree;
 use crate::patricia_merkle_tree::original_skeleton_tree::node::OriginalSkeletonNode;
 use crate::patricia_merkle_tree::original_skeleton_tree::tree::OriginalSkeletonTree;
 use crate::patricia_merkle_tree::types::{NodeIndex, SortedLeafIndices, SubTreeHeight};
-use crate::storage::db_object::DBObject;
-use crate::storage::map_storage::MapStorage;
-use crate::storage::storage_trait::{StorageKey, StorageValue};
 
 #[rstest]
 // This test assumes for simplicity that hash is addition (i.e hash(a,b) = a + b).
@@ -411,7 +411,7 @@ fn test_get_bottom_subtree(
     assert_eq!(subtree, expected_subtree);
 }
 
-pub(crate) fn create_mock_leaf_entry(val: u128) -> (StorageKey, StorageValue) {
+pub(crate) fn create_mock_leaf_entry(val: u128) -> (DbKey, DbValue) {
     let leaf = MockLeaf(Felt::from(val));
     (leaf.get_db_key(&leaf.0.to_bytes_be()), leaf.serialize())
 }

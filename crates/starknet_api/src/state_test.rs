@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use indexmap::{indexmap, IndexMap};
 use serde_json::json;
 
-use super::ThinStateDiff;
+use crate::class_hash;
 use crate::core::{ClassHash, CompiledClassHash, Nonce};
 use crate::deprecated_contract_class::EntryPointOffset;
+use crate::state::{SierraContractClass, ThinStateDiff};
+use crate::test_utils::read_json_file;
 
 #[test]
 fn entry_point_offset_from_json_str() {
@@ -54,12 +56,8 @@ fn thin_state_diff_len() {
             0u64.into() => Nonce(1u64.into()),
             1u64.into() => Nonce(1u64.into()),
         },
-        replaced_classes: indexmap! {
-            2u64.into() => ClassHash(4u64.into()),
-            3u64.into() => ClassHash(5u64.into()),
-        },
     };
-    assert_eq!(state_diff.len(), 13);
+    assert_eq!(state_diff.len(), 11);
 }
 
 #[test]
@@ -108,11 +106,13 @@ fn thin_state_diff_is_empty() {
         }
         .is_empty()
     );
-    assert!(
-        !ThinStateDiff {
-            replaced_classes: indexmap! { Default::default() => Default::default() },
-            ..Default::default()
-        }
-        .is_empty()
-    );
+}
+
+#[test]
+fn calc_class_hash() {
+    let class: SierraContractClass = serde_json::from_value(read_json_file("class.json")).unwrap();
+    let expected_class_hash =
+        class_hash!("0x29927c8af6bccf3f6fda035981e765a7bdbf18a2dc0d630494f8758aa908e2b");
+    let calculated_class_hash = class.calculate_class_hash();
+    assert_eq!(calculated_class_hash, expected_class_hash);
 }

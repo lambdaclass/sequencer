@@ -4,57 +4,54 @@ use std::sync::Arc;
 #[cfg(feature = "cairo_native")]
 use std::sync::{LazyLock, RwLock};
 
+use blockifier_test_utils::contracts::get_raw_contract_class;
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 #[cfg(feature = "cairo_native")]
 use cairo_lang_starknet_classes::contract_class::ContractClass as SierraContractClass;
 #[cfg(feature = "cairo_native")]
 use cairo_native::executor::AotContractExecutor;
 use serde_json::Value;
-use starknet_api::block::{BlockNumber, BlockTimestamp, NonzeroGasPrice};
+use starknet_api::block::BlockInfo;
 use starknet_api::contract_address;
-use starknet_api::core::{ChainId, ClassHash};
+#[cfg(feature = "cairo_native")]
+use starknet_api::contract_class::SierraVersion;
+use starknet_api::core::ClassHash;
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
-
-use super::{
-    update_json_value,
+use starknet_api::execution_resources::GasAmount;
+use starknet_api::test_utils::{
+    CHAIN_ID_FOR_TESTS,
     TEST_ERC20_CONTRACT_ADDRESS,
     TEST_ERC20_CONTRACT_ADDRESS2,
-    TEST_SEQUENCER_ADDRESS,
 };
-use crate::blockifier::block::{BlockInfo, GasPrices};
-use crate::bouncer::{BouncerConfig, BouncerWeights, BuiltinCount};
-use crate::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
-use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
-use crate::execution::common_hints::ExecutionMode;
-#[cfg(feature = "cairo_native")]
-use crate::execution::contract_class::ContractClassV1;
-use crate::execution::entry_point::{
-    CallEntryPoint,
-    EntryPointExecutionContext,
-    EntryPointExecutionResult,
-};
-#[cfg(feature = "cairo_native")]
-use crate::execution::native::contract_class::NativeContractClassV1;
-use crate::state::state_api::State;
-use crate::test_utils::{
-    get_raw_contract_class,
-    CURRENT_BLOCK_NUMBER,
-    CURRENT_BLOCK_TIMESTAMP,
-    DEFAULT_ETH_L1_DATA_GAS_PRICE,
-    DEFAULT_ETH_L1_GAS_PRICE,
-    DEFAULT_STRK_L1_DATA_GAS_PRICE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-};
-use crate::transaction::objects::{
-    CurrentTransactionInfo,
-    DeprecatedTransactionInfo,
-    TransactionInfo,
-};
-use crate::versioned_constants::{
+
+use crate::blockifier::config::{CairoNativeRunConfig, ContractClassManagerConfig};
+use crate::blockifier_versioned_constants::{
     GasCosts,
     OsConstants,
     VersionedConstants,
     VERSIONED_CONSTANTS_LATEST_JSON,
+};
+use crate::bouncer::{BouncerConfig, BouncerWeights};
+use crate::context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext};
+use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
+use crate::execution::common_hints::ExecutionMode;
+#[cfg(feature = "cairo_native")]
+use crate::execution::contract_class::CompiledClassV1;
+use crate::execution::entry_point::{
+    CallEntryPoint,
+    EntryPointExecutionContext,
+    EntryPointExecutionResult,
+    SierraGasRevertTracker,
+};
+#[cfg(feature = "cairo_native")]
+use crate::execution::native::contract_class::NativeCompiledClassV1;
+use crate::state::contract_class_manager::ContractClassManager;
+use crate::state::state_api::State;
+use crate::test_utils::update_json_value;
+use crate::transaction::objects::{
+    CurrentTransactionInfo,
+    DeprecatedTransactionInfo,
+    TransactionInfo,
 };
 
 impl CallEntryPoint {
@@ -66,24 +63,50 @@ impl CallEntryPoint {
         self.execute_directly_given_tx_info(
             state,
             TransactionInfo::Current(CurrentTransactionInfo::create_for_testing()),
+            None,
             limit_steps_by_resources,
             ExecutionMode::Execute,
         )
+    }
+
+    pub fn execute_directly_given_block_context(
+        self,
+        state: &mut dyn State,
+        block_context: BlockContext,
+    ) -> EntryPointExecutionResult<CallInfo> {
+        // Do not limit steps by resources as we use default resources.
+        let limit_steps_by_resources = false;
+        let tx_context = TransactionContext {
+            block_context: Arc::new(block_context),
+            tx_info: TransactionInfo::Current(CurrentTransactionInfo::create_for_testing()),
+        };
+
+        let mut context = EntryPointExecutionContext::new(
+            Arc::new(tx_context),
+            ExecutionMode::Execute,
+            limit_steps_by_resources,
+            SierraGasRevertTracker::new(GasAmount(self.initial_gas)),
+        );
+        let mut remaining_gas = self.initial_gas;
+        self.execute(state, &mut context, &mut remaining_gas)
     }
 
     pub fn execute_directly_given_tx_info(
         self,
         state: &mut dyn State,
         tx_info: TransactionInfo,
+        block_context: Option<Arc<BlockContext>>,
         limit_steps_by_resources: bool,
         execution_mode: ExecutionMode,
     ) -> EntryPointExecutionResult<CallInfo> {
-        let tx_context =
-            TransactionContext { block_context: BlockContext::create_for_testing(), tx_info };
+        let block_context =
+            block_context.unwrap_or_else(|| Arc::new(BlockContext::create_for_testing()));
+        let tx_context = TransactionContext { block_context, tx_info };
         let mut context = EntryPointExecutionContext::new(
             Arc::new(tx_context),
             execution_mode,
             limit_steps_by_resources,
+            SierraGasRevertTracker::new(GasAmount(self.initial_gas)),
         );
         let mut remaining_gas = self.initial_gas;
         self.execute(state, &mut context, &mut remaining_gas)
@@ -100,6 +123,7 @@ impl CallEntryPoint {
             state,
             // TODO(Yoni, 1/12/2024): change the default to V3.
             TransactionInfo::Deprecated(DeprecatedTransactionInfo::default()),
+            None,
             limit_steps_by_resources,
             ExecutionMode::Validate,
         )
@@ -137,43 +161,12 @@ impl GasCosts {
 impl ChainInfo {
     pub fn create_for_testing() -> Self {
         Self {
-            chain_id: ChainId::create_for_testing(),
+            chain_id: CHAIN_ID_FOR_TESTS.clone(),
             fee_token_addresses: FeeTokenAddresses {
                 eth_fee_token_address: contract_address!(TEST_ERC20_CONTRACT_ADDRESS),
                 strk_fee_token_address: contract_address!(TEST_ERC20_CONTRACT_ADDRESS2),
             },
         }
-    }
-}
-
-impl BlockInfo {
-    pub fn create_for_testing() -> Self {
-        Self {
-            block_number: BlockNumber(CURRENT_BLOCK_NUMBER),
-            block_timestamp: BlockTimestamp(CURRENT_BLOCK_TIMESTAMP),
-            sequencer_address: contract_address!(TEST_SEQUENCER_ADDRESS),
-            gas_prices: GasPrices::new(
-                DEFAULT_ETH_L1_GAS_PRICE,
-                DEFAULT_STRK_L1_GAS_PRICE,
-                DEFAULT_ETH_L1_DATA_GAS_PRICE,
-                DEFAULT_STRK_L1_DATA_GAS_PRICE,
-                NonzeroGasPrice::new(
-                    VersionedConstants::latest_constants()
-                        .convert_l1_to_l2_gas_price_round_up(DEFAULT_ETH_L1_GAS_PRICE.into()),
-                )
-                .unwrap(),
-                NonzeroGasPrice::new(
-                    VersionedConstants::latest_constants()
-                        .convert_l1_to_l2_gas_price_round_up(DEFAULT_STRK_L1_GAS_PRICE.into()),
-                )
-                .unwrap(),
-            ),
-            use_kzg_da: false,
-        }
-    }
-
-    pub fn create_for_testing_with_kzg(use_kzg_da: bool) -> Self {
-        Self { use_kzg_da, ..Self::create_for_testing() }
     }
 }
 
@@ -222,6 +215,15 @@ impl CallExecution {
     }
 }
 
+impl ContractClassManager {
+    pub fn create_for_testing(native_config: CairoNativeRunConfig) -> Self {
+        let config = ContractClassManagerConfig {
+            cairo_native_run_config: native_config,
+            ..Default::default()
+        };
+        ContractClassManager::start(config)
+    }
+}
 // Contract loaders.
 
 // TODO(Noa): Consider using PathBuf.
@@ -235,19 +237,13 @@ pub trait LoadContractFromFile: serde::de::DeserializeOwned {
 impl LoadContractFromFile for CasmContractClass {}
 impl LoadContractFromFile for DeprecatedContractClass {}
 
-impl BouncerWeights {
-    pub fn create_for_testing(builtin_count: BuiltinCount) -> Self {
-        Self { builtin_count, ..Self::empty() }
-    }
-}
-
 #[cfg(feature = "cairo_native")]
-static COMPILED_NATIVE_CONTRACT_CACHE: LazyLock<RwLock<HashMap<String, NativeContractClassV1>>> =
+static COMPILED_NATIVE_CONTRACT_CACHE: LazyLock<RwLock<HashMap<String, NativeCompiledClassV1>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
 #[cfg(feature = "cairo_native")]
-impl NativeContractClassV1 {
-    /// Convenience function to construct a NativeContractClassV1 from a raw contract class.
+impl NativeCompiledClassV1 {
+    /// Convenience function to construct a NativeCompiledClassV1 from a raw contract class.
     /// If control over the compilation is desired use [Self::new] instead.
     pub fn try_from_json_string(raw_sierra_contract_class: &str) -> Self {
         let sierra_contract_class: SierraContractClass =
@@ -257,9 +253,20 @@ impl NativeContractClassV1 {
             .extract_sierra_program()
             .expect("Cannot extract sierra program from sierra contract class");
 
+        let sierra_version_values = sierra_contract_class
+            .sierra_program
+            .iter()
+            .take(3)
+            .map(|x| x.value.clone())
+            .collect::<Vec<_>>();
+
+        let sierra_version = SierraVersion::extract_from_program(&sierra_version_values)
+            .expect("Cannot extract sierra version from sierra program");
+
         let executor = AotContractExecutor::new(
             &sierra_program,
             &sierra_contract_class.entry_points_by_type,
+            sierra_version.clone().into(),
             cairo_native::OptLevel::Default,
         )
         .expect("Cannot compile sierra into native");
@@ -268,10 +275,10 @@ impl NativeContractClassV1 {
         let casm_contract_class =
             CasmContractClass::from_contract_class(sierra_contract_class, false, usize::MAX)
                 .expect("Cannot compile sierra contract class into casm contract class");
-        let casm = ContractClassV1::try_from(casm_contract_class)
-            .expect("Cannot get ContractClassV1 from CasmContractClass");
+        let casm = CompiledClassV1::try_from((casm_contract_class, sierra_version))
+            .expect("Cannot get CompiledClassV1 from CasmContractClass");
 
-        NativeContractClassV1::new(executor, casm)
+        NativeCompiledClassV1::new(executor, casm)
     }
 
     pub fn from_file(contract_path: &str) -> Self {
@@ -287,7 +294,7 @@ impl NativeContractClassV1 {
         }
         std::mem::drop(cache);
 
-        let class = NativeContractClassV1::from_file(path);
+        let class = NativeCompiledClassV1::from_file(path);
         let mut cache = COMPILED_NATIVE_CONTRACT_CACHE.write().unwrap();
         cache.insert(path.to_string(), class.clone());
         class

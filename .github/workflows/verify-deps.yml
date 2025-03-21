@@ -4,14 +4,17 @@ on:
   schedule:
     - cron: '0 0 * * *' # Runs at 00:00 UTC every day
 
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
 jobs:
   latest_deps:
     name: Latest Dependencies
-    runs-on: starkware-ubuntu-latest-medium
-    continue-on-error: true
+    runs-on: starkware-ubuntu-24.04-medium
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
+      - run: npm install -g ganache@7.4.3
       - name: Update Dependencies
         run: cargo update --verbose
       - name: Build

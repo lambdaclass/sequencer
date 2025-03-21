@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use papyrus_network_types::network_types::BroadcastedMessageMetadata;
-use papyrus_proc_macros::handle_response_variants;
+use papyrus_proc_macros::handle_all_response_variants;
 use serde::{Deserialize, Serialize};
-use starknet_api::rpc_transaction::RpcTransaction;
+use starknet_api::rpc_transaction::InternalRpcTransaction;
 use starknet_sequencer_infra::component_client::{
     ClientError,
     LocalComponentClient,
@@ -19,6 +19,7 @@ use thiserror::Error;
 use crate::errors::MempoolP2pPropagatorError;
 use crate::mempool_p2p_types::MempoolP2pPropagatorResult;
 
+#[cfg_attr(any(feature = "testing", test), mockall::automock)]
 #[async_trait]
 pub trait MempoolP2pPropagatorClient: Send + Sync {
     /// Adds a transaction to be propagated to other peers. This should only be called on a new
@@ -26,7 +27,7 @@ pub trait MempoolP2pPropagatorClient: Send + Sync {
     /// from other peers, use `continue_propagation`.
     async fn add_transaction(
         &self,
-        transaction: RpcTransaction,
+        transaction: InternalRpcTransaction,
     ) -> MempoolP2pPropagatorClientResult<()>;
 
     /// Continues the propagation of a transaction we've received from another peer.
@@ -34,6 +35,9 @@ pub trait MempoolP2pPropagatorClient: Send + Sync {
         &self,
         propagation_metadata: BroadcastedMessageMetadata,
     ) -> MempoolP2pPropagatorClientResult<()>;
+
+    /// Broadcast the queued transactions as a new transaction batch.
+    async fn broadcast_queued_transactions(&self) -> MempoolP2pPropagatorClientResult<()>;
 }
 
 pub type LocalMempoolP2pPropagatorClient =
@@ -47,14 +51,16 @@ pub type MempoolP2pPropagatorRequestAndResponseSender =
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MempoolP2pPropagatorRequest {
-    AddTransaction(RpcTransaction),
+    AddTransaction(InternalRpcTransaction),
     ContinuePropagation(BroadcastedMessageMetadata),
+    BroadcastQueuedTransactions(),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MempoolP2pPropagatorResponse {
     AddTransaction(MempoolP2pPropagatorResult<()>),
     ContinuePropagation(MempoolP2pPropagatorResult<()>),
+    BroadcastQueuedTransactions(MempoolP2pPropagatorResult<()>),
 }
 
 #[derive(Clone, Debug, Error)]
@@ -73,15 +79,15 @@ where
 {
     async fn add_transaction(
         &self,
-        transaction: RpcTransaction,
+        transaction: InternalRpcTransaction,
     ) -> MempoolP2pPropagatorClientResult<()> {
         let request = MempoolP2pPropagatorRequest::AddTransaction(transaction);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             MempoolP2pPropagatorResponse,
             AddTransaction,
             MempoolP2pPropagatorClientError,
-            MempoolP2pPropagatorError
+            MempoolP2pPropagatorError,
+            Direct
         )
     }
 
@@ -90,12 +96,23 @@ where
         propagation_metadata: BroadcastedMessageMetadata,
     ) -> MempoolP2pPropagatorClientResult<()> {
         let request = MempoolP2pPropagatorRequest::ContinuePropagation(propagation_metadata);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             MempoolP2pPropagatorResponse,
             ContinuePropagation,
             MempoolP2pPropagatorClientError,
-            MempoolP2pPropagatorError
+            MempoolP2pPropagatorError,
+            Direct
+        )
+    }
+
+    async fn broadcast_queued_transactions(&self) -> MempoolP2pPropagatorClientResult<()> {
+        let request = MempoolP2pPropagatorRequest::BroadcastQueuedTransactions();
+        handle_all_response_variants!(
+            MempoolP2pPropagatorResponse,
+            BroadcastQueuedTransactions,
+            MempoolP2pPropagatorClientError,
+            MempoolP2pPropagatorError,
+            Direct
         )
     }
 }

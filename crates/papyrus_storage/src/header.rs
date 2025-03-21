@@ -73,6 +73,8 @@ pub(crate) struct StorageBlockHeader {
     pub l1_gas_price: GasPricePerToken,
     pub l1_data_gas_price: GasPricePerToken,
     pub l2_gas_price: GasPricePerToken,
+    pub l2_gas_consumed: u64,
+    pub next_l2_gas_price: u64,
     pub state_root: GlobalRoot,
     pub sequencer: SequencerContractAddress,
     pub timestamp: BlockTimestamp,
@@ -151,7 +153,7 @@ where
     ) -> StorageResult<Self>;
 }
 
-impl<'env, Mode: TransactionKind> HeaderStorageReader for StorageTxn<'env, Mode> {
+impl<Mode: TransactionKind> HeaderStorageReader for StorageTxn<'_, Mode> {
     fn get_header_marker(&self) -> StorageResult<BlockNumber> {
         let markers_table = self.open_table(&self.tables.markers)?;
         Ok(markers_table.get(&self.txn, &MarkerKind::Header)?.unwrap_or_default())
@@ -173,6 +175,8 @@ impl<'env, Mode: TransactionKind> HeaderStorageReader for StorageTxn<'env, Mode>
                 l1_gas_price: block_header.l1_gas_price,
                 l1_data_gas_price: block_header.l1_data_gas_price,
                 l2_gas_price: block_header.l2_gas_price,
+                l2_gas_consumed: block_header.l2_gas_consumed,
+                next_l2_gas_price: block_header.next_l2_gas_price,
                 state_root: block_header.state_root,
                 sequencer: block_header.sequencer,
                 timestamp: block_header.timestamp,
@@ -234,7 +238,7 @@ impl<'env, Mode: TransactionKind> HeaderStorageReader for StorageTxn<'env, Mode>
     }
 }
 
-impl<'env> HeaderStorageWriter for StorageTxn<'env, RW> {
+impl HeaderStorageWriter for StorageTxn<'_, RW> {
     fn append_header(
         self,
         block_number: BlockNumber,
@@ -253,6 +257,8 @@ impl<'env> HeaderStorageWriter for StorageTxn<'env, RW> {
             l1_gas_price: block_header.block_header_without_hash.l1_gas_price,
             l1_data_gas_price: block_header.block_header_without_hash.l1_data_gas_price,
             l2_gas_price: block_header.block_header_without_hash.l2_gas_price,
+            l2_gas_consumed: block_header.block_header_without_hash.l2_gas_consumed,
+            next_l2_gas_price: block_header.block_header_without_hash.next_l2_gas_price,
             state_root: block_header.block_header_without_hash.state_root,
             sequencer: block_header.block_header_without_hash.sequencer,
             timestamp: block_header.block_header_without_hash.timestamp,
@@ -364,6 +370,8 @@ impl<'env> HeaderStorageWriter for StorageTxn<'env, RW> {
                     l1_gas_price: reverted_header.l1_gas_price,
                     l1_data_gas_price: reverted_header.l1_data_gas_price,
                     l2_gas_price: reverted_header.l2_gas_price,
+                    l2_gas_consumed: reverted_header.l2_gas_consumed,
+                    next_l2_gas_price: reverted_header.next_l2_gas_price,
                     state_root: reverted_header.state_root,
                     sequencer: reverted_header.sequencer,
                     timestamp: reverted_header.timestamp,

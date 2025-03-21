@@ -38,6 +38,7 @@ use starknet_api::transaction::fields::{
     ResourceBounds,
     Tip,
     TransactionSignature,
+    ValidResourceBounds,
 };
 use starknet_api::transaction::{
     DeployTransaction,
@@ -154,6 +155,7 @@ impl From<starknet_api::transaction::DeclareTransactionV2> for DeclareTransactio
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct ResourceBoundsMapping {
     pub l1_gas: ResourceBounds,
+    pub l1_data_gas: ResourceBounds,
     pub l2_gas: ResourceBounds,
 }
 
@@ -161,7 +163,14 @@ impl From<ResourceBoundsMapping>
     for starknet_api::transaction::fields::DeprecatedResourceBoundsMapping
 {
     fn from(value: ResourceBoundsMapping) -> Self {
-        Self([(Resource::L1Gas, value.l1_gas), (Resource::L2Gas, value.l2_gas)].into())
+        Self(
+            [
+                (Resource::L1Gas, value.l1_gas),
+                (Resource::L1DataGas, value.l1_data_gas),
+                (Resource::L2Gas, value.l2_gas),
+            ]
+            .into(),
+        )
     }
 }
 
@@ -171,31 +180,39 @@ impl From<starknet_api::transaction::fields::DeprecatedResourceBoundsMapping>
     fn from(value: starknet_api::transaction::fields::DeprecatedResourceBoundsMapping) -> Self {
         Self {
             l1_gas: value.0.get(&Resource::L1Gas).cloned().unwrap_or_default(),
+            l1_data_gas: value.0.get(&Resource::L1DataGas).cloned().unwrap_or_default(),
             l2_gas: value.0.get(&Resource::L2Gas).cloned().unwrap_or_default(),
         }
     }
 }
 
-impl TryFrom<ResourceBoundsMapping> for starknet_api::transaction::fields::ValidResourceBounds {
-    type Error = ErrorObjectOwned;
-    fn try_from(value: ResourceBoundsMapping) -> Result<Self, Self::Error> {
-        if !value.l2_gas.is_zero() {
-            Err(internal_server_error("Got a transaction with non zero l2 gas."))
+impl From<ResourceBoundsMapping> for ValidResourceBounds {
+    fn from(value: ResourceBoundsMapping) -> Self {
+        if value.l1_data_gas.is_zero() && value.l2_gas.is_zero() {
+            Self::L1Gas(value.l1_gas)
         } else {
-            Ok(Self::L1Gas(value.l1_gas))
+            Self::AllResources(AllResourceBounds {
+                l1_gas: value.l1_gas,
+                l1_data_gas: value.l1_data_gas,
+                l2_gas: value.l2_gas,
+            })
         }
     }
 }
 
-impl From<starknet_api::transaction::fields::ValidResourceBounds> for ResourceBoundsMapping {
-    fn from(value: starknet_api::transaction::fields::ValidResourceBounds) -> Self {
+impl From<ValidResourceBounds> for ResourceBoundsMapping {
+    fn from(value: ValidResourceBounds) -> Self {
         match value {
-            starknet_api::transaction::fields::ValidResourceBounds::L1Gas(l1_gas) => {
-                Self { l1_gas, l2_gas: ResourceBounds::default() }
-            }
-            starknet_api::transaction::fields::ValidResourceBounds::AllResources(
-                AllResourceBounds { l1_gas, l2_gas, .. },
-            ) => Self { l1_gas, l2_gas },
+            ValidResourceBounds::L1Gas(l1_gas) => Self {
+                l1_gas,
+                l1_data_gas: ResourceBounds::default(),
+                l2_gas: ResourceBounds::default(),
+            },
+            ValidResourceBounds::AllResources(AllResourceBounds {
+                l1_gas,
+                l1_data_gas,
+                l2_gas,
+            }) => Self { l1_gas, l1_data_gas, l2_gas },
         }
     }
 }
@@ -845,7 +862,8 @@ pub struct L1HandlerTransactionOutput {
 }
 
 // Note: This is not the same as the Builtins in starknet_api, the serialization of SegmentArena is
-// different. TODO(yair): remove this once a newer version of the API is published.
+// different.
+// TODO(yair): remove this once a newer version of the API is published.
 #[derive(Debug, Clone, Eq, Hash, PartialEq, Deserialize, Serialize, PartialOrd, Ord)]
 pub enum Builtin {
     #[serde(rename = "range_check_builtin_applications")]
@@ -949,9 +967,16 @@ impl Add for ExecutionResources {
                 memory_holes,
             },
             data_availability: DataAvailabilityResources {
-                l1_gas: self.data_availability.l1_gas + other.data_availability.l1_gas,
-                l1_data_gas: self.data_availability.l1_data_gas
-                    + other.data_availability.l1_data_gas,
+                l1_gas: self
+                    .data_availability
+                    .l1_gas
+                    .checked_add(other.data_availability.l1_gas)
+                    .expect("L1 Gas overflow"),
+                l1_data_gas: self
+                    .data_availability
+                    .l1_data_gas
+                    .checked_add(other.data_availability.l1_data_gas)
+                    .expect("L1_Data Gas overflow"),
             },
         }
     }
@@ -1036,7 +1061,7 @@ impl From<(starknet_api::transaction::TransactionOutput, TransactionVersion, Opt
         ),
     ) -> Self {
         let (tx_output, tx_version, maybe_msg_hash) = tx_output_msg_hash;
-        // TODO: consider supporting match instead.
+        // TODO(DanB): consider supporting match instead.
         let actual_fee = if tx_version == TransactionVersion::ZERO
             || tx_version == TransactionVersion::ONE
             || tx_version == TransactionVersion::TWO
@@ -1256,7 +1281,7 @@ fn l1_handler_message_hash(
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MessageFromL1 {
-    // TODO: fix serialization of EthAddress in SN_API to fit the spec.
+    // TODO(Shahak): fix serialization of EthAddress in SN_API to fit the spec.
     #[serde(serialize_with = "serialize_eth_address")]
     pub from_address: EthAddress,
     pub to_address: ContractAddress,
@@ -1281,7 +1306,7 @@ impl From<MessageFromL1> for L1HandlerTransaction {
         calldata.extend_from_slice(&message.payload.0);
         let calldata = Calldata(Arc::new(calldata));
         Self {
-            version: TransactionVersion::ONE,
+            version: L1HandlerTransaction::VERSION,
             contract_address: message.to_address,
             entry_point_selector: message.entry_point_selector,
             calldata,

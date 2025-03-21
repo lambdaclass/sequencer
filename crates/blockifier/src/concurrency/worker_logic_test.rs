@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::calldata::{create_calldata, create_trivial_calldata};
+use blockifier_test_utils::contracts::FeatureContract;
 use rstest::rstest;
 use starknet_api::abi::abi_utils::get_fee_token_var_address;
 use starknet_api::core::{ContractAddress, Nonce};
-use starknet_api::test_utils::NonceManager;
+use starknet_api::test_utils::declare::executable_declare_tx;
+use starknet_api::test_utils::{NonceManager, TEST_ERC20_CONTRACT_ADDRESS2};
 use starknet_api::transaction::constants::DEPLOY_CONTRACT_FUNCTION_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::{ContractAddressSalt, Fee, ValidResourceBounds};
 use starknet_api::transaction::TransactionVersion;
@@ -22,23 +26,16 @@ use crate::context::{BlockContext, TransactionContext};
 use crate::fee::fee_utils::get_sequencer_balance_keys;
 use crate::state::cached_state::StateMaps;
 use crate::state::state_api::StateReader;
-use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::declare::declare_tx;
+use crate::test_utils::contracts::FeatureContractTrait;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{
-    create_calldata,
-    create_trivial_calldata,
-    CairoVersion,
-    BALANCE,
-    TEST_ERC20_CONTRACT_ADDRESS2,
-};
+use crate::test_utils::BALANCE;
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::objects::HasRelatedFeeType;
 use crate::transaction::test_utils::{
-    account_invoke_tx,
     calculate_class_info_for_testing,
     default_all_resource_bounds,
     emit_n_events_tx,
+    invoke_tx_with_default_flags,
     max_fee,
 };
 use crate::transaction::transaction_execution::Transaction;
@@ -48,7 +45,7 @@ fn trivial_calldata_invoke_tx(
     test_contract_address: ContractAddress,
     nonce: Nonce,
 ) -> AccountTransaction {
-    account_invoke_tx(invoke_tx_args! {
+    invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_trivial_calldata(test_contract_address),
         resource_bounds: default_all_resource_bounds(),
@@ -80,7 +77,8 @@ fn verify_sequencer_balance_update<S: StateReader>(
 #[rstest]
 pub fn test_commit_tx() {
     let block_context = BlockContext::create_for_account_testing();
-    let account = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let mut expected_sequencer_balance_low = 0_u128;
     let mut nonce_manager = NonceManager::default();
@@ -164,6 +162,7 @@ pub fn test_commit_tx() {
                     .fee_transfer_call_info
                     .as_ref()
                     .unwrap()
+                    .storage_access_tracker
                     .storage_read_values[read_storage_index];
                 assert_eq!(felt!(expected_sequencer_storage_read), actual_sequencer_storage_read,);
             }
@@ -186,7 +185,8 @@ pub fn test_commit_tx() {
 // commit tx should be the same (except for re-execution changes).
 fn test_commit_tx_when_sender_is_sequencer() {
     let mut block_context = BlockContext::create_for_account_testing();
-    let account = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let account_address = account.get_instance_address(0_u16);
     let test_contract_address = test_contract.get_instance_address(0_u16);
@@ -219,7 +219,8 @@ fn test_commit_tx_when_sender_is_sequencer() {
     let execution_result = &execution_task_outputs.as_ref().unwrap().result;
     let fee_transfer_call_info =
         execution_result.as_ref().unwrap().fee_transfer_call_info.as_ref().unwrap();
-    let read_values_before_commit = fee_transfer_call_info.storage_read_values.clone();
+    let read_values_before_commit =
+        fee_transfer_call_info.storage_access_tracker.storage_read_values.clone();
     drop(execution_task_outputs);
 
     let tx_context = &executor.block_context.to_tx_context(&sequencer_tx[0]);
@@ -237,7 +238,10 @@ fn test_commit_tx_when_sender_is_sequencer() {
     let fee_transfer_call_info =
         commit_result.as_ref().unwrap().fee_transfer_call_info.as_ref().unwrap();
     // Check that the result call info is the same as before the commit.
-    assert_eq!(read_values_before_commit, fee_transfer_call_info.storage_read_values);
+    assert_eq!(
+        read_values_before_commit,
+        fee_transfer_call_info.storage_access_tracker.storage_read_values
+    );
 
     let sequencer_balance_low_after =
         tx_versioned_state.get_storage_at(fee_token_address, sequencer_balance_key_low).unwrap();
@@ -253,7 +257,8 @@ fn test_commit_tx_when_sender_is_sequencer() {
 fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
     // Settings.
     let block_context = BlockContext::create_for_account_testing();
-    let account_contract = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account_contract =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let chain_info = &block_context.chain_info;
 
@@ -268,7 +273,7 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
     let storage_value = felt!(93_u8);
     let storage_key = storage_key!(1993_u16);
 
-    let tx_success = account_invoke_tx(invoke_tx_args! {
+    let tx_success = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_calldata(
             test_contract_address,
@@ -281,7 +286,7 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
 
     // Create a transaction with invalid nonce.
     nonce_manager.rollback(account_address);
-    let tx_failure = account_invoke_tx(invoke_tx_args! {
+    let tx_failure = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_calldata(
             test_contract_address,
@@ -293,7 +298,7 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
 
     });
 
-    let tx_revert = account_invoke_tx(invoke_tx_args! {
+    let tx_revert = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_calldata(
             test_contract_address,
@@ -380,9 +385,8 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
         ..Default::default()
     };
 
-    assert_eq!(execution_output.writes, writes.diff(&reads));
+    assert_eq!(execution_output.state_diff, writes.diff(&reads));
     assert_eq!(execution_output.reads, reads);
-    assert_ne!(execution_output.visited_pcs, HashMap::default());
 
     // Failed execution.
     let tx_index = 1;
@@ -400,8 +404,7 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
         ..Default::default()
     };
     assert_eq!(execution_output.reads, reads);
-    assert_eq!(execution_output.writes, StateMaps::default());
-    assert_eq!(execution_output.visited_pcs, HashMap::default());
+    assert_eq!(execution_output.state_diff, StateMaps::default());
 
     // Reverted execution.
     let tx_index = 2;
@@ -414,8 +417,7 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
     let execution_output = worker_executor.execution_outputs[tx_index].lock().unwrap();
     let execution_output = execution_output.as_ref().unwrap();
     assert!(execution_output.result.as_ref().unwrap().is_reverted());
-    assert_ne!(execution_output.writes, StateMaps::default());
-    assert_ne!(execution_output.visited_pcs, HashMap::default());
+    assert_ne!(execution_output.state_diff, StateMaps::default());
 
     // Validate status change.
     for tx_index in 0..3 {
@@ -427,7 +429,8 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
 fn test_worker_validate(default_all_resource_bounds: ValidResourceBounds) {
     // Settings.
     let block_context = BlockContext::create_for_account_testing();
-    let account_contract = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account_contract =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let chain_info = &block_context.chain_info;
 
@@ -444,7 +447,7 @@ fn test_worker_validate(default_all_resource_bounds: ValidResourceBounds) {
     let storage_key = storage_key!(1993_u16);
 
     // Both transactions change the same storage key.
-    let account_tx0 = account_invoke_tx(invoke_tx_args! {
+    let account_tx0 = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_calldata(
             test_contract_address,
@@ -455,7 +458,7 @@ fn test_worker_validate(default_all_resource_bounds: ValidResourceBounds) {
         nonce: nonce_manager.next(account_address)
     });
 
-    let account_tx1 = account_invoke_tx(invoke_tx_args! {
+    let account_tx1 = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address,
         calldata: create_calldata(
             test_contract_address,
@@ -528,7 +531,7 @@ fn test_worker_validate(default_all_resource_bounds: ValidResourceBounds) {
 
 #[rstest]
 #[case::declare_cairo0(CairoVersion::Cairo0, TransactionVersion::ONE)]
-#[case::declare_cairo1(CairoVersion::Cairo1, TransactionVersion::THREE)]
+#[case::declare_cairo1(CairoVersion::Cairo1(RunnableCairo1::Casm), TransactionVersion::THREE)]
 fn test_deploy_before_declare(
     max_fee: Fee,
     default_all_resource_bounds: ValidResourceBounds,
@@ -538,7 +541,8 @@ fn test_deploy_before_declare(
     // Create the state.
     let block_context = BlockContext::create_for_account_testing();
     let chain_info = &block_context.chain_info;
-    let account_contract = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account_contract =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let state = test_state(chain_info, BALANCE, &[(account_contract, 2)]);
     let safe_versioned_state = safe_versioned_state_for_testing(state);
 
@@ -549,7 +553,7 @@ fn test_deploy_before_declare(
     let test_class_hash = test_contract.get_class_hash();
     let test_class_info = calculate_class_info_for_testing(test_contract.get_class());
     let test_compiled_class_hash = test_contract.get_compiled_class_hash();
-    let declare_tx = declare_tx(
+    let declare_tx = AccountTransaction::new_with_default_flags(executable_declare_tx(
         declare_tx_args! {
             sender_address: account_address_0,
             resource_bounds: default_all_resource_bounds,
@@ -560,10 +564,10 @@ fn test_deploy_before_declare(
             nonce: nonce!(0_u8),
         },
         test_class_info.clone(),
-    );
+    ));
 
     // Deploy test contract.
-    let invoke_tx = account_invoke_tx(invoke_tx_args! {
+    let invoke_tx = invoke_tx_with_default_flags(invoke_tx_args! {
         sender_address: account_address_1,
         calldata: create_calldata(
             account_address_0,
@@ -624,7 +628,8 @@ fn test_deploy_before_declare(
 fn test_worker_commit_phase(default_all_resource_bounds: ValidResourceBounds) {
     // Settings.
     let block_context = BlockContext::create_for_account_testing();
-    let account_contract = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account_contract =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let chain_info = &block_context.chain_info;
 
@@ -646,7 +651,7 @@ fn test_worker_commit_phase(default_all_resource_bounds: ValidResourceBounds) {
 
     let txs = (0..3)
         .map(|_| {
-            Transaction::Account(account_invoke_tx(invoke_tx_args! {
+            Transaction::Account(invoke_tx_with_default_flags(invoke_tx_args! {
                 sender_address,
                 calldata: calldata.clone(),
                 resource_bounds: default_all_resource_bounds,
@@ -717,7 +722,8 @@ fn test_worker_commit_phase_with_halt() {
     let max_n_events_in_block = 3;
     let block_context = BlockContext::create_for_bouncer_testing(max_n_events_in_block);
 
-    let account_contract = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1);
+    let account_contract =
+        FeatureContract::AccountWithoutValidations(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let chain_info = &block_context.chain_info;
 

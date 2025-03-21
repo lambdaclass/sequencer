@@ -1,6 +1,7 @@
 name: Main-CI-PR-Flow
 
 on:
+  merge_group:
   pull_request:
     types:
       - opened
@@ -9,14 +10,21 @@ on:
       - auto_merge_enabled
       - edited
 
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
 # On PR events, cancel existing CI runs on this same PR for this workflow.
+# Also, create different concurrency groups for different pushed commits, on push events.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.job }}
+  group: >
+    ${{ github.workflow }}-
+    ${{ github.ref }}-
+    ${{ github.event_name == 'pull_request' && 'PR' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   commitlint:
-    runs-on: starkware-ubuntu-latest-small
+    runs-on: starkware-ubuntu-24.04-small
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,7 +47,7 @@ jobs:
         run: echo "$TITLE" | commitlint --verbose
 
   merge-gatekeeper:
-    runs-on: starkware-ubuntu-latest-small
+    runs-on: starkware-ubuntu-24.04-small
     # Restrict permissions of the GITHUB_TOKEN.
     # Docs: https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
     permissions:

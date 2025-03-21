@@ -1,11 +1,9 @@
-use std::collections::{HashMap, HashSet};
 use std::panic::{self, catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use starknet_api::block::BlockHashAndNumber;
-use starknet_api::core::ClassHash;
 use thiserror::Error;
 
 use crate::blockifier::block::pre_process_block;
@@ -13,19 +11,23 @@ use crate::blockifier::config::TransactionExecutorConfig;
 use crate::bouncer::{Bouncer, BouncerWeights};
 use crate::concurrency::worker_logic::WorkerExecutor;
 use crate::context::BlockContext;
-use crate::state::cached_state::{CachedState, CommitmentStateDiff, TransactionalState};
+use crate::state::cached_state::{CachedState, CommitmentStateDiff, StateMaps, TransactionalState};
 use crate::state::errors::StateError;
 use crate::state::state_api::{StateReader, StateResult};
+use crate::state::stateful_compression::{allocate_aliases_in_storage, compress, CompressionError};
 use crate::transaction::errors::TransactionExecutionError;
-use crate::transaction::objects::{TransactionExecutionInfo, TransactionInfoCreator};
+use crate::transaction::objects::TransactionExecutionInfo;
 use crate::transaction::transaction_execution::Transaction;
-use crate::transaction::transactions::{ExecutableTransaction, ExecutionFlags};
+use crate::transaction::transactions::ExecutableTransaction;
 
 #[cfg(test)]
 #[path = "transaction_executor_test.rs"]
 pub mod transaction_executor_test;
 
 pub const BLOCK_STATE_ACCESS_ERR: &str = "Error: The block state should be `Some`.";
+pub const DEFAULT_STACK_SIZE: usize = 60 * 1024 * 1024;
+
+pub type TransactionExecutionOutput = (TransactionExecutionInfo, StateMaps);
 
 #[derive(Debug, Error)]
 pub enum TransactionExecutorError {
@@ -35,10 +37,17 @@ pub enum TransactionExecutorError {
     StateError(#[from] StateError),
     #[error(transparent)]
     TransactionExecutionError(#[from] TransactionExecutionError),
+    #[error(transparent)]
+    CompressionError(#[from] CompressionError),
 }
 
 pub type TransactionExecutorResult<T> = Result<T, TransactionExecutorError>;
-pub type VisitedSegmentsMapping = Vec<(ClassHash, Vec<usize>)>;
+
+pub struct BlockExecutionSummary {
+    pub state_diff: CommitmentStateDiff,
+    pub compressed_state_diff: Option<CommitmentStateDiff>,
+    pub bouncer_weights: BouncerWeights,
+}
 
 /// A transaction executor, used for building a single block.
 pub struct TransactionExecutor<S: StateReader> {
@@ -68,6 +77,7 @@ impl<S: StateReader> TransactionExecutor<S> {
             &mut block_state,
             old_block_number_and_hash,
             block_context.block_info().block_number,
+            &block_context.versioned_constants.os_constants,
         )?;
         Ok(Self::new(block_state, block_context, config))
     }
@@ -95,29 +105,29 @@ impl<S: StateReader> TransactionExecutor<S> {
     pub fn execute(
         &mut self,
         tx: &Transaction,
-    ) -> TransactionExecutorResult<TransactionExecutionInfo> {
+    ) -> TransactionExecutorResult<TransactionExecutionOutput> {
         let mut transactional_state = TransactionalState::create_transactional(
             self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
         );
-        let tx_charge_fee = tx.create_tx_info().enforce_fee();
 
         // Executing a single transaction cannot be done in a concurrent mode.
-        let execution_flags =
-            ExecutionFlags { charge_fee: tx_charge_fee, validate: true, concurrency_mode: false };
+        let concurrency_mode = false;
         let tx_execution_result =
-            tx.execute_raw(&mut transactional_state, &self.block_context, execution_flags);
+            tx.execute_raw(&mut transactional_state, &self.block_context, concurrency_mode);
         match tx_execution_result {
             Ok(tx_execution_info) => {
-                let tx_state_changes_keys =
-                    transactional_state.get_actual_state_changes()?.state_maps.into_keys();
+                let state_diff = transactional_state.to_state_diff()?.state_maps;
+                let tx_state_changes_keys = state_diff.keys();
                 self.bouncer.try_update(
                     &transactional_state,
                     &tx_state_changes_keys,
                     &tx_execution_info.summarize(&self.block_context.versioned_constants),
                     &tx_execution_info.receipt.resources,
+                    &self.block_context.versioned_constants,
                 )?;
                 transactional_state.commit();
-                Ok(tx_execution_info)
+
+                Ok((tx_execution_info, state_diff))
             }
             Err(error) => {
                 transactional_state.abort();
@@ -126,14 +136,16 @@ impl<S: StateReader> TransactionExecutor<S> {
         }
     }
 
-    pub fn execute_txs_sequentially(
+    fn execute_txs_sequentially_inner(
         &mut self,
         txs: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
         let mut results = Vec::new();
         for tx in txs {
             match self.execute(tx) {
-                Ok(tx_execution_info) => results.push(Ok(tx_execution_info)),
+                Ok((tx_execution_info, state_diff)) => {
+                    results.push(Ok((tx_execution_info, state_diff)))
+                }
                 Err(TransactionExecutorError::BlockFull) => break,
                 Err(error) => results.push(Err(error)),
             }
@@ -141,42 +153,41 @@ impl<S: StateReader> TransactionExecutor<S> {
         results
     }
 
-    /// Returns the state diff, a list of contract class hash with the corresponding list of
-    /// visited segment values and the block weights.
-    pub fn finalize(
-        &mut self,
-    ) -> TransactionExecutorResult<(CommitmentStateDiff, VisitedSegmentsMapping, BouncerWeights)>
-    {
-        // Get the visited segments of each contract class.
-        // This is done by taking all the visited PCs of each contract, and compress them to one
-        // representative for each visited segment.
-        let visited_segments = self
-            .block_state
-            .as_ref()
-            .expect(BLOCK_STATE_ACCESS_ERR)
-            .visited_pcs
-            .iter()
-            .map(|(class_hash, class_visited_pcs)| -> TransactionExecutorResult<_> {
-                let contract_class = self
-                    .block_state
-                    .as_ref()
-                    .expect(BLOCK_STATE_ACCESS_ERR)
-                    .get_compiled_contract_class(*class_hash)?;
-                Ok((*class_hash, contract_class.get_visited_segments(class_visited_pcs)?))
-            })
-            .collect::<TransactionExecutorResult<_>>()?;
+    /// Returns the state diff and the block weights.
+    // TODO(Aner): Consume "self", i.e., remove the reference, after removing the native blockifier.
+    pub fn finalize(&mut self) -> TransactionExecutorResult<BlockExecutionSummary> {
+        self.internal_finalize()
+    }
 
+    #[cfg(feature = "reexecution")]
+    pub fn non_consuming_finalize(&mut self) -> TransactionExecutorResult<BlockExecutionSummary> {
+        self.internal_finalize()
+    }
+
+    fn internal_finalize(&mut self) -> TransactionExecutorResult<BlockExecutionSummary> {
         log::debug!("Final block weights: {:?}.", self.bouncer.get_accumulated_weights());
-        Ok((
-            self.block_state
-                .as_mut()
-                .expect(BLOCK_STATE_ACCESS_ERR)
-                .to_state_diff()?
-                .state_maps
-                .into(),
-            visited_segments,
-            *self.bouncer.get_accumulated_weights(),
-        ))
+        let block_state = self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR);
+        let alias_contract_address = self
+            .block_context
+            .versioned_constants
+            .os_constants
+            .os_contract_addresses
+            .alias_contract_address();
+        if self.block_context.versioned_constants.enable_stateful_compression {
+            allocate_aliases_in_storage(block_state, alias_contract_address)?;
+        }
+        let state_diff = block_state.to_state_diff()?.state_maps;
+        let compressed_state_diff =
+            if self.block_context.versioned_constants.enable_stateful_compression {
+                Some(compress(&state_diff, block_state, alias_contract_address)?.into())
+            } else {
+                None
+            };
+        Ok(BlockExecutionSummary {
+            state_diff: state_diff.into(),
+            compressed_state_diff,
+            bouncer_weights: *self.bouncer.get_accumulated_weights(),
+        })
     }
 }
 
@@ -187,7 +198,7 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
     pub fn execute_txs(
         &mut self,
         txs: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
         if !self.config.concurrency_config.enabled {
             log::debug!("Executing transactions sequentially.");
             self.execute_txs_sequentially(txs)
@@ -223,10 +234,43 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
         }
     }
 
-    pub fn execute_chunk(
+    fn execute_txs_sequentially(
+        &mut self,
+        txs: &[Transaction],
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
+        #[cfg(not(feature = "cairo_native"))]
+        return self.execute_txs_sequentially_inner(txs);
+        #[cfg(feature = "cairo_native")]
+        {
+            // TODO(meshi): find a way to access the contract class manager config from transaction
+            // executor.
+            let txs = txs.to_vec();
+            std::thread::scope(|s| {
+                std::thread::Builder::new()
+                    // when running Cairo natively, the real stack is used and could get overflowed
+                    // (unlike the VM where the stack is simulated in the heap as a memory segment).
+                    //
+                    // We pre-allocate the stack here, and not during Native execution (not trivial), so it
+                    // needs to be big enough ahead.
+                    // However, making it very big is wasteful (especially with multi-threading).
+                    // So, the stack size should support calls with a reasonable gas limit, for extremely deep
+                    // recursions to reach out-of-gas before hitting the bottom of the recursion.
+                    //
+                    // The gas upper bound is MAX_POSSIBLE_SIERRA_GAS, and sequencers must not raise it without
+                    // adjusting the stack size.
+                    .stack_size(self.config.stack_size)
+                    .spawn_scoped(s, || self.execute_txs_sequentially_inner(&txs))
+                    .expect("Failed to spawn thread")
+                    .join()
+                    .expect("Failed to join thread.")
+            })
+        }
+    }
+
+    fn execute_chunk(
         &mut self,
         chunk: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
         use crate::concurrency::utils::AbortIfPanic;
 
         let block_state = self.block_state.take().expect("The block state should be `Some`.");
@@ -246,32 +290,45 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
         std::thread::scope(|s| {
             for _ in 0..self.config.concurrency_config.n_workers {
                 let worker_executor = Arc::clone(&worker_executor);
-                s.spawn(move || {
-                    // Making sure that the program will abort if a panic accured while halting the
-                    // scheduler.
-                    let abort_guard = AbortIfPanic;
-                    // If a panic is not handled or the handling logic itself panics, then we abort
-                    // the program.
-                    if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
-                        worker_executor.run();
-                    })) {
-                        // If the program panics here, the abort guard will exit the program.
-                        // In this case, no panic message will be logged. Add the cargo flag
-                        // --nocapture to log the panic message.
+                let _handle = std::thread::Builder::new()
+                    // when running Cairo natively, the real stack is used and could get overflowed
+                    // (unlike the VM where the stack is simulated in the heap as a memory segment).
+                    //
+                    // We pre-allocate the stack here, and not during Native execution (not trivial), so it
+                    // needs to be big enough ahead.
+                    // However, making it very big is wasteful (especially with multi-threading).
+                    // So, the stack size should support calls with a reasonable gas limit, for extremely deep
+                    // recursions to reach out-of-gas before hitting the bottom of the recursion.
+                    //
+                    // The gas upper bound is MAX_POSSIBLE_SIERRA_GAS, and sequencers must not raise it without
+                    // adjusting the stack size.
+                    .stack_size(self.config.stack_size)
+                    .spawn_scoped(s, move || {
+                        // Making sure that the program will abort if a panic accured while halting
+                        // the scheduler.
+                        let abort_guard = AbortIfPanic;
+                        // If a panic is not handled or the handling logic itself panics, then we
+                        // abort the program.
+                        if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
+                            worker_executor.run();
+                        })) {
+                            // If the program panics here, the abort guard will exit the program.
+                            // In this case, no panic message will be logged. Add the cargo flag
+                            // --nocapture to log the panic message.
 
-                        worker_executor.scheduler.halt();
+                            worker_executor.scheduler.halt();
+                            abort_guard.release();
+                            panic::resume_unwind(err);
+                        }
+
                         abort_guard.release();
-                        panic::resume_unwind(err);
-                    }
-
-                    abort_guard.release();
-                });
+                    })
+                    .expect("Failed to spawn thread.");
             }
         });
 
         let n_committed_txs = worker_executor.scheduler.get_n_committed_txs();
         let mut tx_execution_results = Vec::new();
-        let mut visited_pcs: HashMap<ClassHash, HashSet<usize>> = HashMap::new();
         for execution_output in worker_executor.execution_outputs.iter() {
             if tx_execution_results.len() >= n_committed_txs {
                 break;
@@ -281,11 +338,11 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
                 .expect("Failed to lock execution output.")
                 .take()
                 .expect("Output must be ready.");
-            tx_execution_results
-                .push(locked_execution_output.result.map_err(TransactionExecutorError::from));
-            for (class_hash, class_visited_pcs) in locked_execution_output.visited_pcs {
-                visited_pcs.entry(class_hash).or_default().extend(class_visited_pcs);
-            }
+            let tx_execution_output = locked_execution_output
+                .result
+                .map(|tx_execution_info| (tx_execution_info, locked_execution_output.state_diff))
+                .map_err(TransactionExecutorError::from);
+            tx_execution_results.push(tx_execution_output);
         }
 
         let block_state_after_commit = Arc::try_unwrap(worker_executor)
@@ -296,7 +353,7 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
                      it."
                 )
             })
-            .commit_chunk_and_recover_block_state(n_committed_txs, visited_pcs);
+            .commit_chunk_and_recover_block_state(n_committed_txs);
         self.block_state.replace(block_state_after_commit);
 
         tx_execution_results

@@ -20,6 +20,7 @@ use crate::tests::{
     ResultB,
     ValueA,
     ValueB,
+    TEST_LOCAL_SERVER_METRICS,
 };
 
 type ComponentAClient = LocalComponentClient<ComponentARequest, ComponentAResponse>;
@@ -59,7 +60,7 @@ impl ComponentBClientTrait for LocalComponentClient<ComponentBRequest, Component
 }
 
 #[tokio::test]
-async fn test_setup() {
+async fn local_client_server() {
     let setup_value: ValueB = Felt::from(30);
     let expected_value: ValueA = setup_value;
 
@@ -74,8 +75,10 @@ async fn test_setup() {
     let component_a = ComponentA::new(Box::new(b_client.clone()));
     let component_b = ComponentB::new(setup_value, Box::new(a_client.clone()));
 
-    let mut component_a_server = LocalComponentServer::new(component_a, rx_a);
-    let mut component_b_server = LocalComponentServer::new(component_b, rx_b);
+    let mut component_a_server =
+        LocalComponentServer::new(component_a, rx_a, TEST_LOCAL_SERVER_METRICS);
+    let mut component_b_server =
+        LocalComponentServer::new(component_b, rx_b, TEST_LOCAL_SERVER_METRICS);
 
     task::spawn(async move {
         let _ = component_a_server.start().await;

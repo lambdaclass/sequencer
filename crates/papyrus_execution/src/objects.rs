@@ -9,7 +9,7 @@ use blockifier::execution::call_info::{
     Retdata as BlockifierRetdata,
 };
 use blockifier::execution::entry_point::CallType as BlockifierCallType;
-use blockifier::transaction::objects::{FeeType, TransactionExecutionInfo};
+use blockifier::transaction::objects::TransactionExecutionInfo;
 use blockifier::utils::u64_from_usize;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources as VmExecutionResources;
@@ -23,7 +23,7 @@ use papyrus_common::state::{
     StorageEntry,
 };
 use serde::{Deserialize, Serialize};
-use starknet_api::block::{BlockTimestamp, GasPrice, GasPricePerToken};
+use starknet_api::block::{BlockTimestamp, FeeType, GasPrice, GasPricePerToken};
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{
     ClassHash,
@@ -164,9 +164,9 @@ pub(crate) fn tx_execution_output_to_fee_estimation(
 ) -> ExecutionResult<FeeEstimation> {
     let gas_prices = &block_context.block_info().gas_prices;
     let (l1_gas_price, l1_data_gas_price, l2_gas_price) = (
-        gas_prices.get_l1_gas_price_by_fee_type(&tx_execution_output.price_unit.into()).get(),
-        gas_prices.get_l1_data_gas_price_by_fee_type(&tx_execution_output.price_unit.into()).get(),
-        gas_prices.get_l2_gas_price_by_fee_type(&tx_execution_output.price_unit.into()).get(),
+        gas_prices.l1_gas_price(&tx_execution_output.price_unit.into()).get(),
+        gas_prices.l1_data_gas_price(&tx_execution_output.price_unit.into()).get(),
+        gas_prices.l2_gas_price(&tx_execution_output.price_unit.into()).get(),
     );
 
     let gas_vector = tx_execution_output.execution_info.receipt.gas;
@@ -322,7 +322,7 @@ impl TryFrom<(CallInfo, GasVector)> for FunctionInvocation {
                 calldata: call_info.call.calldata,
             },
             caller_address: call_info.call.caller_address,
-            class_hash: call_info.call.class_hash.ok_or(ExecutionError::MissingClassHash)?, /* TODO: fix this. */
+            class_hash: call_info.call.class_hash.ok_or(ExecutionError::MissingClassHash)?, /* TODO(DanB): fix this. */
             entry_point_type: call_info.call.entry_point_type,
             call_type: call_info.call.call_type.into(),
             result: call_info.execution.retdata.into(),
@@ -350,7 +350,7 @@ impl TryFrom<(CallInfo, GasVector)> for FunctionInvocation {
                 })
                 .collect(),
             execution_resources: vm_resources_to_execution_resources(
-                call_info.charged_resources.vm_resources,
+                call_info.resources,
                 gas_vector,
             )?,
         })
@@ -383,7 +383,7 @@ fn vm_resources_to_execution_resources(
             BuiltinName::segment_arena => {
                 builtin_instance_counter.insert(Builtin::SegmentArena, count)
             }
-            // TODO: what about the following?
+            // TODO(DanB): what about the following?
             // BuiltinName::range_check96 => todo!(),
             // BuiltinName::add_mod => todo!(),
             // BuiltinName::mul_mod => todo!(),

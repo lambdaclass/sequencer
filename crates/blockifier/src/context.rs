@@ -1,30 +1,31 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use papyrus_config::dumping::{append_sub_config_name, ser_param, SerializeConfig};
 use papyrus_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use serde::{Deserialize, Serialize};
-use starknet_api::block::GasPriceVector;
+use starknet_api::block::{BlockInfo, BlockNumber, BlockTimestamp, FeeType, GasPriceVector};
 use starknet_api::core::{ChainId, ContractAddress};
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::{
     AllResourceBounds,
     GasVectorComputationMode,
     ValidResourceBounds,
 };
 
-use crate::blockifier::block::BlockInfo;
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::bouncer::BouncerConfig;
+use crate::execution::call_info::CallInfo;
 use crate::transaction::objects::{
     CurrentTransactionInfo,
-    FeeType,
     HasRelatedFeeType,
     TransactionInfo,
     TransactionInfoCreator,
 };
-use crate::versioned_constants::VersionedConstants;
 
 #[derive(Clone, Debug)]
 pub struct TransactionContext {
-    pub block_context: BlockContext,
+    pub block_context: Arc<BlockContext>,
     pub tx_info: TransactionInfo,
 }
 
@@ -39,27 +40,51 @@ impl TransactionContext {
         self.tx_info.gas_mode()
     }
     pub fn get_gas_prices(&self) -> &GasPriceVector {
-        self.block_context
-            .block_info
-            .gas_prices
-            .get_gas_prices_by_fee_type(&self.tx_info.fee_type())
+        self.block_context.block_info.gas_prices.gas_price_vector(&self.tx_info.fee_type())
     }
 
     /// Returns the initial Sierra gas of the transaction.
     /// This value is used to limit the transaction's run.
-    // TODO(tzahi): replace returned value from u64 to GasAmount.
-    pub fn initial_sierra_gas(&self) -> u64 {
+    pub fn initial_sierra_gas(&self) -> GasAmount {
         match &self.tx_info {
             TransactionInfo::Deprecated(_)
             | TransactionInfo::Current(CurrentTransactionInfo {
                 resource_bounds: ValidResourceBounds::L1Gas(_),
                 ..
-            }) => self.block_context.versioned_constants.default_initial_gas_cost(),
+            }) => self.block_context.versioned_constants.initial_gas_no_user_l2_bound(),
             TransactionInfo::Current(CurrentTransactionInfo {
                 resource_bounds: ValidResourceBounds::AllResources(AllResourceBounds { l2_gas, .. }),
                 ..
-            }) => l2_gas.max_amount.0,
+            }) => l2_gas.max_amount,
         }
+    }
+}
+
+pub(crate) struct GasCounter {
+    pub(crate) spent_gas: GasAmount,
+    pub(crate) remaining_gas: GasAmount,
+}
+
+impl GasCounter {
+    pub(crate) fn new(initial_gas: GasAmount) -> Self {
+        GasCounter { spent_gas: GasAmount(0), remaining_gas: initial_gas }
+    }
+
+    fn spend(&mut self, amount: GasAmount) {
+        self.spent_gas = self.spent_gas.checked_add(amount).expect("Gas overflow");
+        self.remaining_gas = self
+            .remaining_gas
+            .checked_sub(amount)
+            .expect("Overuse of gas; should have been caught earlier");
+    }
+
+    /// Limits the amount of gas that can be used (in validate\execute) by the given global limit.
+    pub(crate) fn limit_usage(&self, amount: GasAmount) -> u64 {
+        self.remaining_gas.min(amount).0
+    }
+
+    pub(crate) fn subtract_used_gas(&mut self, call_info: &CallInfo) {
+        self.spend(GasAmount(call_info.execution.gas_consumed));
     }
 }
 
@@ -99,9 +124,49 @@ impl BlockContext {
         tx_info_creator: &impl TransactionInfoCreator,
     ) -> TransactionContext {
         TransactionContext {
-            block_context: self.clone(),
+            block_context: Arc::new(self.clone()),
             tx_info: tx_info_creator.create_tx_info(),
         }
+    }
+
+    pub fn block_info_for_validate(&self) -> BlockInfo {
+        let block_number = self.block_info.block_number.0;
+        let block_timestamp = self.block_info.block_timestamp.0;
+        // Round down to the nearest multiple of validate_block_number_rounding.
+        let validate_block_number_rounding =
+            self.versioned_constants.get_validate_block_number_rounding();
+        let rounded_block_number =
+            (block_number / validate_block_number_rounding) * validate_block_number_rounding;
+        // Round down to the nearest multiple of validate_timestamp_rounding.
+        let validate_timestamp_rounding =
+            self.versioned_constants.get_validate_timestamp_rounding();
+        let rounded_timestamp =
+            (block_timestamp / validate_timestamp_rounding) * validate_timestamp_rounding;
+        BlockInfo {
+            block_number: BlockNumber(rounded_block_number),
+            block_timestamp: BlockTimestamp(rounded_timestamp),
+            sequencer_address: 0_u128.into(),
+            // TODO(Yoni): consider setting here trivial prices if and when this field is exposed.
+            gas_prices: self.block_info.gas_prices.clone(),
+            use_kzg_da: self.block_info.use_kzg_da,
+        }
+    }
+
+    /// Test util to allow overriding block gas limits.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_sierra_gas_limits(
+        &mut self,
+        execute_max_gas: Option<GasAmount>,
+        validate_max_gas: Option<GasAmount>,
+    ) {
+        let mut new_os_constants = (*self.versioned_constants.os_constants).clone();
+        if let Some(execute_max_gas) = execute_max_gas {
+            new_os_constants.execute_max_sierra_gas = execute_max_gas;
+        }
+        if let Some(validate_max_gas) = validate_max_gas {
+            new_os_constants.validate_max_sierra_gas = validate_max_gas;
+        }
+        self.versioned_constants.os_constants = std::sync::Arc::new(new_os_constants);
     }
 }
 
@@ -123,6 +188,7 @@ impl ChainInfo {
 impl Default for ChainInfo {
     fn default() -> Self {
         ChainInfo {
+            // TODO(guyn): should we remove the default value for chain_id?
             chain_id: ChainId::Other("0x0".to_string()),
             fee_token_addresses: FeeTokenAddresses::default(),
         }

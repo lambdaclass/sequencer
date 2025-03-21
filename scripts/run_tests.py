@@ -12,42 +12,63 @@ from tests_utils import (
 )
 
 # Set of files which - if changed - should trigger tests for all packages.
-ALL_TEST_TRIGGERS: Set[str] = {"Cargo.toml", "Cargo.lock"}
+ALL_TEST_TRIGGERS: Set[str] = {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"}
+
+# Set of crates which - if changed - should trigger the integration tests.
+INTEGRATION_TEST_CRATE_TRIGGERS: Set[str] = {"starknet_integration_tests"}
+
+# Sequencer node binary name.
+SEQUENCER_BINARY_NAME: str = "starknet_sequencer_node"
+
+# List of sequencer node integration test binary names. Stored as a list to maintain order.
+SEQUENCER_INTEGRATION_TEST_NAMES: List[str] = [
+    "integration_test_positive_flow",
+    "integration_test_restart_flow",
+    "integration_test_revert_flow",
+    "integration_test_central_and_p2p_sync_flow",
+]
 
 
 # Enum of base commands.
 class BaseCommand(Enum):
     TEST = "test"
-    CODECOV = "codecov"
-    RUSTFMT = "rustfmt"
     CLIPPY = "clippy"
     DOC = "doc"
+    INTEGRATION = "integration"
 
-    def cmd(self, crates: Set[str]) -> List[str]:
+    def cmds(self, crates: Set[str]) -> List[List[str]]:
         package_args = []
         for package in crates:
             package_args.extend(["--package", package])
 
         if self == BaseCommand.TEST:
-            return ["cargo", "test"] + package_args
-        elif self == BaseCommand.CODECOV:
-            return [
-                "cargo",
-                "llvm-cov",
-                "--codecov",
-                "-r",
-                "--output-path",
-                "codecov.json",
-            ] + package_args
-        elif self == BaseCommand.RUSTFMT:
-            fmt_args = package_args if len(package_args) > 0 else ["--all"]
-            return ["scripts/rust_fmt.sh"] + fmt_args + ["--", "--check"]
+            return [["cargo", "test"] + package_args]
         elif self == BaseCommand.CLIPPY:
             clippy_args = package_args if len(package_args) > 0 else ["--workspace"]
-            return ["cargo", "clippy"] + clippy_args
+            return [["cargo", "clippy"] + clippy_args + ["--all-targets", "--all-features"]]
         elif self == BaseCommand.DOC:
             doc_args = package_args if len(package_args) > 0 else ["--workspace"]
-            return ["cargo", "doc", "-r", "--document-private-items", "--no-deps"] + doc_args
+            return [["cargo", "doc", "--document-private-items", "--no-deps"] + doc_args]
+        elif self == BaseCommand.INTEGRATION:
+            # Do nothing if integration tests should not be triggered.
+            if INTEGRATION_TEST_CRATE_TRIGGERS.isdisjoint(crates):
+                print(f"Skipping sequencer integration tests.")
+                return []
+
+            print(f"Composing sequencer integration test commands.")
+            # Commands to build the node and all the test binaries.
+            build_cmds = [
+                ["cargo", "build", "--bin", binary_name]
+                for binary_name in [SEQUENCER_BINARY_NAME] + SEQUENCER_INTEGRATION_TEST_NAMES
+            ]
+            # Port setup command, used to prevent port binding issues.
+            port_cmds = [["sysctl", "-w", "net.ipv4.ip_local_port_range='40000 40200'"]]
+            # Commands to run the test binaries.
+            run_cmds = [
+                [f"./target/debug/{test_binary_name}"]
+                for test_binary_name in SEQUENCER_INTEGRATION_TEST_NAMES
+            ]
+            return build_cmds + port_cmds + run_cmds
 
         raise NotImplementedError(f"Command {self} not implemented.")
 
@@ -63,16 +84,13 @@ def test_crates(crates: Set[str], base_command: BaseCommand):
     Runs tests for the given crates.
     If no crates provided, runs tests for all crates.
     """
-    args = []
-    for package in crates:
-        args.extend(["--package", package])
-
     # If crates is empty (i.e. changes_only is False), all packages will be tested (no args).
-    cmd = base_command.cmd(crates=crates)
+    cmds = base_command.cmds(crates=crates)
 
-    print("Running tests...")
-    print(cmd, flush=True)
-    subprocess.run(cmd, check=True)
+    print("Executing test commands...")
+    for cmd in cmds:
+        print(cmd, flush=True)
+        subprocess.run(cmd, check=True)
     print("Tests complete.")
 
 

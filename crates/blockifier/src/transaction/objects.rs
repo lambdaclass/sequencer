@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use starknet_api::block::{BlockInfo, FeeType};
 use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::execution_resources::GasVector;
@@ -22,17 +23,15 @@ use starknet_api::transaction::{
     TransactionOptions,
     TransactionVersion,
 };
-use strum_macros::EnumIter;
 
 use crate::abi::constants as abi_constants;
-use crate::blockifier::block::BlockInfo;
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::execution::call_info::{CallInfo, ExecutionSummary};
 use crate::execution::stack_trace::ErrorStack;
 use crate::fee::fee_checks::FeeCheckError;
 use crate::fee::fee_utils::get_fee_by_gas_vector;
 use crate::fee::receipt::TransactionReceipt;
 use crate::transaction::errors::{TransactionExecutionError, TransactionPreValidationError};
-use crate::versioned_constants::VersionedConstants;
 
 #[cfg(test)]
 #[path = "objects_test.rs"]
@@ -240,6 +239,8 @@ impl ExecutionResourcesTraits for ExecutionResources {
         self.n_steps
             // Memory holes are slightly cheaper than actual steps, but we count them as such
             // for simplicity.
+            // TODO(AvivG): Compute memory_holes gas accurately while maintaining backward compatibility.
+            // Define memory_holes_gas version_constants as 100 gas (1 step) for previous versions.
             + self.n_memory_holes
             // The "segment arena" builtin is not part of the prover (not in any proof layout);
             // It is transformed into regular steps by the OS program - each instance requires
@@ -277,12 +278,6 @@ pub trait HasRelatedFeeType {
     fn get_fee_by_gas_vector(&self, block_info: &BlockInfo, gas_vector: GasVector) -> Fee {
         get_fee_by_gas_vector(block_info, gas_vector, &self.fee_type())
     }
-}
-
-#[derive(Clone, Copy, Hash, EnumIter, Eq, PartialEq)]
-pub enum FeeType {
-    Strk,
-    Eth,
 }
 
 pub trait TransactionInfoCreator {

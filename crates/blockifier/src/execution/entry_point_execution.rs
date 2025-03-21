@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout_name::LayoutName;
 use cairo_vm::types::relocatable::{MaybeRelocatable, Relocatable};
@@ -7,18 +5,18 @@ use cairo_vm::vm::errors::cairo_run_errors::CairoRunError;
 use cairo_vm::vm::errors::memory_errors::MemoryError;
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::builtin_runner::BuiltinRunner;
-use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner};
+use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner, ExecutionResources};
 use cairo_vm::vm::security::verify_secure_runner;
 use num_traits::{ToPrimitive, Zero};
-use starknet_api::execution_resources::GasAmount;
 use starknet_types_core::felt::Felt;
 
-use crate::execution::call_info::{CallExecution, CallInfo, ChargedResources, Retdata};
-use crate::execution::contract_class::{ContractClassV1, EntryPointV1, TrackedResource};
+use crate::blockifier_versioned_constants::GasCosts;
+use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
+use crate::execution::contract_class::{CompiledClassV1, EntryPointV1, TrackedResource};
 use crate::execution::entry_point::{
-    CallEntryPoint,
     EntryPointExecutionContext,
     EntryPointExecutionResult,
+    ExecutableCallEntryPoint,
 };
 use crate::execution::errors::{EntryPointExecutionError, PostExecutionError, PreExecutionError};
 use crate::execution::execution_utils::{
@@ -31,7 +29,6 @@ use crate::execution::execution_utils::{
 };
 use crate::execution::syscalls::hint_processor::SyscallHintProcessor;
 use crate::state::state_api::State;
-use crate::versioned_constants::GasCosts;
 
 #[cfg(test)]
 #[path = "entry_point_execution_test.rs"]
@@ -54,27 +51,48 @@ pub struct CallResult {
     pub gas_consumed: u64,
 }
 
+pub enum ExecutionRunnerMode {
+    Starknet,
+    #[cfg(feature = "tracing")]
+    Tracing,
+}
+
+impl ExecutionRunnerMode {
+    pub fn proof_mode(&self) -> bool {
+        match self {
+            ExecutionRunnerMode::Starknet => false,
+            #[cfg(feature = "tracing")]
+            ExecutionRunnerMode::Tracing => false,
+        }
+    }
+
+    pub fn trace_enabled(&self) -> bool {
+        match self {
+            ExecutionRunnerMode::Starknet => false,
+            #[cfg(feature = "tracing")]
+            ExecutionRunnerMode::Tracing => true,
+        }
+    }
+}
+
 /// Executes a specific call to a contract entry point and returns its output.
 pub fn execute_entry_point_call(
-    call: CallEntryPoint,
-    contract_class: ContractClassV1,
+    call: ExecutableCallEntryPoint,
+    compiled_class: CompiledClassV1,
     state: &mut dyn State,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
-    // Fetch the class hash from `call`.
-    let class_hash = call.class_hash.ok_or(EntryPointExecutionError::InternalError(
-        "Class hash must not be None when executing an entry point.".into(),
-    ))?;
-
     let tracked_resource =
         *context.tracked_resource_stack.last().expect("Unexpected empty tracked resource.");
+    // Extract information from the context, as it will be passed as a mutable reference.
+    let entry_point_initial_budget = context.gas_costs().base.entry_point_initial_budget;
     let VmExecutionContext {
         mut runner,
         mut syscall_handler,
         initial_syscall_ptr,
         entry_point,
         program_extra_data_length,
-    } = initialize_execution_context(call, &contract_class, state, context)?;
+    } = initialize_execution_context(call, &compiled_class, state, context)?;
 
     let args = prepare_call_arguments(
         &syscall_handler.base.call,
@@ -82,22 +100,15 @@ pub fn execute_entry_point_call(
         initial_syscall_ptr,
         &mut syscall_handler.read_only_segments,
         &entry_point,
+        entry_point_initial_budget,
     )?;
+
     let n_total_args = args.len();
 
     // Execute.
-    let bytecode_length = contract_class.bytecode_length();
+    let bytecode_length = compiled_class.bytecode_length();
     let program_segment_size = bytecode_length + program_extra_data_length;
     run_entry_point(&mut runner, &mut syscall_handler, entry_point, args, program_segment_size)?;
-
-    // Collect the set PC values that were visited during the entry point execution.
-    register_visited_pcs(
-        &mut runner,
-        syscall_handler.base.state,
-        class_hash,
-        program_segment_size,
-        bytecode_length,
-    )?;
 
     Ok(finalize_execution(
         runner,
@@ -108,51 +119,20 @@ pub fn execute_entry_point_call(
     )?)
 }
 
-// Collects the set PC values that were visited during the entry point execution.
-fn register_visited_pcs(
-    runner: &mut CairoRunner,
-    state: &mut dyn State,
-    class_hash: starknet_api::core::ClassHash,
-    program_segment_size: usize,
-    bytecode_length: usize,
-) -> EntryPointExecutionResult<()> {
-    let mut class_visited_pcs = HashSet::new();
-    // Relocate the trace, putting the program segment at address 1 and the execution segment right
-    // after it.
-    // TODO(lior): Avoid unnecessary relocation once the VM has a non-relocated `get_trace()`
-    //   function.
-    runner.relocate_trace(&[1, 1 + program_segment_size])?;
-    for trace_entry in runner.relocated_trace.as_ref().expect("Relocated trace not found") {
-        let pc = trace_entry.pc;
-        if pc < 1 {
-            return Err(EntryPointExecutionError::InternalError(format!(
-                "Invalid PC value {pc} in trace."
-            )));
-        }
-        let real_pc = pc - 1;
-        // Jumping to a PC that is not inside the bytecode is possible. For example, to obtain
-        // the builtin costs. Filter out these values.
-        if real_pc < bytecode_length {
-            class_visited_pcs.insert(real_pc);
-        }
-    }
-    state.add_visited_pcs(class_hash, &class_visited_pcs);
-    Ok(())
-}
-
-pub fn initialize_execution_context<'a>(
-    call: CallEntryPoint,
-    contract_class: &'a ContractClassV1,
+pub fn initialize_execution_context_with_runner_mode<'a>(
+    call: ExecutableCallEntryPoint,
+    compiled_class: &'a CompiledClassV1,
     state: &'a mut dyn State,
     context: &'a mut EntryPointExecutionContext,
+    execution_runner_mode: ExecutionRunnerMode,
 ) -> Result<VmExecutionContext<'a>, PreExecutionError> {
-    let entry_point = contract_class.get_entry_point(&call)?;
+    let entry_point = compiled_class.get_entry_point(&call.type_and_selector())?;
 
     // Instantiate Cairo runner.
-    let proof_mode = false;
-    let trace_enabled = true;
+    let proof_mode = execution_runner_mode.proof_mode();
+    let trace_enabled = execution_runner_mode.trace_enabled();
     let mut runner = CairoRunner::new(
-        &contract_class.0.program,
+        &compiled_class.0.program,
         LayoutName::starknet,
         proof_mode,
         trace_enabled,
@@ -162,7 +142,7 @@ pub fn initialize_execution_context<'a>(
     let mut read_only_segments = ReadOnlySegments::default();
     let program_extra_data_length = prepare_program_extra_data(
         &mut runner,
-        contract_class,
+        compiled_class,
         &mut read_only_segments,
         &context.versioned_constants().os_constants.gas_costs,
     )?;
@@ -174,7 +154,7 @@ pub fn initialize_execution_context<'a>(
         context,
         initial_syscall_ptr,
         call,
-        &contract_class.hints,
+        &compiled_class.hints,
         read_only_segments,
     );
 
@@ -187,21 +167,36 @@ pub fn initialize_execution_context<'a>(
     })
 }
 
+pub fn initialize_execution_context<'a>(
+    call: ExecutableCallEntryPoint,
+    compiled_class: &'a CompiledClassV1,
+    state: &'a mut dyn State,
+    context: &'a mut EntryPointExecutionContext,
+) -> Result<VmExecutionContext<'a>, PreExecutionError> {
+    initialize_execution_context_with_runner_mode(
+        call,
+        compiled_class,
+        state,
+        context,
+        ExecutionRunnerMode::Starknet,
+    )
+}
+
 fn prepare_program_extra_data(
     runner: &mut CairoRunner,
-    contract_class: &ContractClassV1,
+    contract_class: &CompiledClassV1,
     read_only_segments: &mut ReadOnlySegments,
     gas_costs: &GasCosts,
 ) -> Result<usize, PreExecutionError> {
     // Create the builtin cost segment, the builtin order should be the same as the price builtin
     // array in the os in compiled_class.cairo in load_compiled_class_facts.
     let builtin_price_array = [
-        gas_costs.pedersen_gas_cost,
-        gas_costs.bitwise_builtin_gas_cost,
-        gas_costs.ecop_gas_cost,
-        gas_costs.poseidon_gas_cost,
-        gas_costs.add_mod_gas_cost,
-        gas_costs.mul_mod_gas_cost,
+        gas_costs.builtins.pedersen,
+        gas_costs.builtins.bitwise,
+        gas_costs.builtins.ecop,
+        gas_costs.builtins.poseidon,
+        gas_costs.builtins.add_mod,
+        gas_costs.builtins.mul_mod,
     ];
 
     let data = builtin_price_array
@@ -223,11 +218,12 @@ fn prepare_program_extra_data(
 }
 
 pub fn prepare_call_arguments(
-    call: &CallEntryPoint,
+    call: &ExecutableCallEntryPoint,
     runner: &mut CairoRunner,
     initial_syscall_ptr: Relocatable,
     read_only_segments: &mut ReadOnlySegments,
     entrypoint: &EntryPointV1,
+    entry_point_initial_budget: u64,
 ) -> Result<Args, PreExecutionError> {
     let mut args: Args = vec![];
 
@@ -256,8 +252,15 @@ pub fn prepare_call_arguments(
         }
         return Err(PreExecutionError::InvalidBuiltin(*builtin_name));
     }
+    // Pre-charge entry point's initial budget to ensure sufficient gas for executing a minimal
+    // entry point code. When redepositing is used, the entry point is aware of this pre-charge
+    // and adjusts the gas counter accordingly if a smaller amount of gas is required.
+    let call_initial_gas = call
+        .initial_gas
+        .checked_sub(entry_point_initial_budget)
+        .ok_or(PreExecutionError::InsufficientEntryPointGas)?;
     // Push gas counter.
-    args.push(CairoArg::Single(MaybeRelocatable::from(Felt::from(call.initial_gas))));
+    args.push(CairoArg::Single(MaybeRelocatable::from(Felt::from(call_initial_gas))));
     // Push syscall ptr.
     args.push(CairoArg::Single(MaybeRelocatable::from(initial_syscall_ptr)));
 
@@ -360,32 +363,6 @@ fn maybe_fill_holes(
     Ok(())
 }
 
-/// Calculates the total gas for fee in the current call + subtree.
-#[allow(dead_code)]
-fn to_gas_for_fee(
-    tracked_resource: &TrackedResource,
-    gas_consumed: u64,
-    inner_calls: &[CallInfo],
-) -> GasAmount {
-    // The Sierra gas consumed in this specific call is `gas_consumed`
-    // (= total gas of self + subtree), minus the sum of all inner calls Sierra gas consumed.
-    // To compute the total Sierra gas to charge (of self + subtree), if the tracked resource is
-    // Sierra gas, we add this amount to the total gas to charge for in the subtree:
-    // gas_for_fee = gas_consumed - subtree_gas_consumed + subtree_gas_to_fee.
-    GasAmount(match tracked_resource {
-        // If the tracked resource is CairoSteps, then all tracked resources of all calls in
-        // the subtree are also CairoSteps. Thus, the total gas to charge in this subtree is zero.
-        TrackedResource::CairoSteps => 0,
-        TrackedResource::SierraGas => gas_consumed
-            .checked_sub(
-                inner_calls
-                    .iter()
-                    .map(|call| call.execution.gas_consumed - call.charged_resources.gas_for_fee.0)
-                    .sum::<u64>(),
-            )
-            .expect("gas_for_fee unexpectedly underflowed."),
-    })
-}
 pub fn finalize_execution(
     mut runner: CairoRunner,
     mut syscall_handler: SyscallHintProcessor<'_>,
@@ -408,38 +385,38 @@ pub fn finalize_execution(
     runner.vm.mark_address_range_as_accessed(args_ptr, n_total_args)?;
     syscall_handler.read_only_segments.mark_as_accessed(&mut runner)?;
 
-    let call_result = get_call_result(&runner, &syscall_handler)?;
+    let call_result = get_call_result(&runner, &syscall_handler, &tracked_resource)?;
 
-    // Take into account the resources of the current call, without inner calls.
-    // Has to happen after marking holes in segments as accessed.
-    let mut vm_resources_without_inner_calls = runner
-        .get_execution_resources()
-        .map_err(VirtualMachineError::RunnerError)?
-        .filter_unused_builtins();
-    let versioned_constants = syscall_handler.base.context.versioned_constants();
-    if versioned_constants.segment_arena_cells {
-        vm_resources_without_inner_calls
-            .builtin_instance_counter
-            .get_mut(&BuiltinName::segment_arena)
-            .map_or_else(|| {}, |val| *val *= SEGMENT_ARENA_BUILTIN_SIZE);
-    }
-    // Take into account the syscall resources of the current call.
-    vm_resources_without_inner_calls +=
-        &versioned_constants.get_additional_os_syscall_resources(&syscall_handler.syscall_counter);
+    let vm_resources_without_inner_calls = match tracked_resource {
+        TrackedResource::CairoSteps => {
+            // Take into account the resources of the current call, without inner calls.
+            // Has to happen after marking holes in segments as accessed.
+            let mut vm_resources_without_inner_calls = runner
+                .get_execution_resources()
+                .map_err(VirtualMachineError::RunnerError)?
+                .filter_unused_builtins();
+            let versioned_constants = syscall_handler.base.context.versioned_constants();
+            if versioned_constants.segment_arena_cells {
+                vm_resources_without_inner_calls
+                    .builtin_instance_counter
+                    .get_mut(&BuiltinName::segment_arena)
+                    .map_or_else(|| {}, |val| *val *= SEGMENT_ARENA_BUILTIN_SIZE);
+            }
+            // Take into account the syscall resources of the current call.
+            vm_resources_without_inner_calls += &versioned_constants
+                .get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
+            vm_resources_without_inner_calls
+        }
+        TrackedResource::SierraGas => ExecutionResources::default(),
+    };
 
     syscall_handler.finalize();
 
-    let charged_resources_without_inner_calls = ChargedResources {
-        vm_resources: vm_resources_without_inner_calls,
-        // TODO(tzahi): Replace with a computed value.
-        gas_for_fee: GasAmount(0),
-    };
-    let charged_resources = &charged_resources_without_inner_calls
-        + &CallInfo::summarize_charged_resources(syscall_handler.base.inner_calls.iter());
-
+    let vm_resources = &vm_resources_without_inner_calls
+        + &CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
     let syscall_handler_base = syscall_handler.base;
     Ok(CallInfo {
-        call: syscall_handler_base.call,
+        call: syscall_handler_base.call.into(),
         execution: CallExecution {
             retdata: call_result.retdata,
             events: syscall_handler_base.events,
@@ -449,17 +426,15 @@ pub fn finalize_execution(
         },
         inner_calls: syscall_handler_base.inner_calls,
         tracked_resource,
-        charged_resources,
-        storage_read_values: syscall_handler_base.read_values,
-        accessed_storage_keys: syscall_handler_base.accessed_keys,
-        read_class_hash_values: syscall_handler_base.read_class_hash_values,
-        accessed_contract_addresses: syscall_handler_base.accessed_contract_addresses,
+        resources: vm_resources,
+        storage_access_tracker: syscall_handler_base.storage_access_tracker,
     })
 }
 
 fn get_call_result(
     runner: &CairoRunner,
     syscall_handler: &SyscallHintProcessor<'_>,
+    tracked_resource: &TrackedResource,
 ) -> Result<CallResult, PostExecutionError> {
     let return_result = runner.vm.get_return_values(5)?;
     // Corresponds to the Cairo 1.0 enum:
@@ -496,7 +471,11 @@ fn get_call_result(
         });
     }
 
-    let gas_consumed = syscall_handler.base.call.initial_gas - gas;
+    let gas_consumed = match tracked_resource {
+        // Do not count Sierra gas in CairoSteps mode.
+        TrackedResource::CairoSteps => 0,
+        TrackedResource::SierraGas => syscall_handler.base.call.initial_gas - gas,
+    };
     Ok(CallResult {
         failed,
         retdata: read_execution_retdata(runner, retdata_size, retdata_start)?,

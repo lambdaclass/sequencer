@@ -27,7 +27,7 @@ use starknet_client::reader::objects::pending_data::{
 use starknet_client::reader::objects::state::StateDiff as ClientStateDiff;
 use starknet_client::reader::objects::transaction::Transaction as ClientTransaction;
 use starknet_client::reader::{DeclaredClassHashEntry, PendingData};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::sources::base_layer::MockBaseLayerSourceTrait;
 use crate::sources::central::MockCentralSourceTrait;
@@ -64,8 +64,6 @@ fn state_sorted() {
     let deprecated_declared_1 = (ClassHash(hash1), DeprecatedContractClass::default());
     let nonce_0 = (contract_address_0, Nonce(hash0));
     let nonce_1 = (contract_address_1, Nonce(hash1));
-    let replaced_class_0 = (contract_address_0, ClassHash(hash0));
-    let replaced_class_1 = (contract_address_1, ClassHash(hash1));
 
     let unsorted_deployed_contracts = IndexMap::from([dep_contract_1, dep_contract_0]);
     let unsorted_declared_classes =
@@ -78,7 +76,6 @@ fn state_sorted() {
         (contract_address_1, unsorted_storage_entries.clone()),
         (contract_address_0, unsorted_storage_entries),
     ]);
-    let unsorted_replaced_classes = IndexMap::from([replaced_class_1, replaced_class_0]);
 
     let mut state_diff = StateDiff {
         deployed_contracts: unsorted_deployed_contracts,
@@ -86,7 +83,6 @@ fn state_sorted() {
         deprecated_declared_classes: unsorted_deprecated_declared,
         declared_classes: unsorted_declared_classes,
         nonces: unsorted_nonces,
-        replaced_classes: unsorted_replaced_classes,
     };
 
     let sorted_deployed_contracts = IndexMap::from([dep_contract_0, dep_contract_1]);
@@ -98,7 +94,6 @@ fn state_sorted() {
         (contract_address_0, sorted_storage_entries.clone()),
         (contract_address_1, sorted_storage_entries.clone()),
     ]);
-    let sorted_replaced_classes = IndexMap::from([replaced_class_0, replaced_class_1]);
 
     sort_state_diff(&mut state_diff);
     assert_eq!(
@@ -122,10 +117,6 @@ fn state_sorted() {
         sorted_storage_entries.get_index(0).unwrap(),
     );
     assert_eq!(state_diff.nonces.get_index(0).unwrap(), sorted_nonces.get_index(0).unwrap());
-    assert_eq!(
-        state_diff.replaced_classes.get_index(0).unwrap(),
-        sorted_replaced_classes.get_index(0).unwrap(),
-    );
 }
 
 #[tokio::test]
@@ -171,8 +162,8 @@ async fn stream_new_base_layer_block_no_blocks_on_base_layer() {
     assert_matches!(event, SyncEvent::NewBaseLayerBlock { block_number: BlockNumber(1), .. });
 }
 
-#[test]
-fn store_base_layer_block_test() {
+#[tokio::test]
+async fn store_base_layer_block_test() {
     let (reader, mut writer) = get_test_storage().0;
 
     let header_hash = BlockHash(felt!("0x0"));
@@ -199,22 +190,24 @@ fn store_base_layer_block_test() {
         central_source: Arc::new(MockCentralSourceTrait::new()),
         pending_source: Arc::new(MockPendingSourceTrait::new()),
         pending_classes: Arc::new(RwLock::new(PendingClasses::default())),
-        base_layer_source: Arc::new(MockBaseLayerSourceTrait::new()),
+        base_layer_source: Some(Arc::new(MockBaseLayerSourceTrait::new())),
         reader,
-        writer,
+        writer: Arc::new(Mutex::new(writer)),
         sequencer_pub_key: None,
+        class_manager_client: None,
     };
 
     // Trying to store a block without a header in the storage.
-    let res = gen_state_sync.store_base_layer_block(BlockNumber(1), BlockHash::default());
+    let res = gen_state_sync.store_base_layer_block(BlockNumber(1), BlockHash::default()).await;
     assert_matches!(res, Err(StateSyncError::BaseLayerBlockWithoutMatchingHeader { .. }));
 
     // Trying to store a block with mismatching header.
-    let res = gen_state_sync.store_base_layer_block(BlockNumber(0), BlockHash(felt!("0x666")));
+    let res =
+        gen_state_sync.store_base_layer_block(BlockNumber(0), BlockHash(felt!("0x666"))).await;
     assert_matches!(res, Err(StateSyncError::BaseLayerHashMismatch { .. }));
 
     // Happy flow.
-    let res = gen_state_sync.store_base_layer_block(BlockNumber(0), header_hash);
+    let res = gen_state_sync.store_base_layer_block(BlockNumber(0), header_hash).await;
     assert!(res.is_ok());
     let base_layer_marker =
         gen_state_sync.reader.begin_ro_txn().unwrap().get_base_layer_block_marker().unwrap();

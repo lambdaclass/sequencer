@@ -1,7 +1,12 @@
+use starknet_crypto::Felt;
+
 use super::NonceManager;
-use crate::core::{calculate_contract_address, ClassHash, ContractAddress, Nonce};
+use crate::core::{ClassHash, Nonce};
 use crate::data_availability::DataAvailabilityMode;
-use crate::executable_transaction::DeployAccountTransaction as ExecutableDeployAccountTransaction;
+use crate::executable_transaction::{
+    AccountTransaction,
+    DeployAccountTransaction as ExecutableDeployAccountTransaction,
+};
 use crate::rpc_transaction::{
     RpcDeployAccountTransaction,
     RpcDeployAccountTransactionV3,
@@ -17,6 +22,7 @@ use crate::transaction::fields::{
     ValidResourceBounds,
 };
 use crate::transaction::{
+    CalculateContractAddress,
     DeployAccountTransaction,
     DeployAccountTransactionV1,
     DeployAccountTransactionV3,
@@ -28,7 +34,6 @@ use crate::transaction::{
 pub struct DeployAccountTxArgs {
     pub max_fee: Fee,
     pub signature: TransactionSignature,
-    pub deployer_address: ContractAddress,
     pub version: TransactionVersion,
     pub resource_bounds: ValidResourceBounds,
     pub tip: Tip,
@@ -47,7 +52,6 @@ impl Default for DeployAccountTxArgs {
         DeployAccountTxArgs {
             max_fee: Fee::default(),
             signature: TransactionSignature::default(),
-            deployer_address: ContractAddress::default(),
             version: TransactionVersion::THREE,
             resource_bounds: ValidResourceBounds::create_for_testing_no_fee_enforcement(),
             tip: Tip::default(),
@@ -84,7 +88,7 @@ pub fn deploy_account_tx(
     deploy_tx_args: DeployAccountTxArgs,
     nonce: Nonce,
 ) -> DeployAccountTransaction {
-    // TODO: Make TransactionVersion an enum and use match here.
+    // TODO(Arni): Make TransactionVersion an enum and use match here.
     if deploy_tx_args.version == TransactionVersion::ONE {
         DeployAccountTransaction::V1(DeployAccountTransactionV1 {
             max_fee: deploy_tx_args.max_fee,
@@ -112,22 +116,30 @@ pub fn deploy_account_tx(
     }
 }
 
-pub fn executable_deploy_account_tx(
+// TODO(Arni): Consider using [ExecutableDeployAccountTransaction::create] in the body of this
+// function. We don't use it now to avoid tx_hash calculation.
+pub fn executable_deploy_account_tx(deploy_tx_args: DeployAccountTxArgs) -> AccountTransaction {
+    let tx_hash = deploy_tx_args.tx_hash;
+    let tx = deploy_account_tx(deploy_tx_args, Nonce(Felt::ZERO));
+    let contract_address = tx.calculate_contract_address().unwrap();
+    let deploy_account_tx = ExecutableDeployAccountTransaction { tx, tx_hash, contract_address };
+
+    AccountTransaction::DeployAccount(deploy_account_tx)
+}
+
+pub fn create_executable_deploy_account_tx_and_update_nonce(
     deploy_tx_args: DeployAccountTxArgs,
     nonce_manager: &mut NonceManager,
-) -> ExecutableDeployAccountTransaction {
-    let tx_hash = deploy_tx_args.tx_hash;
-    let contract_address = calculate_contract_address(
-        deploy_tx_args.contract_address_salt,
-        deploy_tx_args.class_hash,
-        &deploy_tx_args.constructor_calldata,
-        deploy_tx_args.deployer_address,
-    )
-    .unwrap();
+) -> AccountTransaction {
+    let tx = executable_deploy_account_tx(deploy_tx_args);
+    let contract_address = tx.contract_address();
     let nonce = nonce_manager.next(contract_address);
-    let tx = deploy_account_tx(deploy_tx_args, nonce);
-
-    ExecutableDeployAccountTransaction { tx, tx_hash, contract_address }
+    assert_eq!(
+        nonce,
+        Nonce(Felt::ZERO),
+        "Account already deployed at this address: {contract_address}."
+    );
+    tx
 }
 
 pub fn rpc_deploy_account_tx(deploy_tx_args: DeployAccountTxArgs) -> RpcTransaction {

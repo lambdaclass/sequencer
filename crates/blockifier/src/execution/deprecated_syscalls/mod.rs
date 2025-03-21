@@ -64,9 +64,13 @@ pub enum DeprecatedSyscallSelector {
     GetTxInfo,
     GetTxSignature,
     Keccak,
+    // TODO(Noa): Remove it (as it is not a syscall) and define its resources in
+    // `OsResources`.
+    KeccakRound,
     Sha256ProcessBlock,
     LibraryCall,
     LibraryCallL1Handler,
+    MetaTxV0,
     ReplaceClass,
     Secp256k1Add,
     Secp256k1GetPointFromX,
@@ -110,6 +114,7 @@ impl TryFrom<Felt> for DeprecatedSyscallSelector {
             b"Sha256ProcessBlock" => Ok(Self::Sha256ProcessBlock),
             b"LibraryCall" => Ok(Self::LibraryCall),
             b"LibraryCallL1Handler" => Ok(Self::LibraryCallL1Handler),
+            b"MetaTxV0" => Ok(Self::MetaTxV0),
             b"ReplaceClass" => Ok(Self::ReplaceClass),
             b"Secp256k1Add" => Ok(Self::Secp256k1Add),
             b"Secp256k1GetPointFromX" => Ok(Self::Secp256k1GetPointFromX),
@@ -219,7 +224,7 @@ pub fn call_contract(
         storage_address,
         caller_address: syscall_handler.storage_address,
         call_type: CallType::Call,
-        initial_gas: syscall_handler.context.gas_costs().default_initial_gas_cost,
+        initial_gas: syscall_handler.context.gas_costs().base.default_initial_gas_cost,
     };
     let retdata_segment =
         execute_inner_call(entry_point, vm, syscall_handler).map_err(|error| {
@@ -338,13 +343,21 @@ pub fn deploy(
         deployer_address_for_calculation,
     )?;
 
+    // Increment the Deploy syscall's linear cost counter by the number of elements in the
+    // constructor calldata.
+    let syscall_usage = syscall_handler
+        .syscalls_usage
+        .get_mut(&DeprecatedSyscallSelector::Deploy)
+        .expect("syscalls_usage entry for Deploy must be initialized");
+    syscall_usage.linear_factor += request.constructor_calldata.0.len();
+
     let ctor_context = ConstructorContext {
         class_hash: request.class_hash,
         code_address: Some(deployed_contract_address),
         storage_address: deployed_contract_address,
         caller_address: deployer_address,
     };
-    let mut remaining_gas = syscall_handler.context.gas_costs().default_initial_gas_cost;
+    let mut remaining_gas = syscall_handler.context.gas_costs().base.default_initial_gas_cost;
     let call_info = execute_deployment(
         syscall_handler.state,
         syscall_handler.context,
@@ -653,7 +666,7 @@ pub fn replace_class(
     syscall_handler: &mut DeprecatedSyscallHintProcessor<'_>,
 ) -> DeprecatedSyscallResult<ReplaceClassResponse> {
     // Ensure the class is declared (by reading it).
-    syscall_handler.state.get_compiled_contract_class(request.class_hash)?;
+    syscall_handler.state.get_compiled_class(request.class_hash)?;
     syscall_handler.state.set_class_hash_at(syscall_handler.storage_address, request.class_hash)?;
 
     Ok(ReplaceClassResponse {})

@@ -9,7 +9,7 @@ use super::BroadcastedMessageMetadata;
 use crate::gossipsub_impl::Topic;
 use crate::mixed_behaviour;
 use crate::peer_manager::{ReputationModifier, MALICIOUS};
-use crate::sqmr::behaviour::{PeerNotConnected, SessionIdNotFoundError};
+use crate::sqmr::behaviour::SessionIdNotFoundError;
 use crate::sqmr::{Bytes, InboundSessionId, OutboundSessionId, SessionId};
 
 pub type Event = SwarmEvent<<mixed_behaviour::MixedBehaviour as NetworkBehaviour>::ToSwarm>;
@@ -21,16 +21,9 @@ pub trait SwarmTrait: Stream<Item = Event> + Unpin {
         inbound_session_id: InboundSessionId,
     ) -> Result<(), SessionIdNotFoundError>;
 
-    fn send_query(
-        &mut self,
-        query: Vec<u8>,
-        peer_id: PeerId,
-        protocol: StreamProtocol,
-    ) -> Result<OutboundSessionId, PeerNotConnected>;
+    fn send_query(&mut self, query: Vec<u8>, protocol: StreamProtocol) -> OutboundSessionId;
 
     fn dial(&mut self, peer_multiaddr: Multiaddr) -> Result<(), DialError>;
-
-    fn num_connected_peers(&self) -> usize;
 
     fn close_inbound_session(
         &mut self,
@@ -50,7 +43,7 @@ pub trait SwarmTrait: Stream<Item = Event> + Unpin {
 
     fn broadcast_message(&mut self, message: Bytes, topic_hash: TopicHash);
 
-    // TODO: change this to report_peer and add an argument for the score.
+    // TODO(Shahak): change this to report_peer and add an argument for the score.
     fn report_peer_as_malicious(&mut self, peer_id: PeerId);
 
     fn add_new_supported_inbound_protocol(&mut self, protocol_name: StreamProtocol);
@@ -67,23 +60,14 @@ impl SwarmTrait for Swarm<mixed_behaviour::MixedBehaviour> {
         self.behaviour_mut().sqmr.send_response(response, inbound_session_id)
     }
 
-    // TODO: change this function signature
-    fn send_query(
-        &mut self,
-        query: Vec<u8>,
-        _peer_id: PeerId,
-        protocol: StreamProtocol,
-    ) -> Result<OutboundSessionId, PeerNotConnected> {
-        Ok(self.behaviour_mut().sqmr.start_query(query, protocol))
+    fn send_query(&mut self, query: Vec<u8>, protocol: StreamProtocol) -> OutboundSessionId {
+        self.behaviour_mut().sqmr.start_query(query, protocol)
     }
 
     fn dial(&mut self, peer_multiaddr: Multiaddr) -> Result<(), DialError> {
         self.dial(DialOpts::from(peer_multiaddr))
     }
 
-    fn num_connected_peers(&self) -> usize {
-        self.network_info().num_peers()
-    }
     fn close_inbound_session(
         &mut self,
         session_id: InboundSessionId,

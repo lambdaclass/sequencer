@@ -9,11 +9,14 @@ function clean() {
 
 
 function build() {
+    ret=0
     echo "Building..."
     pypy3.9 -m venv /tmp/venv
     source /tmp/venv/bin/activate
-    cargo build --release -p native_blockifier --features "testing" || clean
+    rustup toolchain install
+    cargo build --release -p native_blockifier --features "cairo_native" || ret=$?
     clean
+    return $ret
 }
 
 build

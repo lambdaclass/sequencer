@@ -3,14 +3,19 @@ use std::sync::Arc;
 use assert_matches::assert_matches;
 use mockall::predicate::eq;
 use rstest::{fixture, rstest};
-use starknet_api::executable_transaction::{AccountTransaction, L1HandlerTransaction, Transaction};
-use starknet_api::test_utils::invoke::{executable_invoke_tx, InvokeTxArgs};
-use starknet_api::transaction::TransactionHash;
+use starknet_api::block::BlockNumber;
+use starknet_api::consensus_transaction::InternalConsensusTransaction;
+use starknet_api::executable_transaction::L1HandlerTransaction;
+use starknet_api::test_utils::invoke::{internal_invoke_tx, InvokeTxArgs};
+use starknet_api::tx_hash;
+use starknet_l1_provider_types::{
+    InvalidValidationStatus,
+    MockL1ProviderClient,
+    ValidationStatus as L1ValidationStatus,
+};
 use starknet_mempool_types::communication::MockMempoolClient;
-use starknet_types_core::felt::Felt;
 
 use crate::transaction_provider::{
-    MockL1ProviderClient,
     NextTxs,
     ProposeTransactionProvider,
     TransactionProvider,
@@ -19,41 +24,39 @@ use crate::transaction_provider::{
 };
 
 const MAX_L1_HANDLER_TXS_PER_BLOCK: usize = 15;
+const HEIGHT: BlockNumber = BlockNumber(1);
 const MAX_TXS_PER_FETCH: usize = 10;
 const VALIDATE_BUFFER_SIZE: usize = 30;
 
 struct MockDependencies {
     mempool_client: MockMempoolClient,
     l1_provider_client: MockL1ProviderClient,
-    tx_sender: tokio::sync::mpsc::Sender<Transaction>,
-    tx_receiver: tokio::sync::mpsc::Receiver<Transaction>,
+    tx_sender: tokio::sync::mpsc::Sender<InternalConsensusTransaction>,
+    tx_receiver: tokio::sync::mpsc::Receiver<InternalConsensusTransaction>,
 }
 
 impl MockDependencies {
     fn expect_get_l1_handler_txs(&mut self, n_to_request: usize, n_to_return: usize) {
         self.l1_provider_client
             .expect_get_txs()
-            .with(eq(n_to_request))
-            .returning(move |_| vec![L1HandlerTransaction::default(); n_to_return]);
+            .with(eq(n_to_request), eq(HEIGHT))
+            .returning(move |_, _| Ok(vec![L1HandlerTransaction::default(); n_to_return]));
     }
 
     fn expect_get_mempool_txs(&mut self, n_to_request: usize) {
         self.mempool_client.expect_get_txs().with(eq(n_to_request)).returning(move |n_requested| {
-            Ok(vec![
-                AccountTransaction::Invoke(executable_invoke_tx(InvokeTxArgs::default()));
-                n_requested
-            ])
+            Ok(vec![internal_invoke_tx(InvokeTxArgs::default()); n_requested])
         });
     }
 
-    fn expect_validate_l1handler(&mut self, tx: L1HandlerTransaction, result: bool) {
+    fn expect_validate_l1handler(&mut self, tx: L1HandlerTransaction, result: L1ValidationStatus) {
         self.l1_provider_client
             .expect_validate()
-            .withf(move |tx_arg| tx_arg == &tx)
-            .returning(move |_| result);
+            .withf(move |tx_arg, height| tx_arg == &tx.tx_hash && *height == HEIGHT)
+            .returning(move |_, _| Ok(result));
     }
 
-    async fn simulate_input_txs(&mut self, txs: Vec<Transaction>) {
+    async fn simulate_input_txs(&mut self, txs: Vec<InternalConsensusTransaction>) {
         for tx in txs {
             self.tx_sender.send(tx).await.unwrap();
         }
@@ -64,6 +67,7 @@ impl MockDependencies {
             Arc::new(self.mempool_client),
             Arc::new(self.l1_provider_client),
             MAX_L1_HANDLER_TXS_PER_BLOCK,
+            HEIGHT,
         )
     }
 
@@ -71,13 +75,17 @@ impl MockDependencies {
         ValidateTransactionProvider {
             tx_receiver: self.tx_receiver,
             l1_provider_client: Arc::new(self.l1_provider_client),
+            height: HEIGHT,
         }
     }
 }
 
 #[fixture]
 fn mock_dependencies(
-    tx_channel: (tokio::sync::mpsc::Sender<Transaction>, tokio::sync::mpsc::Receiver<Transaction>),
+    tx_channel: (
+        tokio::sync::mpsc::Sender<InternalConsensusTransaction>,
+        tokio::sync::mpsc::Receiver<InternalConsensusTransaction>,
+    ),
 ) -> MockDependencies {
     let (tx_sender, tx_receiver) = tx_channel;
     MockDependencies {
@@ -89,13 +97,15 @@ fn mock_dependencies(
 }
 
 #[fixture]
-fn tx_channel() -> (tokio::sync::mpsc::Sender<Transaction>, tokio::sync::mpsc::Receiver<Transaction>)
-{
+fn tx_channel() -> (
+    tokio::sync::mpsc::Sender<InternalConsensusTransaction>,
+    tokio::sync::mpsc::Receiver<InternalConsensusTransaction>,
+) {
     tokio::sync::mpsc::channel(VALIDATE_BUFFER_SIZE)
 }
 
 fn test_l1handler_tx() -> L1HandlerTransaction {
-    L1HandlerTransaction { tx_hash: TransactionHash(Felt::ONE), ..Default::default() }
+    L1HandlerTransaction { tx_hash: tx_hash!(1), ..Default::default() }
 }
 
 #[rstest]
@@ -116,16 +126,24 @@ async fn fill_max_l1_handler(mut mock_dependencies: MockDependencies) {
 
     let txs = tx_provider.get_txs(MAX_TXS_PER_FETCH).await.unwrap();
     let data = assert_matches!(txs, NextTxs::Txs(txs) if txs.len() == MAX_TXS_PER_FETCH => txs);
-    assert!(data.iter().all(|tx| matches!(tx, Transaction::L1Handler(_))));
+    assert!(data.iter().all(|tx| matches!(tx, InternalConsensusTransaction::L1Handler(_))));
 
     let txs = tx_provider.get_txs(MAX_TXS_PER_FETCH).await.unwrap();
     let data = assert_matches!(txs, NextTxs::Txs(txs) if txs.len() == MAX_TXS_PER_FETCH => txs);
-    assert!(data[..n_l1handler_left].iter().all(|tx| matches!(tx, Transaction::L1Handler(_))));
-    assert!(data[n_l1handler_left..].iter().all(|tx| matches!(tx, Transaction::Account(_))));
+    assert!(
+        data[..n_l1handler_left]
+            .iter()
+            .all(|tx| matches!(tx, InternalConsensusTransaction::L1Handler(_)))
+    );
+    assert!(
+        data[n_l1handler_left..]
+            .iter()
+            .all(|tx| matches!(tx, InternalConsensusTransaction::RpcTransaction(_)))
+    );
 
     let txs = tx_provider.get_txs(MAX_TXS_PER_FETCH).await.unwrap();
     let data = assert_matches!(txs, NextTxs::Txs(txs) if txs.len() == MAX_TXS_PER_FETCH => txs);
-    assert!(data.iter().all(|tx| matches!(tx, Transaction::Account(_))));
+    assert!(data.iter().all(|tx| matches!(tx, InternalConsensusTransaction::RpcTransaction(_))));
 }
 
 #[rstest]
@@ -150,30 +168,30 @@ async fn no_more_l1_handler(mut mock_dependencies: MockDependencies) {
     assert!(
         data[..NUM_L1_HANDLER_TXS_IN_PROVIDER]
             .iter()
-            .all(|tx| matches!(tx, Transaction::L1Handler(_)))
+            .all(|tx| matches!(tx, InternalConsensusTransaction::L1Handler(_)))
     );
     assert!(
         data[NUM_L1_HANDLER_TXS_IN_PROVIDER..]
             .iter()
-            .all(|tx| { matches!(tx, Transaction::Account(_)) })
+            .all(|tx| { matches!(tx, InternalConsensusTransaction::RpcTransaction(_)) })
     );
 
     let txs = tx_provider.get_txs(MAX_TXS_PER_FETCH).await.unwrap();
     let data = assert_matches!(txs, NextTxs::Txs(txs) if txs.len() == MAX_TXS_PER_FETCH => txs);
-    assert!(data.iter().all(|tx| matches!(tx, Transaction::Account(_))));
+    assert!(data.iter().all(|tx| matches!(tx, InternalConsensusTransaction::RpcTransaction(_))));
 }
 
 #[rstest]
 #[tokio::test]
 async fn validate_flow(mut mock_dependencies: MockDependencies) {
     let test_tx = test_l1handler_tx();
-    mock_dependencies.expect_validate_l1handler(test_tx.clone(), true);
+    mock_dependencies.expect_validate_l1handler(test_tx.clone(), L1ValidationStatus::Validated);
     mock_dependencies
         .simulate_input_txs(vec![
-            Transaction::L1Handler(test_tx),
-            Transaction::Account(AccountTransaction::Invoke(executable_invoke_tx(
+            InternalConsensusTransaction::L1Handler(test_tx),
+            InternalConsensusTransaction::RpcTransaction(internal_invoke_tx(
                 InvokeTxArgs::default(),
-            ))),
+            )),
         ])
         .await;
     let mut validate_tx_provider = mock_dependencies.validate_tx_provider();
@@ -181,21 +199,32 @@ async fn validate_flow(mut mock_dependencies: MockDependencies) {
     let txs = validate_tx_provider.get_txs(MAX_TXS_PER_FETCH).await.unwrap();
     let data = assert_matches!(txs, NextTxs::Txs(txs) => txs);
     assert_eq!(data.len(), 2);
-    assert!(matches!(data[0], Transaction::L1Handler(_)));
-    assert!(matches!(data[1], Transaction::Account(_)));
+    assert!(matches!(data[0], InternalConsensusTransaction::L1Handler(_)));
+    assert!(matches!(data[1], InternalConsensusTransaction::RpcTransaction(_)));
 }
 
 #[rstest]
 #[tokio::test]
-async fn validate_fails(mut mock_dependencies: MockDependencies) {
+async fn validate_fails(
+    mut mock_dependencies: MockDependencies,
+    #[values(
+        InvalidValidationStatus::AlreadyIncludedInProposedBlock,
+        InvalidValidationStatus::AlreadyIncludedOnL2,
+        InvalidValidationStatus::ConsumedOnL1OrUnknown
+    )]
+    expected_validation_status: InvalidValidationStatus,
+) {
     let test_tx = test_l1handler_tx();
-    mock_dependencies.expect_validate_l1handler(test_tx.clone(), false);
+    mock_dependencies.expect_validate_l1handler(
+        test_tx.clone(),
+        L1ValidationStatus::Invalid(expected_validation_status),
+    );
     mock_dependencies
         .simulate_input_txs(vec![
-            Transaction::L1Handler(test_tx),
-            Transaction::Account(AccountTransaction::Invoke(executable_invoke_tx(
+            InternalConsensusTransaction::L1Handler(test_tx),
+            InternalConsensusTransaction::RpcTransaction(internal_invoke_tx(
                 InvokeTxArgs::default(),
-            ))),
+            )),
         ])
         .await;
     let mut validate_tx_provider = mock_dependencies.validate_tx_provider();
@@ -203,6 +232,7 @@ async fn validate_fails(mut mock_dependencies: MockDependencies) {
     let result = validate_tx_provider.get_txs(MAX_TXS_PER_FETCH).await;
     assert_matches!(
         result,
-        Err(TransactionProviderError::L1HandlerTransactionValidationFailed(_tx_hash))
+        Err(TransactionProviderError::L1HandlerTransactionValidationFailed { validation_status, .. })
+        if validation_status == expected_validation_status
     );
 }

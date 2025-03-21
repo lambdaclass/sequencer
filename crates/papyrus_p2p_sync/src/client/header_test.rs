@@ -1,4 +1,6 @@
-use futures::StreamExt;
+use std::collections::HashMap;
+
+use futures::{FutureExt, StreamExt};
 use papyrus_protobuf::sync::{
     BlockHashOrNumber,
     DataOrFin,
@@ -8,14 +10,18 @@ use papyrus_protobuf::sync::{
     SignedBlockHeader,
 };
 use papyrus_storage::header::HeaderStorageReader;
+use papyrus_test_utils::get_rng;
 use starknet_api::block::{BlockHeader, BlockHeaderWithoutHash, BlockNumber};
 use tokio::time::timeout;
 
 use super::test_utils::{
     create_block_hashes_and_signatures,
+    random_header,
+    run_test,
     setup,
     wait_for_marker,
-    MarkerKind,
+    Action,
+    DataType,
     TestArgs,
     HEADER_QUERY_LENGTH,
     SLEEP_DURATION_TO_LET_SYNC_ADVANCE,
@@ -88,7 +94,7 @@ async fn signed_headers_basic_flow() {
                 // sent.
                 let block_number = BlockNumber(i.try_into().unwrap());
                 wait_for_marker(
-                    MarkerKind::Header,
+                    DataType::Header,
                     &storage_reader,
                     block_number.unchecked_next(),
                     SLEEP_DURATION_TO_LET_SYNC_ADVANCE,
@@ -111,7 +117,7 @@ async fn signed_headers_basic_flow() {
     tokio::select! {
         sync_result = p2p_sync.run() => {
             sync_result.unwrap();
-            panic!("P2P sync aborted with no failure.");
+            unreachable!("Return type Never should never be constructed.");
         }
         _ = parse_queries_future => {}
     }
@@ -186,10 +192,37 @@ async fn sync_sends_new_header_query_if_it_got_partial_responses() {
     tokio::select! {
         sync_result = p2p_sync.run() => {
             sync_result.unwrap();
-            panic!("P2P sync aborted with no failure.");
+            unreachable!("Return type Never should never be constructed.");
         }
         _ = parse_queries_future => {}
     }
 }
 
-// TODO(shahak): Add negative tests.
+#[tokio::test]
+async fn wrong_block_number() {
+    run_test(
+        HashMap::from([(DataType::Header, 1)]),
+        None,
+        vec![
+            Action::RunP2pSync,
+            // We already validate the query content in other tests.
+            Action::ReceiveQuery(Box::new(|_query| ()), DataType::Header),
+            Action::SendHeader(DataOrFin(Some(random_header(
+                &mut get_rng(),
+                BlockNumber(1),
+                None,
+                None,
+            )))),
+            Action::ValidateReportSent(DataType::Header),
+            Action::CheckStorage(Box::new(|reader| {
+                async move {
+                    assert_eq!(0, reader.begin_ro_txn().unwrap().get_header_marker().unwrap().0);
+                }
+                .boxed()
+            })),
+        ],
+    )
+    .await;
+}
+
+// TODO(shahak): Add more negative tests.

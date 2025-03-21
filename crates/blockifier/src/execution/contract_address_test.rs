@@ -1,19 +1,20 @@
+use blockifier_test_utils::cairo_versions::CairoVersion;
+use blockifier_test_utils::contracts::FeatureContract;
 use rstest::rstest;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::{calculate_contract_address, ClassHash, ContractAddress};
 use starknet_api::transaction::fields::{Calldata, ContractAddressSalt};
 use starknet_api::{calldata, felt};
 
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::context::ChainInfo;
 use crate::execution::call_info::CallExecution;
 use crate::execution::entry_point::CallEntryPoint;
 use crate::retdata;
 use crate::state::cached_state::CachedState;
-use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::dict_state_reader::DictStateReader;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{CairoVersion, BALANCE};
-use crate::versioned_constants::VersionedConstants;
+use crate::test_utils::BALANCE;
 
 #[rstest]
 fn test_calculate_contract_address() {
@@ -34,7 +35,7 @@ fn test_calculate_contract_address() {
             calldata,
             entry_point_selector: selector_from_name("test_contract_address"),
             storage_address: deployer_address,
-            initial_gas: versioned_constants.default_initial_gas_cost(),
+            initial_gas: versioned_constants.infinite_gas_for_vm_mode(),
             ..Default::default()
         };
         let contract_address =

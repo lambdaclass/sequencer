@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 use starknet_api::block::BlockHash;
 use starknet_api::core::{CompiledClassHash, Nonce};
 use starknet_api::hash::StarkHash;
-use starknet_api::transaction::{TransactionHash, TransactionOffsetInBlock};
-use starknet_api::{class_hash, contract_address, felt, storage_key};
+use starknet_api::transaction::TransactionOffsetInBlock;
+use starknet_api::{class_hash, contract_address, felt, storage_key, tx_hash};
 
 use super::{Block, GlobalRoot, TransactionReceiptsError};
 use crate::reader::objects::block::BlockPostV0_13_1;
@@ -26,6 +26,8 @@ fn load_block_succeeds() {
     // TODO(Tzahi): Replace block_post_0_13_3 (copied from 0_13_2 and added additional fields) with
     // live data once available.
     for block_path in [
+        "reader/block_post_0_14_0.json",
+        "reader/block_post_0_13_4.json",
         "reader/block_post_0_13_3.json",
         "reader/block_post_0_13_2.json",
         "reader/block_post_0_13_1.json",
@@ -135,7 +137,7 @@ async fn to_starknet_api_block_and_version() {
     );
 
     let mut err_block: BlockPostV0_13_1 = serde_json::from_str(&raw_block).unwrap();
-    err_block.transaction_receipts[0].transaction_hash = TransactionHash(felt!("0x4"));
+    err_block.transaction_receipts[0].transaction_hash = tx_hash!(0x4);
     let err = err_block.to_starknet_api_block_and_version().unwrap_err();
     assert_matches!(
         err,

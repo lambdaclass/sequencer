@@ -8,28 +8,30 @@ use crate::batcher_types::ProposalId;
 #[derive(Clone, Debug, Error, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BatcherError {
     #[error(
-        "Decision reached for proposal with ID {proposal_id} that does not exist (might still \
-         being executed)."
-    )]
-    ExecutedProposalNotFound { proposal_id: ProposalId },
-    #[error(
-        "Height {storage_height} already passed, can't start working on height {requested_height}."
-    )]
-    HeightAlreadyPassed { storage_height: BlockNumber, requested_height: BlockNumber },
-    #[error("Height is in progress.")]
-    HeightInProgress,
-    #[error("Internal server error.")]
-    InternalError,
-    #[error("Missing retrospective block hash.")]
-    MissingRetrospectiveBlockHash,
-    #[error("Attempt to start proposal with no active height.")]
-    NoActiveHeight,
-    #[error(
         "There is already an active proposal {}, can't start proposal {}.",
         active_proposal_id,
         new_proposal_id
     )]
-    ServerBusy { active_proposal_id: ProposalId, new_proposal_id: ProposalId },
+    AnotherProposalInProgress { active_proposal_id: ProposalId, new_proposal_id: ProposalId },
+    #[error(
+        "Decision reached for proposal with ID {proposal_id} that does not exist (might still \
+         being executed)."
+    )]
+    ExecutedProposalNotFound { proposal_id: ProposalId },
+    #[error("Height is in progress.")]
+    HeightInProgress,
+    #[error("Internal server error.")]
+    InternalError,
+    #[error("Invalid block number. The active height is {active_height}, got {block_number}.")]
+    InvalidBlockNumber { active_height: BlockNumber, block_number: BlockNumber },
+    #[error("Missing retrospective block hash.")]
+    MissingRetrospectiveBlockHash,
+    #[error("Attempt to start proposal with no active height.")]
+    NoActiveHeight,
+    #[error("Not ready to begin work on proposal.")]
+    NotReady,
+    #[error("Proposal aborted.")]
+    ProposalAborted,
     #[error("Proposal with ID {proposal_id} already exists.")]
     ProposalAlreadyExists { proposal_id: ProposalId },
     #[error(
@@ -39,15 +41,13 @@ pub enum BatcherError {
     ProposalAlreadyFinished { proposal_id: ProposalId },
     #[error("Proposal failed.")]
     ProposalFailed,
-    #[error("Proposal aborted.")]
-    ProposalAborted,
     #[error("Proposal with ID {proposal_id} not found.")]
     ProposalNotFound { proposal_id: ProposalId },
     #[error(
-        "Storage is not synced. Storage height: {storage_height}, requested height: \
-         {requested_height}."
+        "Storage height marker mismatch. Storage marker (first unwritten height): \
+         {marker_height}, requested height: {requested_height}."
     )]
-    StorageNotSynced { storage_height: BlockNumber, requested_height: BlockNumber },
+    StorageHeightMarkerMismatch { marker_height: BlockNumber, requested_height: BlockNumber },
     #[error("Time to deadline is out of range. Got {deadline}.")]
     TimeToDeadlineError { deadline: chrono::DateTime<Utc> },
 }

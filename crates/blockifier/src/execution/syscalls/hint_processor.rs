@@ -14,19 +14,27 @@ use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::{
     AllResourceBounds,
     Calldata,
     Resource,
     ValidResourceBounds,
 };
+use starknet_api::transaction::TransactionVersion;
 use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
 use crate::abi::sierra_types::SierraTypeError;
+use crate::blockifier_versioned_constants::{GasCosts, SyscallGasCost};
 use crate::execution::common_hints::{ExecutionMode, HintExecutionResult};
-use crate::execution::entry_point::{CallEntryPoint, EntryPointExecutionContext};
+use crate::execution::contract_class::TrackedResource;
+use crate::execution::entry_point::{
+    CallEntryPoint,
+    EntryPointExecutionContext,
+    ExecutableCallEntryPoint,
+};
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
     felt_from_ptr,
@@ -58,6 +66,7 @@ use crate::execution::syscalls::{
     get_execution_info,
     keccak,
     library_call,
+    meta_tx_v0,
     replace_class,
     send_message_to_l1,
     sha_256_process_block,
@@ -73,9 +82,25 @@ use crate::execution::syscalls::{
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
 use crate::transaction::objects::{CurrentTransactionInfo, TransactionInfo};
-use crate::versioned_constants::GasCosts;
+use crate::utils::u64_from_usize;
 
-pub type SyscallCounter = HashMap<SyscallSelector, usize>;
+#[derive(Clone, Debug, Default)]
+pub struct SyscallUsage {
+    pub call_count: usize,
+    pub linear_factor: usize,
+}
+
+impl SyscallUsage {
+    pub fn new(call_count: usize, linear_factor: usize) -> Self {
+        SyscallUsage { call_count, linear_factor }
+    }
+
+    pub fn increment_call_count(&mut self) {
+        self.call_count += 1;
+    }
+}
+
+pub type SyscallUsageMap = HashMap<SyscallSelector, SyscallUsage>;
 
 #[derive(Debug, Error)]
 pub enum SyscallExecutionError {
@@ -125,8 +150,8 @@ pub enum SyscallExecutionError {
     StateError(#[from] StateError),
     #[error(transparent)]
     VirtualMachineError(#[from] VirtualMachineError),
-    #[error("Syscall error.")]
-    SyscallError { error_data: Vec<Felt> },
+    #[error("Syscall revert.")]
+    Revert { error_data: Vec<Felt> },
 }
 
 #[derive(Debug, Error)]
@@ -187,7 +212,6 @@ impl SyscallExecutionError {
 }
 
 /// Error codes returned by Cairo 1.0 code.
-
 // "Out of gas";
 pub const OUT_OF_GAS_ERROR: &str =
     "0x000000000000000000000000000000000000000000004f7574206f6620676173";
@@ -213,7 +237,7 @@ pub struct SyscallHintProcessor<'a> {
     pub base: Box<SyscallHandlerBase<'a>>,
 
     // VM-specific fields.
-    pub syscall_counter: SyscallCounter,
+    pub syscalls_usage: SyscallUsageMap,
 
     // Fields needed for execution and validation.
     pub read_only_segments: ReadOnlySegments,
@@ -237,13 +261,13 @@ impl<'a> SyscallHintProcessor<'a> {
         state: &'a mut dyn State,
         context: &'a mut EntryPointExecutionContext,
         initial_syscall_ptr: Relocatable,
-        call: CallEntryPoint,
+        call: ExecutableCallEntryPoint,
         hints: &'a HashMap<String, Hint>,
         read_only_segments: ReadOnlySegments,
     ) -> Self {
         SyscallHintProcessor {
             base: Box::new(SyscallHandlerBase::new(call, state, context)),
-            syscall_counter: SyscallCounter::default(),
+            syscalls_usage: SyscallUsageMap::default(),
             read_only_segments,
             syscall_ptr: initial_syscall_ptr,
             hints,
@@ -301,89 +325,92 @@ impl<'a> SyscallHintProcessor<'a> {
 
         match selector {
             SyscallSelector::CallContract => {
-                self.execute_syscall(vm, call_contract, self.gas_costs().call_contract_gas_cost)
+                self.execute_syscall(vm, call_contract, self.gas_costs().syscalls.call_contract)
             }
             SyscallSelector::Deploy => {
-                self.execute_syscall(vm, deploy, self.gas_costs().deploy_gas_cost)
+                self.execute_syscall(vm, deploy, self.gas_costs().syscalls.deploy)
             }
             SyscallSelector::EmitEvent => {
-                self.execute_syscall(vm, emit_event, self.gas_costs().emit_event_gas_cost)
+                self.execute_syscall(vm, emit_event, self.gas_costs().syscalls.emit_event)
             }
             SyscallSelector::GetBlockHash => {
-                self.execute_syscall(vm, get_block_hash, self.gas_costs().get_block_hash_gas_cost)
+                self.execute_syscall(vm, get_block_hash, self.gas_costs().syscalls.get_block_hash)
             }
             SyscallSelector::GetClassHashAt => self.execute_syscall(
                 vm,
                 get_class_hash_at,
-                self.gas_costs().get_class_hash_at_gas_cost,
+                self.gas_costs().syscalls.get_class_hash_at,
             ),
             SyscallSelector::GetExecutionInfo => self.execute_syscall(
                 vm,
                 get_execution_info,
-                self.gas_costs().get_execution_info_gas_cost,
+                self.gas_costs().syscalls.get_execution_info,
             ),
             SyscallSelector::Keccak => {
-                self.execute_syscall(vm, keccak, self.gas_costs().keccak_gas_cost)
+                self.execute_syscall(vm, keccak, self.gas_costs().syscalls.keccak)
             }
             SyscallSelector::Sha256ProcessBlock => self.execute_syscall(
                 vm,
                 sha_256_process_block,
-                self.gas_costs().sha256_process_block_gas_cost,
+                self.gas_costs().syscalls.sha256_process_block,
             ),
             SyscallSelector::LibraryCall => {
-                self.execute_syscall(vm, library_call, self.gas_costs().library_call_gas_cost)
+                self.execute_syscall(vm, library_call, self.gas_costs().syscalls.library_call)
+            }
+            SyscallSelector::MetaTxV0 => {
+                self.execute_syscall(vm, meta_tx_v0, self.gas_costs().syscalls.meta_tx_v0)
             }
             SyscallSelector::ReplaceClass => {
-                self.execute_syscall(vm, replace_class, self.gas_costs().replace_class_gas_cost)
+                self.execute_syscall(vm, replace_class, self.gas_costs().syscalls.replace_class)
             }
             SyscallSelector::Secp256k1Add => {
-                self.execute_syscall(vm, secp256k1_add, self.gas_costs().secp256k1_add_gas_cost)
+                self.execute_syscall(vm, secp256k1_add, self.gas_costs().syscalls.secp256k1_add)
             }
             SyscallSelector::Secp256k1GetPointFromX => self.execute_syscall(
                 vm,
                 secp256k1_get_point_from_x,
-                self.gas_costs().secp256k1_get_point_from_x_gas_cost,
+                self.gas_costs().syscalls.secp256k1_get_point_from_x,
             ),
             SyscallSelector::Secp256k1GetXy => self.execute_syscall(
                 vm,
                 secp256k1_get_xy,
-                self.gas_costs().secp256k1_get_xy_gas_cost,
+                self.gas_costs().syscalls.secp256k1_get_xy,
             ),
             SyscallSelector::Secp256k1Mul => {
-                self.execute_syscall(vm, secp256k1_mul, self.gas_costs().secp256k1_mul_gas_cost)
+                self.execute_syscall(vm, secp256k1_mul, self.gas_costs().syscalls.secp256k1_mul)
             }
             SyscallSelector::Secp256k1New => {
-                self.execute_syscall(vm, secp256k1_new, self.gas_costs().secp256k1_new_gas_cost)
+                self.execute_syscall(vm, secp256k1_new, self.gas_costs().syscalls.secp256k1_new)
             }
             SyscallSelector::Secp256r1Add => {
-                self.execute_syscall(vm, secp256r1_add, self.gas_costs().secp256r1_add_gas_cost)
+                self.execute_syscall(vm, secp256r1_add, self.gas_costs().syscalls.secp256r1_add)
             }
             SyscallSelector::Secp256r1GetPointFromX => self.execute_syscall(
                 vm,
                 secp256r1_get_point_from_x,
-                self.gas_costs().secp256r1_get_point_from_x_gas_cost,
+                self.gas_costs().syscalls.secp256r1_get_point_from_x,
             ),
             SyscallSelector::Secp256r1GetXy => self.execute_syscall(
                 vm,
                 secp256r1_get_xy,
-                self.gas_costs().secp256r1_get_xy_gas_cost,
+                self.gas_costs().syscalls.secp256r1_get_xy,
             ),
             SyscallSelector::Secp256r1Mul => {
-                self.execute_syscall(vm, secp256r1_mul, self.gas_costs().secp256r1_mul_gas_cost)
+                self.execute_syscall(vm, secp256r1_mul, self.gas_costs().syscalls.secp256r1_mul)
             }
             SyscallSelector::Secp256r1New => {
-                self.execute_syscall(vm, secp256r1_new, self.gas_costs().secp256r1_new_gas_cost)
+                self.execute_syscall(vm, secp256r1_new, self.gas_costs().syscalls.secp256r1_new)
             }
             SyscallSelector::SendMessageToL1 => self.execute_syscall(
                 vm,
                 send_message_to_l1,
-                self.gas_costs().send_message_to_l1_gas_cost,
+                self.gas_costs().syscalls.send_message_to_l1,
             ),
             SyscallSelector::StorageRead => {
-                self.execute_syscall(vm, storage_read, self.gas_costs().storage_read_gas_cost)
+                self.execute_syscall(vm, storage_read, self.gas_costs().syscalls.storage_read)
             }
             SyscallSelector::StorageWrite => {
-                self.execute_syscall(vm, storage_write, self.gas_costs().storage_write_gas_cost)
+                self.execute_syscall(vm, storage_write, self.gas_costs().syscalls.storage_write)
             }
             _ => Err(HintError::UnknownHint(
                 format!("Unsupported syscall selector {selector:?}.").into(),
@@ -395,10 +422,19 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
     ) -> SyscallResult<Relocatable> {
+        let returned_version = self.base.tx_version_for_get_execution_info();
+        let original_version = self.base.context.tx_context.tx_info.signed_version();
+
+        // If the transaction version was overridden, `self.execution_info_ptr` cannot be used.
+        if returned_version != original_version {
+            return self.allocate_execution_info_segment(vm, returned_version);
+        }
+
         match self.execution_info_ptr {
             Some(execution_info_ptr) => Ok(execution_info_ptr),
             None => {
-                let execution_info_ptr = self.allocate_execution_info_segment(vm)?;
+                let execution_info_ptr =
+                    self.allocate_execution_info_segment(vm, original_version)?;
                 self.execution_info_ptr = Some(execution_info_ptr);
                 Ok(execution_info_ptr)
             }
@@ -444,7 +480,7 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
         execute_callback: ExecuteCallback,
-        syscall_gas_cost: u64,
+        syscall_gas_cost: SyscallGasCost,
     ) -> HintExecutionResult
     where
         Request: SyscallRequest + std::fmt::Debug,
@@ -456,11 +492,21 @@ impl<'a> SyscallHintProcessor<'a> {
             &mut u64, // Remaining gas.
         ) -> SyscallResult<Response>,
     {
-        // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
-        let required_gas = syscall_gas_cost - self.base.context.gas_costs().syscall_base_gas_cost;
-
         let SyscallRequestWrapper { gas_counter, request } =
             SyscallRequestWrapper::<Request>::read(vm, &mut self.syscall_ptr)?;
+
+        let syscall_gas_cost =
+            syscall_gas_cost.get_syscall_cost(u64_from_usize(request.get_linear_factor_length()));
+        let syscall_base_cost = self.base.context.gas_costs().base.syscall_base_gas_cost;
+
+        // Sanity check for preventing underflow.
+        assert!(
+            syscall_gas_cost >= syscall_base_cost,
+            "Syscall gas cost must be greater than base syscall gas cost"
+        );
+
+        // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
+        let required_gas = syscall_gas_cost - syscall_base_cost;
 
         if gas_counter < required_gas {
             //  Out of gas failure.
@@ -475,12 +521,27 @@ impl<'a> SyscallHintProcessor<'a> {
 
         // Execute.
         let mut remaining_gas = gas_counter - required_gas;
+
+        // To support sierra gas charge for blockifier revert flow, we track the remaining gas left
+        // before executing a syscall if the current tracked resource is gas.
+        // 1. If the syscall does not run Cairo code (i.e. not library call, not call contract, and
+        //    not a deploy), any failure will not run in the OS, so no need to charge - the value
+        //    before entering the callback is good enough to charge.
+        // 2. If the syscall runs Cairo code, but the tracked resource is steps (and not gas), the
+        //    additional charge of reverted cairo steps will cover the inner cost, and the outer
+        //    cost we track here will be the additional reverted gas.
+        // 3. If the syscall runs Cairo code and the tracked resource is gas, either the inner
+        //    failure will be a Cairo1 revert (and the gas consumed on the call info will override
+        //    the current tracked value), or we will pass through another syscall before failing -
+        //    and by induction (we will reach this point again), the gas will be charged correctly.
+        self.base.context.update_revert_gas_with_next_remaining_gas(GasAmount(remaining_gas));
+
         let original_response = execute_callback(request, vm, self, &mut remaining_gas);
         let response = match original_response {
             Ok(response) => {
                 SyscallResponseWrapper::Success { gas_counter: remaining_gas, response }
             }
-            Err(SyscallExecutionError::SyscallError { error_data: data }) => {
+            Err(SyscallExecutionError::Revert { error_data: data }) => {
                 SyscallResponseWrapper::Failure { gas_counter: remaining_gas, error_data: data }
             }
             Err(error) => return Err(error.into()),
@@ -496,20 +557,29 @@ impl<'a> SyscallHintProcessor<'a> {
     }
 
     pub fn increment_syscall_count_by(&mut self, selector: &SyscallSelector, n: usize) {
-        let syscall_count = self.syscall_counter.entry(*selector).or_default();
-        *syscall_count += n;
+        let syscall_usage = self.syscalls_usage.entry(*selector).or_default();
+        syscall_usage.call_count += n;
     }
 
     fn increment_syscall_count(&mut self, selector: &SyscallSelector) {
         self.increment_syscall_count_by(selector, 1);
     }
 
+    pub fn increment_linear_factor_by(&mut self, selector: &SyscallSelector, n: usize) {
+        let syscall_usage = self
+            .syscalls_usage
+            .get_mut(selector)
+            .expect("syscalls_usage entry must be initialized before incrementing linear factor");
+        syscall_usage.linear_factor += n;
+    }
+
     fn allocate_execution_info_segment(
         &mut self,
         vm: &mut VirtualMachine,
+        tx_version_override: TransactionVersion,
     ) -> SyscallResult<Relocatable> {
         let block_info_ptr = self.allocate_block_info_segment(vm)?;
-        let tx_info_ptr = self.allocate_tx_info_segment(vm)?;
+        let tx_info_ptr = self.allocate_tx_info_segment(vm, tx_version_override)?;
 
         let additional_info: Vec<MaybeRelocatable> = vec![
             block_info_ptr.into(),
@@ -528,29 +598,17 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
     ) -> SyscallResult<Relocatable> {
-        let block_info = &self.base.context.tx_context.block_context.block_info;
-        let block_timestamp = block_info.block_timestamp.0;
-        let block_number = block_info.block_number.0;
-        let versioned_constants = self.base.context.versioned_constants();
-        let block_data: Vec<Felt> = if self.is_validate_mode() {
-            // Round down to the nearest multiple of validate_block_number_rounding.
-            let validate_block_number_rounding =
-                versioned_constants.get_validate_block_number_rounding();
-            let rounded_block_number =
-                (block_number / validate_block_number_rounding) * validate_block_number_rounding;
-            // Round down to the nearest multiple of validate_timestamp_rounding.
-            let validate_timestamp_rounding = versioned_constants.get_validate_timestamp_rounding();
-            let rounded_timestamp =
-                (block_timestamp / validate_timestamp_rounding) * validate_timestamp_rounding;
-
-            vec![Felt::from(rounded_block_number), Felt::from(rounded_timestamp), Felt::ZERO]
-        } else {
-            vec![
-                Felt::from(block_number),
-                Felt::from(block_timestamp),
-                *block_info.sequencer_address.0.key(),
-            ]
+        let block_info = match self.base.context.execution_mode {
+            ExecutionMode::Execute => self.base.context.tx_context.block_context.block_info(),
+            ExecutionMode::Validate => {
+                &self.base.context.tx_context.block_context.block_info_for_validate()
+            }
         };
+        let block_data = vec![
+            Felt::from(block_info.block_number.0),
+            Felt::from(block_info.block_timestamp.0),
+            Felt::from(block_info.sequencer_address),
+        ];
         let (block_info_segment_start_ptr, _) = self.allocate_data_segment(vm, &block_data)?;
 
         Ok(block_info_segment_start_ptr)
@@ -567,13 +625,17 @@ impl<'a> SyscallHintProcessor<'a> {
         Ok((data_segment_start_ptr, data_segment_end_ptr))
     }
 
-    fn allocate_tx_info_segment(&mut self, vm: &mut VirtualMachine) -> SyscallResult<Relocatable> {
+    fn allocate_tx_info_segment(
+        &mut self,
+        vm: &mut VirtualMachine,
+        tx_version_override: TransactionVersion,
+    ) -> SyscallResult<Relocatable> {
         let tx_info = &self.base.context.tx_context.clone().tx_info;
         let (tx_signature_start_ptr, tx_signature_end_ptr) =
             &self.allocate_data_segment(vm, &tx_info.signature().0)?;
 
         let mut tx_data: Vec<MaybeRelocatable> = vec![
-            tx_info.signed_version().0.into(),
+            tx_version_override.0.into(),
             tx_info.sender_address().0.key().into(),
             Felt::from(tx_info.max_fee_for_execution_info_syscall().0).into(),
             tx_signature_start_ptr.into(),
@@ -639,8 +701,18 @@ impl ResourceTracker for SyscallHintProcessor<'_> {
         self.base.context.vm_run_resources.consumed()
     }
 
+    /// Consumes a single step (if we are in step-tracking mode).
     fn consume_step(&mut self) {
-        self.base.context.vm_run_resources.consume_step()
+        if *self
+            .base
+            .context
+            .tracked_resource_stack
+            .last()
+            .expect("When consume_step is called, tracked resource stack is initialized.")
+            == TrackedResource::CairoSteps
+        {
+            self.base.context.vm_run_resources.consume_step();
+        }
     }
 
     fn get_n_steps(&self) -> Option<usize> {
@@ -661,9 +733,17 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         _constants: &HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<Hint>().ok_or(HintError::WrongHintData)?;
+        // Segment arena finalization is relevant only for proof so there is no need to allocate
+        // memory segments for it in the sequencer.
+        let no_temporary_segments = true;
         match hint {
-            Hint::Core(hint) => execute_core_hint_base(vm, exec_scopes, hint),
+            Hint::Core(hint) => {
+                execute_core_hint_base(vm, exec_scopes, hint, no_temporary_segments)
+            }
             Hint::Starknet(hint) => self.execute_next_syscall(vm, hint),
+            Hint::External(_) => {
+                panic!("starknet should never accept classes with external hints!")
+            }
         }
     }
 

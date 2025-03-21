@@ -1,13 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
 
+use metrics_exporter_prometheus::PrometheusRecorder;
 use pretty_assertions::assert_eq;
-use starknet_api::executable_transaction::AccountTransaction;
+use starknet_api::rpc_transaction::{InternalRpcTransaction, RpcTransactionLabelValue};
 use starknet_api::transaction::TransactionHash;
-use starknet_api::{contract_address, felt, nonce};
+use starknet_api::{contract_address, nonce};
 use starknet_mempool_types::errors::MempoolError;
 use starknet_mempool_types::mempool_types::{AddTransactionArgs, CommitBlockArgs};
+use starknet_sequencer_metrics::metrics::HistogramValue;
 
 use crate::mempool::Mempool;
+use crate::metrics::{
+    DropReason,
+    LABEL_NAME_DROP_REASON,
+    LABEL_NAME_TX_TYPE,
+    MEMPOOL_DELAYED_DECLARES_SIZE,
+    MEMPOOL_GET_TXS_SIZE,
+    MEMPOOL_PENDING_QUEUE_SIZE,
+    MEMPOOL_POOL_SIZE,
+    MEMPOOL_PRIORITY_QUEUE_SIZE,
+    MEMPOOL_TRANSACTIONS_COMMITTED,
+    MEMPOOL_TRANSACTIONS_DROPPED,
+    MEMPOOL_TRANSACTIONS_RECEIVED,
+    TRANSACTION_TIME_SPENT_IN_MEMPOOL,
+};
+use crate::utils::Clock;
 
 /// Creates an executable invoke transaction with the given field subset (the rest receive default
 /// values).
@@ -21,17 +40,14 @@ macro_rules! tx {
         max_l2_gas_price: $max_l2_gas_price:expr
     ) => {{
             use starknet_api::block::GasPrice;
-            use starknet_api::executable_transaction::AccountTransaction;
-            use starknet_api::hash::StarkHash;
-            use starknet_api::invoke_tx_args;
-            use starknet_api::test_utils::invoke::executable_invoke_tx;
+            use starknet_api::{invoke_tx_args, tx_hash};
+            use starknet_api::test_utils::invoke::internal_invoke_tx;
             use starknet_api::transaction::fields::{
                 AllResourceBounds,
                 ResourceBounds,
                 Tip,
                 ValidResourceBounds,
             };
-            use starknet_api::transaction::TransactionHash;
 
             let resource_bounds = ValidResourceBounds::AllResources(AllResourceBounds {
                 l2_gas: ResourceBounds {
@@ -41,13 +57,13 @@ macro_rules! tx {
                 ..Default::default()
             });
 
-            AccountTransaction::Invoke(executable_invoke_tx(invoke_tx_args!{
-                tx_hash: TransactionHash(StarkHash::from($tx_hash)),
+            internal_invoke_tx(invoke_tx_args!{
+                tx_hash: tx_hash!($tx_hash),
                 sender_address: contract_address!($address),
                 nonce: nonce!($tx_nonce),
                 tip: Tip($tip),
                 resource_bounds,
-            }))
+            })
     }};
     (tx_hash: $tx_hash:expr, address: $address:expr, tx_nonce: $tx_nonce:expr, tip: $tip:expr) => {{
         use mempool_test_utils::starknet_api_test_utils::VALID_L2_GAS_MAX_PRICE_PER_UNIT;
@@ -217,6 +233,13 @@ macro_rules! add_tx_input {
             max_l2_gas_price: $max_l2_gas_price
         )
     };
+    (address: $address:expr) => {
+        add_tx_input!(
+            tx_hash: 0,
+            address: $address,
+            tip: 0
+        )
+    };
 }
 
 #[track_caller]
@@ -237,24 +260,106 @@ pub fn add_tx_expect_error(
 pub fn commit_block(
     mempool: &mut Mempool,
     nonces: impl IntoIterator<Item = (&'static str, u8)>,
-    tx_hashes: impl IntoIterator<Item = u8>,
+    rejected_tx_hashes: impl IntoIterator<Item = TransactionHash>,
 ) {
     let nonces = HashMap::from_iter(
         nonces.into_iter().map(|(address, nonce)| (contract_address!(address), nonce!(nonce))),
     );
-    let tx_hashes =
-        HashSet::from_iter(tx_hashes.into_iter().map(|tx_hash| TransactionHash(felt!(tx_hash))));
-    let args = CommitBlockArgs { address_to_nonce: nonces, tx_hashes };
+    let rejected_tx_hashes = rejected_tx_hashes.into_iter().collect();
+    let args = CommitBlockArgs { address_to_nonce: nonces, rejected_tx_hashes };
 
-    assert_eq!(mempool.commit_block(args), Ok(()));
+    mempool.commit_block(args);
 }
 
 #[track_caller]
 pub fn get_txs_and_assert_expected(
     mempool: &mut Mempool,
     n_txs: usize,
-    expected_txs: &[AccountTransaction],
+    expected_txs: &[InternalRpcTransaction],
 ) {
     let txs = mempool.get_txs(n_txs).unwrap();
     assert_eq!(txs, expected_txs);
+}
+
+pub struct FakeClock {
+    pub now: Mutex<Instant>,
+}
+
+impl Default for FakeClock {
+    fn default() -> Self {
+        FakeClock { now: Mutex::new(Instant::now()) }
+    }
+}
+
+impl FakeClock {
+    pub fn advance(&self, duration: std::time::Duration) {
+        *self.now.lock().unwrap() += duration;
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        *self.now.lock().unwrap()
+    }
+}
+
+#[derive(Default)]
+pub struct MempoolMetrics {
+    pub txs_received_invoke: u64,
+    pub txs_received_declare: u64,
+    pub txs_received_deploy_account: u64,
+    pub txs_committed: u64,
+    pub txs_dropped_expired: u64,
+    pub txs_dropped_failed_add_tx_checks: u64,
+    pub txs_dropped_rejected: u64,
+    pub pool_size: u64,
+    pub priority_queue_size: u64,
+    pub pending_queue_size: u64,
+    pub get_txs_size: u64,
+    pub delayed_declares_size: u64,
+    pub transaction_time_spent_in_mempool: HistogramValue,
+}
+
+impl MempoolMetrics {
+    pub fn verify_metrics(&self, recorder: &PrometheusRecorder) {
+        let metrics = &recorder.handle().render();
+        MEMPOOL_TRANSACTIONS_RECEIVED.assert_eq(
+            metrics,
+            self.txs_received_invoke,
+            &[(LABEL_NAME_TX_TYPE, RpcTransactionLabelValue::Invoke.into())],
+        );
+        MEMPOOL_TRANSACTIONS_RECEIVED.assert_eq(
+            metrics,
+            self.txs_received_declare,
+            &[(LABEL_NAME_TX_TYPE, RpcTransactionLabelValue::Declare.into())],
+        );
+        MEMPOOL_TRANSACTIONS_RECEIVED.assert_eq(
+            metrics,
+            self.txs_received_deploy_account,
+            &[(LABEL_NAME_TX_TYPE, RpcTransactionLabelValue::DeployAccount.into())],
+        );
+        MEMPOOL_TRANSACTIONS_COMMITTED.assert_eq(metrics, self.txs_committed);
+        MEMPOOL_TRANSACTIONS_DROPPED.assert_eq(
+            metrics,
+            self.txs_dropped_expired,
+            &[(LABEL_NAME_DROP_REASON, DropReason::Expired.into())],
+        );
+        MEMPOOL_TRANSACTIONS_DROPPED.assert_eq(
+            metrics,
+            self.txs_dropped_failed_add_tx_checks,
+            &[(LABEL_NAME_DROP_REASON, DropReason::FailedAddTxChecks.into())],
+        );
+        MEMPOOL_TRANSACTIONS_DROPPED.assert_eq(
+            metrics,
+            self.txs_dropped_rejected,
+            &[(LABEL_NAME_DROP_REASON, DropReason::Rejected.into())],
+        );
+        MEMPOOL_POOL_SIZE.assert_eq(metrics, self.pool_size);
+        MEMPOOL_PRIORITY_QUEUE_SIZE.assert_eq(metrics, self.priority_queue_size);
+        MEMPOOL_PENDING_QUEUE_SIZE.assert_eq(metrics, self.pending_queue_size);
+        MEMPOOL_GET_TXS_SIZE.assert_eq(metrics, self.get_txs_size);
+        MEMPOOL_DELAYED_DECLARES_SIZE.assert_eq(metrics, self.delayed_declares_size);
+        TRANSACTION_TIME_SPENT_IN_MEMPOOL
+            .assert_eq(metrics, &self.transaction_time_spent_in_mempool);
+    }
 }

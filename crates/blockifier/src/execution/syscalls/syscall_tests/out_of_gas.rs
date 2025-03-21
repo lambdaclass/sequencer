@@ -1,41 +1,60 @@
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::contracts::FeatureContract;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::{calldata, felt};
 use test_case::test_case;
 
-use crate::context::ChainInfo;
+use crate::abi::constants::MAX_POSSIBLE_SIERRA_GAS;
+use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::execution::call_info::CallExecution;
 use crate::execution::entry_point::CallEntryPoint;
-use crate::execution::syscalls::syscall_tests::constants::REQUIRED_GAS_STORAGE_READ_WRITE_TEST;
+use crate::execution::syscalls::syscall_tests::constants;
+use crate::execution::syscalls::syscall_tests::get_block_hash::initialize_state;
+use crate::execution::syscalls::SyscallSelector;
 use crate::retdata;
-use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{trivial_external_entry_point_new, CairoVersion, BALANCE};
+use crate::test_utils::trivial_external_entry_point_new;
 
-#[cfg_attr(feature = "cairo_native", test_case(CairoVersion::Native; "Native"))]
-#[test_case(CairoVersion::Cairo1; "VM")]
-fn test_out_of_gas(cairo_version: CairoVersion) {
-    let test_contract = FeatureContract::TestContract(cairo_version);
-    let chain_info = &ChainInfo::create_for_testing();
-    let mut state = test_state(chain_info, BALANCE, &[(test_contract, 1)]);
+#[cfg_attr(feature = "cairo_native", test_case(RunnableCairo1::Native; "Native"))]
+#[test_case(RunnableCairo1::Casm; "VM")]
+fn test_out_of_gas(runnable_version: RunnableCairo1) {
+    let test_contract = FeatureContract::TestContract(CairoVersion::Cairo1(runnable_version));
+    let (mut state, block_number, _block_hash) = initialize_state(test_contract);
 
-    let key = felt!(1234_u16);
-    let value = felt!(18_u8);
-    let calldata = calldata![key, value];
+    let calldata = calldata![block_number];
     let entry_point_call = CallEntryPoint {
+        entry_point_selector: selector_from_name("test_get_block_hash"),
         calldata,
-        entry_point_selector: selector_from_name("test_storage_read_write"),
-        initial_gas: REQUIRED_GAS_STORAGE_READ_WRITE_TEST - 1,
+        initial_gas: constants::REQUIRED_GAS_GET_BLOCK_HASH_TEST - 1,
         ..trivial_external_entry_point_new(test_contract)
     };
-    let call_info = entry_point_call.execute_directly(&mut state).unwrap();
+
+    let gas_costs = &VersionedConstants::create_for_testing().os_constants.gas_costs;
+    let get_block_hash_gas_cost =
+        gas_costs.syscalls.get_syscall_gas_cost(&SyscallSelector::GetBlockHash).unwrap();
+
+    // We hit the out of gas error right before executing the syscall.
+    let syscall_base_gas_cost = gas_costs.base.syscall_base_gas_cost;
+    let redeposit_gas = 300;
+    let syscall_required_gas = get_block_hash_gas_cost.base_syscall_cost() - syscall_base_gas_cost;
+    let call_info = entry_point_call.clone().execute_directly(&mut state).unwrap();
     assert_eq!(
         call_info.execution,
         CallExecution {
             // 'Out of gas'
             retdata: retdata![felt!["0x4f7574206f6620676173"]],
-            gas_consumed: REQUIRED_GAS_STORAGE_READ_WRITE_TEST - 70,
+            gas_consumed: constants::REQUIRED_GAS_GET_BLOCK_HASH_TEST
+                - syscall_required_gas
+                - redeposit_gas,
             failed: true,
             ..Default::default()
         }
+    );
+}
+
+#[test]
+fn test_total_tx_limits_less_than_max_sierra_gas() {
+    assert!(
+        VersionedConstants::create_for_testing().initial_gas_no_user_l2_bound().0
+            <= MAX_POSSIBLE_SIERRA_GAS
     );
 }

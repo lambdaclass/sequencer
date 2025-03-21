@@ -6,6 +6,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::block::{BlockHash, BlockNumber};
 use crate::core::{
+    calculate_contract_address,
     ChainId,
     ClassHash,
     CompiledClassHash,
@@ -13,6 +14,7 @@ use crate::core::{
     EntryPointSelector,
     EthAddress,
     Nonce,
+    PatriciaKey,
 };
 use crate::data_availability::DataAvailabilityMode;
 use crate::execution_resources::ExecutionResources;
@@ -40,7 +42,7 @@ use crate::transaction_hash::{
     get_invoke_transaction_v3_hash,
     get_l1_handler_transaction_hash,
 };
-use crate::StarknetApiError;
+use crate::{executable_transaction, StarknetApiError, StarknetApiResult};
 
 #[cfg(test)]
 #[path = "transaction_test.rs"]
@@ -116,20 +118,18 @@ impl Transaction {
     }
 }
 
-impl From<crate::executable_transaction::Transaction> for Transaction {
-    fn from(tx: crate::executable_transaction::Transaction) -> Self {
+impl From<executable_transaction::Transaction> for Transaction {
+    fn from(tx: executable_transaction::Transaction) -> Self {
         match tx {
-            crate::executable_transaction::Transaction::L1Handler(_) => {
-                unimplemented!("L1Handler transactions are not supported yet.")
-            }
-            crate::executable_transaction::Transaction::Account(account_tx) => match account_tx {
-                crate::executable_transaction::AccountTransaction::Declare(tx) => {
+            executable_transaction::Transaction::L1Handler(tx) => Transaction::L1Handler(tx.tx),
+            executable_transaction::Transaction::Account(account_tx) => match account_tx {
+                executable_transaction::AccountTransaction::Declare(tx) => {
                     Transaction::Declare(tx.tx)
                 }
-                crate::executable_transaction::AccountTransaction::DeployAccount(tx) => {
+                executable_transaction::AccountTransaction::DeployAccount(tx) => {
                     Transaction::DeployAccount(tx.tx)
                 }
-                crate::executable_transaction::AccountTransaction::Invoke(tx) => {
+                executable_transaction::AccountTransaction::Invoke(tx) => {
                     Transaction::Invoke(tx.tx)
                 }
             },
@@ -137,16 +137,43 @@ impl From<crate::executable_transaction::Transaction> for Transaction {
     }
 }
 
-impl From<(Transaction, TransactionHash)> for crate::executable_transaction::Transaction {
-    fn from((tx, tx_hash): (Transaction, TransactionHash)) -> Self {
+impl TryFrom<(Transaction, &ChainId)> for executable_transaction::Transaction {
+    type Error = StarknetApiError;
+
+    fn try_from((tx, chain_id): (Transaction, &ChainId)) -> Result<Self, Self::Error> {
+        let tx_hash = tx.calculate_transaction_hash(chain_id)?;
         match tx {
-            Transaction::Invoke(tx) => crate::executable_transaction::Transaction::Account(
-                crate::executable_transaction::AccountTransaction::Invoke(
-                    crate::executable_transaction::InvokeTransaction { tx, tx_hash },
+            Transaction::DeployAccount(tx) => {
+                let contract_address = tx.calculate_contract_address()?;
+                Ok(executable_transaction::Transaction::Account(
+                    executable_transaction::AccountTransaction::DeployAccount(
+                        executable_transaction::DeployAccountTransaction {
+                            tx,
+                            tx_hash,
+                            contract_address,
+                        },
+                    ),
+                ))
+            }
+            Transaction::Invoke(tx) => Ok(executable_transaction::Transaction::Account(
+                executable_transaction::AccountTransaction::Invoke(
+                    executable_transaction::InvokeTransaction { tx, tx_hash },
                 ),
-            ),
+            )),
+            Transaction::L1Handler(tx) => Ok(executable_transaction::Transaction::L1Handler(
+                executable_transaction::L1HandlerTransaction {
+                    tx,
+                    tx_hash,
+                    // TODO(yael): The paid fee should be an input from the l1_handler.
+                    paid_fee_on_l1: Fee(1),
+                },
+            )),
             _ => {
-                unimplemented!("Unsupported transaction type. Only Invoke is currently supported.")
+                unimplemented!(
+                    "Unsupported transaction type. Only DeployAccount, Invoke and L1Handler are \
+                     currently supported. tx: {:?}",
+                    tx
+                )
             }
         }
     }
@@ -155,12 +182,10 @@ impl From<(Transaction, TransactionHash)> for crate::executable_transaction::Tra
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
 pub struct TransactionOptions {
     /// Transaction that shouldn't be broadcasted to StarkNet. For example, users that want to
-    /// test the execution result of a transaction without the risk of it being rebroadcasted (the
     /// signature will be different while the execution remain the same). Using this flag will
     /// modify the transaction version by setting the 128-th bit to 1.
     pub only_query: bool,
 }
-
 macro_rules! implement_v3_tx_getters {
     ($(($field:ident, $field_type:ty)),*) => {
         $(pub fn $field(&self) -> $field_type {
@@ -393,6 +418,54 @@ impl TransactionHasher for DeclareTransaction {
     }
 }
 
+pub trait CalculateContractAddress {
+    fn calculate_contract_address(&self) -> StarknetApiResult<ContractAddress>;
+}
+
+/// A trait intended for deploy account transactions. Structs implementing this trait derive the
+/// implementation of [CalculateContractAddress].
+pub trait DeployTransactionTrait {
+    fn contract_address_salt(&self) -> ContractAddressSalt;
+    fn class_hash(&self) -> ClassHash;
+    fn constructor_calldata(&self) -> &Calldata;
+}
+
+#[macro_export]
+macro_rules! impl_deploy_transaction_trait {
+    ($type:ty) => {
+        impl DeployTransactionTrait for $type {
+            fn contract_address_salt(&self) -> ContractAddressSalt {
+                self.contract_address_salt
+            }
+
+            fn class_hash(&self) -> ClassHash {
+                self.class_hash
+            }
+
+            fn constructor_calldata(&self) -> &Calldata {
+                &self.constructor_calldata
+            }
+        }
+    };
+}
+
+impl<T: DeployTransactionTrait> CalculateContractAddress for T {
+    /// Calculates the contract address for the contract deployed by a deploy account transaction.
+    /// For more details see:
+    /// <https://docs.starknet.io/architecture-and-concepts/smart-contracts/contract-address/>
+    fn calculate_contract_address(&self) -> StarknetApiResult<ContractAddress> {
+        // When the contract is deployed via a deploy-account transaction, the deployer address is
+        // zero.
+        const DEPLOYER_ADDRESS: ContractAddress = ContractAddress(PatriciaKey::ZERO);
+        calculate_contract_address(
+            self.contract_address_salt(),
+            self.class_hash(),
+            self.constructor_calldata(),
+            DEPLOYER_ADDRESS,
+        )
+    }
+}
+
 /// A deploy account V1 transaction.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct DeployAccountTransactionV1 {
@@ -403,6 +476,8 @@ pub struct DeployAccountTransactionV1 {
     pub contract_address_salt: ContractAddressSalt,
     pub constructor_calldata: Calldata,
 }
+
+impl_deploy_transaction_trait!(DeployAccountTransactionV1);
 
 impl TransactionHasher for DeployAccountTransactionV1 {
     fn calculate_transaction_hash(
@@ -439,12 +514,23 @@ impl TransactionHasher for DeployAccountTransactionV3 {
     }
 }
 
+impl_deploy_transaction_trait!(DeployAccountTransactionV3);
+
 #[derive(
     Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord, derive_more::From,
 )]
 pub enum DeployAccountTransaction {
     V1(DeployAccountTransactionV1),
     V3(DeployAccountTransactionV3),
+}
+
+impl CalculateContractAddress for DeployAccountTransaction {
+    fn calculate_contract_address(&self) -> StarknetApiResult<ContractAddress> {
+        match self {
+            DeployAccountTransaction::V1(tx) => tx.calculate_contract_address(),
+            DeployAccountTransaction::V3(tx) => tx.calculate_contract_address(),
+        }
+    }
 }
 
 macro_rules! implement_deploy_account_tx_getters {
@@ -461,6 +547,7 @@ macro_rules! implement_deploy_account_tx_getters {
 }
 
 impl DeployAccountTransaction {
+    // TODO(Arni): Consider using a direct reference to the getters from [DeployTrait].
     implement_deploy_account_tx_getters!(
         (class_hash, ClassHash),
         (constructor_calldata, Calldata),
@@ -520,6 +607,11 @@ impl TransactionHasher for DeployTransaction {
         get_deploy_transaction_hash(self, chain_id, transaction_version)
     }
 }
+
+// The trait [`DeployTransactionTrait`] is intended for [`DeployAccountTransaction`].
+// The calculation of the contract address of the contract deployed by the deprecated
+// [`DeployTransaction`] is consistent with that calculation.
+impl_deploy_transaction_trait!(DeployTransaction);
 
 /// An invoke V0 transaction.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
@@ -674,6 +766,12 @@ pub struct L1HandlerTransaction {
     pub calldata: Calldata,
 }
 
+impl L1HandlerTransaction {
+    /// The transaction version is considered 0 for L1-Handler transaction for hash calculation
+    /// purposes.
+    pub const VERSION: TransactionVersion = TransactionVersion::ZERO;
+}
+
 impl TransactionHasher for L1HandlerTransaction {
     fn calculate_transaction_hash(
         &self,
@@ -767,7 +865,7 @@ pub enum TransactionExecutionStatus {
 /// A reverted transaction execution status.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct RevertedTransactionExecutionStatus {
-    // TODO: Validate it's an ASCII string.
+    // TODO(YoavGr): Validate it's an ASCII string.
     pub revert_reason: String,
 }
 /// The hash of a [Transaction](`crate::transaction::Transaction`).
@@ -789,22 +887,31 @@ pub struct TransactionHash(pub StarkHash);
 
 impl std::fmt::Display for TransactionHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.0.to_hex_string())
     }
 }
 
-// TODO(guyn): this is only used for conversion of transactions->executable transactions
-// It should be removed once we integrate a proper way to calculate executable transaction hashes
-impl From<TransactionHash> for Vec<u8> {
-    fn from(tx_hash: TransactionHash) -> Vec<u8> {
-        tx_hash.0.to_bytes_be().to_vec()
+// Use this in tests to get a randomly generate transaction hash.
+// Note that get_test_instance uses StarkHash::default, not a random value.
+#[cfg(any(feature = "testing", test))]
+impl TransactionHash {
+    pub fn random(rng: &mut impl rand::Rng) -> Self {
+        let mut byte_vec = vec![];
+        for _ in 0..32 {
+            byte_vec.push(rng.gen::<u8>());
+        }
+        let byte_array = byte_vec.try_into().expect("Expected a Vec of length 32");
+        TransactionHash(StarkHash::from_bytes_be(&byte_array))
     }
 }
-impl From<Vec<u8>> for TransactionHash {
-    fn from(bytes: Vec<u8>) -> TransactionHash {
-        let array: [u8; 32] = bytes.try_into().expect("Expected a Vec of length 32");
-        TransactionHash(StarkHash::from_bytes_be(&array))
-    }
+
+/// A utility macro to create a [`TransactionHash`] from an unsigned integer representation.
+#[cfg(any(feature = "testing", test))]
+#[macro_export]
+macro_rules! tx_hash {
+    ($tx_hash:expr) => {
+        $crate::transaction::TransactionHash($crate::hash::StarkHash::from($tx_hash))
+    };
 }
 
 /// A transaction version.
@@ -838,7 +945,7 @@ impl TransactionVersion {
     pub const THREE: Self = { Self(Felt::THREE) };
 }
 
-// TODO: TransactionVersion and SignedTransactionVersion should probably be separate types.
+// TODO(Dori): TransactionVersion and SignedTransactionVersion should probably be separate types.
 // Returns the transaction version taking into account the transaction options.
 pub fn signed_tx_version_from_tx(
     tx: &Transaction,
@@ -891,7 +998,8 @@ pub struct L2ToL1Payload(pub Vec<Felt>);
 /// An event.
 #[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct Event {
-    // TODO: Add a TransactionHash element to this struct, and then remove EventLeafElements.
+    // TODO(Gilad): Add a TransactionHash element to this struct, and then remove
+    // EventLeafElements.
     pub from_address: ContractAddress,
     #[serde(flatten)]
     pub content: EventContent,

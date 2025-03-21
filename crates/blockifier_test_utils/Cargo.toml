@@ -1,0 +1,33 @@
+[package]
+name = "blockifier_test_utils"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+description = "Test utilities for the blockifier."
+
+[features]
+cairo_native = []
+
+[dependencies]
+cairo-lang-starknet-classes.workspace = true
+itertools.workspace = true
+pretty_assertions.workspace = true
+rstest.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+starknet-types-core.workspace = true
+starknet_api = { workspace = true, features = ["testing"] }
+starknet_infra_utils = { workspace = true, features = ["testing"] }
+strum.workspace = true
+strum_macros.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing.workspace = true
+tracing-test.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "feature_contracts_compatibility_test"
+path = "tests/feature_contracts_compatibility_test.rs"

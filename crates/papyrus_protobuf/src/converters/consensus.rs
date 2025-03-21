@@ -1,17 +1,22 @@
 #[cfg(test)]
 #[path = "consensus_test.rs"]
 mod consensus_test;
+
 use std::convert::{TryFrom, TryInto};
 
 use prost::Message;
 use starknet_api::block::{BlockHash, BlockNumber};
+use starknet_api::consensus_transaction::ConsensusTransaction;
 use starknet_api::hash::StarkHash;
-use starknet_api::transaction::{Transaction, TransactionHash};
-use starknet_types_core::felt::Felt;
 
+use super::common::{
+    enum_int_to_l1_data_availability_mode,
+    l1_data_availability_mode_to_enum_int,
+    missing,
+};
 use crate::consensus::{
-    ConsensusMessage,
-    Proposal,
+    ConsensusBlockInfo,
+    IntoFromProto,
     ProposalFin,
     ProposalInit,
     ProposalPart,
@@ -23,50 +28,6 @@ use crate::consensus::{
 };
 use crate::converters::ProtobufConversionError;
 use crate::{auto_impl_into_and_try_from_vec_u8, protobuf};
-
-impl TryFrom<protobuf::Proposal> for Proposal {
-    type Error = ProtobufConversionError;
-
-    fn try_from(value: protobuf::Proposal) -> Result<Self, Self::Error> {
-        let transactions = value
-            .transactions
-            .into_iter()
-            .map(|tx| tx.try_into())
-            .collect::<Result<Vec<Transaction>, ProtobufConversionError>>()?;
-
-        let height = value.height;
-        let round = value.round;
-        let proposer = value
-            .proposer
-            .ok_or(ProtobufConversionError::MissingField { field_description: "proposer" })?
-            .try_into()?;
-        let block_hash: StarkHash = value
-            .block_hash
-            .ok_or(ProtobufConversionError::MissingField { field_description: "block_hash" })?
-            .try_into()?;
-        let block_hash = BlockHash(block_hash);
-        let valid_round = value.valid_round;
-
-        Ok(Proposal { height, round, proposer, transactions, block_hash, valid_round })
-    }
-}
-
-impl From<Proposal> for protobuf::Proposal {
-    fn from(value: Proposal) -> Self {
-        let transactions = value.transactions.into_iter().map(Into::into).collect();
-
-        protobuf::Proposal {
-            height: value.height,
-            round: value.round,
-            proposer: Some(value.proposer.into()),
-            transactions,
-            block_hash: Some(value.block_hash.0.into()),
-            valid_round: value.valid_round,
-        }
-    }
-}
-
-auto_impl_into_and_try_from_vec_u8!(Proposal, protobuf::Proposal);
 
 impl TryFrom<protobuf::vote::VoteType> for VoteType {
     type Error = ProtobufConversionError;
@@ -98,10 +59,7 @@ impl TryFrom<protobuf::Vote> for Vote {
         let round = value.round;
         let block_hash: Option<BlockHash> =
             value.block_hash.map(|block_hash| block_hash.try_into()).transpose()?.map(BlockHash);
-        let voter = value
-            .voter
-            .ok_or(ProtobufConversionError::MissingField { field_description: "voter" })?
-            .try_into()?;
+        let voter = value.voter.ok_or(missing("voter"))?.try_into()?;
 
         Ok(Vote { vote_type, height, round, block_hash, voter })
     }
@@ -126,8 +84,10 @@ impl From<Vote> for protobuf::Vote {
 
 auto_impl_into_and_try_from_vec_u8!(Vote, protobuf::Vote);
 
-impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>>
-    TryFrom<protobuf::StreamMessage> for StreamMessage<T>
+impl<T, StreamId> TryFrom<protobuf::StreamMessage> for StreamMessage<T, StreamId>
+where
+    T: IntoFromProto,
+    StreamId: IntoFromProto + Clone,
 {
     type Error = ProtobufConversionError;
 
@@ -148,16 +108,18 @@ impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>>
                     StreamMessageBody::Fin
                 }
             },
-            stream_id: value.stream_id,
+            stream_id: value.stream_id.try_into()?,
             message_id: value.message_id,
         })
     }
 }
 
-impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> From<StreamMessage<T>>
-    for protobuf::StreamMessage
+impl<T, StreamId> From<StreamMessage<T, StreamId>> for protobuf::StreamMessage
+where
+    T: IntoFromProto,
+    StreamId: IntoFromProto + Clone,
 {
-    fn from(value: StreamMessage<T>) -> Self {
+    fn from(value: StreamMessage<T, StreamId>) -> Self {
         Self {
             message: match value {
                 StreamMessage {
@@ -169,7 +131,7 @@ impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> From<
                     Some(protobuf::stream_message::Message::Fin(protobuf::Fin {}))
                 }
             },
-            stream_id: value.stream_id,
+            stream_id: value.stream_id.into(),
             message_id: value.message_id,
         }
     }
@@ -178,17 +140,21 @@ impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> From<
 // Can't use auto_impl_into_and_try_from_vec_u8!(StreamMessage, protobuf::StreamMessage);
 // because it doesn't seem to work with generics.
 // TODO(guyn): consider expanding the macro to support generics
-impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> From<StreamMessage<T>>
-    for Vec<u8>
+impl<T, StreamId> From<StreamMessage<T, StreamId>> for Vec<u8>
+where
+    T: IntoFromProto,
+    StreamId: IntoFromProto + Clone,
 {
-    fn from(value: StreamMessage<T>) -> Self {
+    fn from(value: StreamMessage<T, StreamId>) -> Self {
         let protobuf_value = <protobuf::StreamMessage>::from(value);
         protobuf_value.encode_to_vec()
     }
 }
 
-impl<T: Into<Vec<u8>> + TryFrom<Vec<u8>, Error = ProtobufConversionError>> TryFrom<Vec<u8>>
-    for StreamMessage<T>
+impl<T, StreamId> TryFrom<Vec<u8>> for StreamMessage<T, StreamId>
+where
+    T: IntoFromProto,
+    StreamId: IntoFromProto + Clone,
 {
     type Error = ProtobufConversionError;
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
@@ -206,10 +172,7 @@ impl TryFrom<protobuf::ProposalInit> for ProposalInit {
         let height = value.height;
         let round = value.round;
         let valid_round = value.valid_round;
-        let proposer = value
-            .proposer
-            .ok_or(ProtobufConversionError::MissingField { field_description: "proposer" })?
-            .try_into()?;
+        let proposer = value.proposer.ok_or(missing("proposer"))?.try_into()?;
         Ok(ProposalInit { height: BlockNumber(height), round, valid_round, proposer })
     }
 }
@@ -227,6 +190,48 @@ impl From<ProposalInit> for protobuf::ProposalInit {
 
 auto_impl_into_and_try_from_vec_u8!(ProposalInit, protobuf::ProposalInit);
 
+impl TryFrom<protobuf::BlockInfo> for ConsensusBlockInfo {
+    type Error = ProtobufConversionError;
+    fn try_from(value: protobuf::BlockInfo) -> Result<Self, Self::Error> {
+        let height = value.height;
+        let timestamp = value.timestamp;
+        let builder = value.builder.ok_or(missing("builder"))?.try_into()?;
+        let l1_da_mode = enum_int_to_l1_data_availability_mode(value.l1_da_mode)?;
+        let l2_gas_price_fri = value.l2_gas_price_fri.ok_or(missing("l2_gas_price_fri"))?.into();
+        let l1_gas_price_wei = value.l1_gas_price_wei.ok_or(missing("l1_gas_price_wei"))?.into();
+        let l1_data_gas_price_wei =
+            value.l1_data_gas_price_wei.ok_or(missing("l1_data_gas_price_wei"))?.into();
+        let eth_to_fri_rate = value.eth_to_fri_rate.ok_or(missing("eth_to_fri_rate"))?.into();
+        Ok(ConsensusBlockInfo {
+            height: BlockNumber(height),
+            timestamp,
+            builder,
+            l1_da_mode,
+            l2_gas_price_fri,
+            l1_gas_price_wei,
+            l1_data_gas_price_wei,
+            eth_to_fri_rate,
+        })
+    }
+}
+
+impl From<ConsensusBlockInfo> for protobuf::BlockInfo {
+    fn from(value: ConsensusBlockInfo) -> Self {
+        protobuf::BlockInfo {
+            height: value.height.0,
+            timestamp: value.timestamp,
+            builder: Some(value.builder.into()),
+            l1_da_mode: l1_data_availability_mode_to_enum_int(value.l1_da_mode),
+            l1_gas_price_wei: Some(value.l1_gas_price_wei.into()),
+            l1_data_gas_price_wei: Some(value.l1_data_gas_price_wei.into()),
+            l2_gas_price_fri: Some(value.l2_gas_price_fri.into()),
+            eth_to_fri_rate: Some(value.eth_to_fri_rate.into()),
+        }
+    }
+}
+
+auto_impl_into_and_try_from_vec_u8!(ConsensusBlockInfo, protobuf::BlockInfo);
+
 impl TryFrom<protobuf::TransactionBatch> for TransactionBatch {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::TransactionBatch) -> Result<Self, Self::Error> {
@@ -234,21 +239,15 @@ impl TryFrom<protobuf::TransactionBatch> for TransactionBatch {
             .transactions
             .into_iter()
             .map(|tx| tx.try_into())
-            .collect::<Result<Vec<Transaction>, ProtobufConversionError>>()?;
-        let tx_hashes = value
-            .tx_hashes
-            .into_iter()
-            .map(|x| Felt::try_from(x).map(TransactionHash))
-            .collect::<Result<_, Self::Error>>()?;
-        Ok(TransactionBatch { transactions, tx_hashes })
+            .collect::<Result<Vec<ConsensusTransaction>, ProtobufConversionError>>()?;
+        Ok(TransactionBatch { transactions })
     }
 }
 
 impl From<TransactionBatch> for protobuf::TransactionBatch {
     fn from(value: TransactionBatch) -> Self {
         let transactions = value.transactions.into_iter().map(Into::into).collect();
-        let tx_hashes = value.tx_hashes.into_iter().map(|hash| hash.0.into()).collect();
-        protobuf::TransactionBatch { transactions, tx_hashes }
+        protobuf::TransactionBatch { transactions }
     }
 }
 
@@ -257,20 +256,16 @@ auto_impl_into_and_try_from_vec_u8!(TransactionBatch, protobuf::TransactionBatch
 impl TryFrom<protobuf::ProposalFin> for ProposalFin {
     type Error = ProtobufConversionError;
     fn try_from(value: protobuf::ProposalFin) -> Result<Self, Self::Error> {
-        let proposal_content_id: StarkHash = value
-            .proposal_content_id
-            .ok_or(ProtobufConversionError::MissingField {
-                field_description: "proposal_content_id",
-            })?
-            .try_into()?;
-        let proposal_content_id = BlockHash(proposal_content_id);
-        Ok(ProposalFin { proposal_content_id })
+        let proposal_commitment: StarkHash =
+            value.proposal_commitment.ok_or(missing("proposal_commitment"))?.try_into()?;
+        let proposal_commitment = BlockHash(proposal_commitment);
+        Ok(ProposalFin { proposal_commitment })
     }
 }
 
 impl From<ProposalFin> for protobuf::ProposalFin {
     fn from(value: ProposalFin) -> Self {
-        protobuf::ProposalFin { proposal_content_id: Some(value.proposal_content_id.0.into()) }
+        protobuf::ProposalFin { proposal_commitment: Some(value.proposal_commitment.0.into()) }
     }
 }
 
@@ -282,13 +277,14 @@ impl TryFrom<protobuf::ProposalPart> for ProposalPart {
         use protobuf::proposal_part::Message;
 
         let Some(part) = value.message else {
-            return Err(ProtobufConversionError::MissingField { field_description: "part" });
+            return Err(missing("part"));
         };
 
         match part {
             Message::Init(init) => Ok(ProposalPart::Init(init.try_into()?)),
-            Message::Transactions(content) => Ok(ProposalPart::Transactions(content.try_into()?)),
             Message::Fin(fin) => Ok(ProposalPart::Fin(fin.try_into()?)),
+            Message::BlockInfo(block_info) => Ok(ProposalPart::BlockInfo(block_info.try_into()?)),
+            Message::Transactions(content) => Ok(ProposalPart::Transactions(content.try_into()?)),
         }
     }
 }
@@ -299,46 +295,17 @@ impl From<ProposalPart> for protobuf::ProposalPart {
             ProposalPart::Init(init) => protobuf::ProposalPart {
                 message: Some(protobuf::proposal_part::Message::Init(init.into())),
             },
-            ProposalPart::Transactions(content) => protobuf::ProposalPart {
-                message: Some(protobuf::proposal_part::Message::Transactions(content.into())),
-            },
             ProposalPart::Fin(fin) => protobuf::ProposalPart {
                 message: Some(protobuf::proposal_part::Message::Fin(fin.into())),
+            },
+            ProposalPart::BlockInfo(block_info) => protobuf::ProposalPart {
+                message: Some(protobuf::proposal_part::Message::BlockInfo(block_info.into())),
+            },
+            ProposalPart::Transactions(content) => protobuf::ProposalPart {
+                message: Some(protobuf::proposal_part::Message::Transactions(content.into())),
             },
         }
     }
 }
 
 auto_impl_into_and_try_from_vec_u8!(ProposalPart, protobuf::ProposalPart);
-
-impl TryFrom<protobuf::ConsensusMessage> for ConsensusMessage {
-    type Error = ProtobufConversionError;
-
-    fn try_from(value: protobuf::ConsensusMessage) -> Result<Self, Self::Error> {
-        use protobuf::consensus_message::Message;
-
-        let Some(message) = value.message else {
-            return Err(ProtobufConversionError::MissingField { field_description: "message" });
-        };
-
-        match message {
-            Message::Proposal(proposal) => Ok(ConsensusMessage::Proposal(proposal.try_into()?)),
-            Message::Vote(vote) => Ok(ConsensusMessage::Vote(vote.try_into()?)),
-        }
-    }
-}
-
-impl From<ConsensusMessage> for protobuf::ConsensusMessage {
-    fn from(value: ConsensusMessage) -> Self {
-        match value {
-            ConsensusMessage::Proposal(proposal) => protobuf::ConsensusMessage {
-                message: Some(protobuf::consensus_message::Message::Proposal(proposal.into())),
-            },
-            ConsensusMessage::Vote(vote) => protobuf::ConsensusMessage {
-                message: Some(protobuf::consensus_message::Message::Vote(vote.into())),
-            },
-        }
-    }
-}
-
-auto_impl_into_and_try_from_vec_u8!(ConsensusMessage, protobuf::ConsensusMessage);

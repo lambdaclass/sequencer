@@ -48,10 +48,10 @@ use starknet_api::block::{
     BlockNumber,
     BlockStatus,
     BlockTimestamp,
-    GasPrice,
     GasPricePerToken,
     StarknetVersion,
 };
+use starknet_api::contract_class::SierraVersion;
 use starknet_api::core::{
     ClassHash,
     CompiledClassHash,
@@ -68,7 +68,6 @@ use starknet_api::deprecated_contract_class::{
     FunctionAbiEntry,
     FunctionStateMutability,
 };
-use starknet_api::hash::StarkHash;
 use starknet_api::state::{SierraContractClass as StarknetApiContractClass, StateDiff};
 use starknet_api::transaction::{
     Event as StarknetApiEvent,
@@ -81,7 +80,7 @@ use starknet_api::transaction::{
     TransactionOffsetInBlock,
     TransactionOutput as StarknetApiTransactionOutput,
 };
-use starknet_api::{class_hash, contract_address, felt, storage_key};
+use starknet_api::{class_hash, contract_address, felt, storage_key, tx_hash};
 use starknet_client::reader::objects::pending_data::{
     DeprecatedPendingBlock,
     PendingBlockOrDeprecated,
@@ -114,7 +113,7 @@ use starknet_client::ClientError;
 use starknet_types_core::felt::Felt;
 
 use super::super::api::EventsChunk;
-use super::super::block::{Block, GeneralBlockHeader, PendingBlockHeader, ResourcePrice};
+use super::super::block::{Block, GeneralBlockHeader, PendingBlockHeader};
 use super::super::broadcasted_transaction::BroadcastedDeclareTransaction;
 use super::super::deprecated_contract_class::ContractClass as DeprecatedContractClass;
 use super::super::error::{
@@ -139,7 +138,7 @@ use super::super::state::{
     ContractNonce,
     DeployedContract,
     PendingStateUpdate,
-    ReplacedClasses,
+    ReplacedClass,
     StateUpdate,
     StorageDiff,
     StorageEntry,
@@ -613,12 +612,12 @@ async fn get_block_w_full_transactions() {
             parent_hash: block_hash,
             sequencer_address: pending_sequencer_address,
             timestamp: pending_timestamp,
-            l1_gas_price: ResourcePrice {
+            l1_gas_price: GasPricePerToken {
                 price_in_wei: pending_l1_gas_price.price_in_wei,
                 price_in_fri: pending_l1_gas_price.price_in_fri,
             },
-            l1_data_gas_price: ResourcePrice::default(),
-            l2_gas_price: ResourcePrice {
+            l1_data_gas_price: GasPricePerToken::default(),
+            l2_gas_price: GasPricePerToken {
                 price_in_wei: pending_l2_gas_price.price_in_wei,
                 price_in_fri: pending_l2_gas_price.price_in_fri,
             },
@@ -805,12 +804,12 @@ async fn get_block_w_full_transactions_and_receipts() {
             parent_hash: block_hash,
             sequencer_address: pending_sequencer_address,
             timestamp: pending_timestamp,
-            l1_gas_price: ResourcePrice {
+            l1_gas_price: GasPricePerToken {
                 price_in_wei: pending_l1_gas_price.price_in_wei,
                 price_in_fri: pending_l1_gas_price.price_in_fri,
             },
-            l1_data_gas_price: ResourcePrice::default(),
-            l2_gas_price: ResourcePrice {
+            l1_data_gas_price: GasPricePerToken::default(),
+            l2_gas_price: GasPricePerToken {
                 price_in_wei: pending_l2_gas_price.price_in_wei,
                 price_in_fri: pending_l2_gas_price.price_in_fri,
             },
@@ -997,15 +996,15 @@ async fn get_block_w_transaction_hashes() {
             parent_hash: block_hash,
             sequencer_address: pending_sequencer_address,
             timestamp: pending_timestamp,
-            l1_gas_price: ResourcePrice {
+            l1_gas_price: GasPricePerToken {
                 price_in_wei: pending_l1_gas_price.price_in_wei,
                 price_in_fri: pending_l1_gas_price.price_in_fri,
             },
-            l2_gas_price: ResourcePrice {
+            l2_gas_price: GasPricePerToken {
                 price_in_wei: pending_l2_gas_price.price_in_wei,
                 price_in_fri: pending_l2_gas_price.price_in_fri,
             },
-            l1_data_gas_price: ResourcePrice::default(),
+            l1_data_gas_price: GasPricePerToken::default(),
             l1_da_mode: L1DataAvailabilityMode::Calldata,
             starknet_version: starknet_version.to_string(),
         }),
@@ -1350,7 +1349,7 @@ async fn get_transaction_status() {
     call_api_then_assert_and_validate_schema_for_err::<_, TransactionStatus>(
         &module,
         method_name,
-        vec![Box::new(TransactionHash(StarkHash::from(1_u8)))],
+        vec![Box::new(tx_hash!(1))],
         &VERSION,
         SpecFile::StarknetApiOpenrpc,
         &TRANSACTION_HASH_NOT_FOUND.into(),
@@ -1474,7 +1473,7 @@ async fn get_transaction_receipt() {
     call_api_then_assert_and_validate_schema_for_err::<_, TransactionReceipt>(
         &module,
         method_name,
-        vec![Box::new(TransactionHash(StarkHash::from(1_u8)))],
+        vec![Box::new(tx_hash!(1))],
         &VERSION,
         SpecFile::StarknetApiOpenrpc,
         &TRANSACTION_HASH_NOT_FOUND.into(),
@@ -2202,7 +2201,7 @@ async fn get_storage_at() {
 fn generate_client_transaction_client_receipt_rpc_transaction_and_rpc_receipt(
     rng: &mut ChaCha8Rng,
 ) -> (ClientTransaction, ClientTransactionReceipt, Transaction, PendingTransactionReceipt) {
-    let pending_transaction_hash = TransactionHash(StarkHash::from(rng.next_u64()));
+    let pending_transaction_hash = tx_hash!(rng.next_u64());
     let mut client_transaction_receipt = ClientTransactionReceipt::get_test_instance(rng);
     client_transaction_receipt.transaction_hash = pending_transaction_hash;
     client_transaction_receipt.execution_resources.n_memory_holes = 1;
@@ -2279,7 +2278,7 @@ async fn get_transaction_by_hash() {
     let mut block = get_test_block(1, None, None, None);
     // Change the transaction hash from 0 to a random value, so that later on we can add a
     // transaction with 0 hash to the pending block.
-    block.body.transaction_hashes[0] = TransactionHash(StarkHash::from(random::<u64>()));
+    block.body.transaction_hashes[0] = tx_hash!(random::<u64>());
     storage_writer
         .begin_rw_txn()
         .unwrap()
@@ -2333,7 +2332,7 @@ async fn get_transaction_by_hash() {
     call_api_then_assert_and_validate_schema_for_err::<_, TransactionWithHash>(
         &module,
         method_name,
-        vec![Box::new(TransactionHash(StarkHash::from(1_u8)))],
+        vec![Box::new(tx_hash!(1))],
         &VERSION,
         SpecFile::StarknetApiOpenrpc,
         &TRANSACTION_HASH_NOT_FOUND.into(),
@@ -2344,7 +2343,7 @@ async fn get_transaction_by_hash() {
 #[tokio::test]
 async fn get_transaction_by_hash_state_only() {
     let method_name = "starknet_V0_8_getTransactionByHash";
-    let params = [TransactionHash(StarkHash::from(1_u8))];
+    let params = [tx_hash!(1)];
     let (module, _) = get_test_rpc_server_and_storage_writer_from_params::<JsonRpcServerImpl>(
         None,
         None,
@@ -2532,7 +2531,7 @@ async fn get_state_update() {
         .unwrap();
 
     let expected_old_root = parent_header.block_header_without_hash.state_root;
-    let expected_state_diff = ThinStateDiff::from(diff);
+    let expected_state_diff = ThinStateDiff::from(diff, vec![]);
     let expected_update = StateUpdate::AcceptedStateUpdate(AcceptedStateUpdate {
         block_hash: header.block_hash,
         new_root: header.block_header_without_hash.state_root,
@@ -2605,7 +2604,7 @@ async fn get_state_update() {
                     .map(|ContractNonce { contract_address, nonce }| (contract_address, nonce)),
             ),
             replaced_classes: Vec::from_iter(expected_state_diff.replaced_classes.into_iter().map(
-                |ReplacedClasses { contract_address, class_hash }| ClientReplacedClass {
+                |ReplacedClass { contract_address, class_hash }| ClientReplacedClass {
                     address: contract_address,
                     class_hash,
                 },
@@ -2659,6 +2658,90 @@ async fn get_state_update() {
 }
 
 #[tokio::test]
+async fn get_state_update_with_replaced_class() {
+    let method_name = "starknet_V0_8_getStateUpdate";
+    let pending_data = get_test_pending_data();
+    let (module, mut storage_writer) = get_test_rpc_server_and_storage_writer_from_params::<
+        JsonRpcServerImpl,
+    >(None, None, Some(pending_data.clone()), None, None);
+    let parent_header = BlockHeader::default();
+    let expected_pending_old_root = GlobalRoot(felt!("0x1234"));
+    let header = BlockHeader {
+        block_hash: BlockHash(felt!("0x1")),
+        block_header_without_hash: BlockHeaderWithoutHash {
+            block_number: BlockNumber(1),
+            parent_hash: parent_header.block_hash,
+            state_root: expected_pending_old_root,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let contract_address_0 = contract_address!("0x1234");
+    let contract_address_1 = contract_address!("0x5678");
+    let class_hash_0 = class_hash!("0x12");
+    let class_hash_1 = class_hash!("0x34");
+    let class_hash_2 = class_hash!("0x56");
+    let diff_0 = starknet_api::state::ThinStateDiff {
+        deployed_contracts: indexmap! {
+            contract_address_0 => class_hash_0,
+        },
+        ..Default::default()
+    };
+    let diff_1 = starknet_api::state::ThinStateDiff {
+        deployed_contracts: indexmap! {
+            contract_address_0 => class_hash_2,
+            contract_address_1 => class_hash_1,
+        },
+        ..Default::default()
+    };
+    storage_writer
+        .begin_rw_txn()
+        .unwrap()
+        .append_header(parent_header.block_header_without_hash.block_number, &parent_header)
+        .unwrap()
+        .append_state_diff(
+            parent_header.block_header_without_hash.block_number,
+            diff_0,
+        )
+        .unwrap()
+        .append_header(header.block_header_without_hash.block_number, &header)
+        .unwrap()
+        .append_state_diff(header.block_header_without_hash.block_number, diff_1.clone())
+        .unwrap()
+        // No need to write the class definitions
+        .commit()
+        .unwrap();
+
+    let expected_old_root = parent_header.block_header_without_hash.state_root;
+    let expected_state_diff = ThinStateDiff::from(
+        starknet_api::state::ThinStateDiff {
+            deployed_contracts: indexmap! {
+                contract_address_1 => class_hash_1,
+            },
+            ..Default::default()
+        },
+        vec![(contract_address_0, class_hash_2)],
+    );
+    let expected_update = StateUpdate::AcceptedStateUpdate(AcceptedStateUpdate {
+        block_hash: header.block_hash,
+        new_root: header.block_header_without_hash.state_root,
+        old_root: expected_old_root,
+        state_diff: expected_state_diff.clone(),
+    });
+
+    let res = module
+        .call::<_, StateUpdate>(
+            method_name,
+            [BlockId::HashOrNumber(BlockHashOrNumber::Number(
+                header.block_header_without_hash.block_number,
+            ))],
+        )
+        .await
+        .unwrap();
+    assert_eq!(res, expected_update);
+}
+
+#[tokio::test]
 async fn get_state_update_with_empty_storage_diff() {
     let method_name = "starknet_V0_8_getStateUpdate";
     let pending_data = get_test_pending_data();
@@ -2681,7 +2764,7 @@ async fn get_state_update_with_empty_storage_diff() {
 
     // The empty storage diff should be removed in the result.
     let expected_state_diff =
-        ThinStateDiff::from(starknet_api::state::ThinStateDiff::from(StateDiff::default()));
+        ThinStateDiff::from(starknet_api::state::ThinStateDiff::from(StateDiff::default()), vec![]);
     let expected_update = StateUpdate::AcceptedStateUpdate(AcceptedStateUpdate {
         state_diff: expected_state_diff.clone(),
         ..Default::default()
@@ -2736,7 +2819,7 @@ impl BlockMetadata {
         block.header.block_hash = BlockHash(rng.next_u64().into());
         // Randomize the transaction hashes because get_test_block returns constant hashes
         for transaction_hash in &mut block.body.transaction_hashes {
-            *transaction_hash = TransactionHash(rng.next_u64().into());
+            *transaction_hash = tx_hash!(rng.next_u64());
         }
 
         for (output, event_metadatas_of_tx) in
@@ -2761,9 +2844,8 @@ impl BlockMetadata {
         rng: &mut ChaCha8Rng,
         parent_hash: BlockHash,
     ) -> PendingBlockOrDeprecated {
-        let transaction_hashes = iter::repeat_with(|| TransactionHash(rng.next_u64().into()))
-            .take(self.0.len())
-            .collect::<Vec<_>>();
+        let transaction_hashes =
+            iter::repeat_with(|| tx_hash!(rng.next_u64())).take(self.0.len()).collect::<Vec<_>>();
         PendingBlockOrDeprecated::Deprecated(DeprecatedPendingBlock {
             parent_block_hash: parent_hash,
             transactions: transaction_hashes
@@ -3430,8 +3512,6 @@ async fn serialize_returns_valid_json() {
     )]);
     // For checking the schema also for deprecated contract classes.
     state_diff.deployed_contracts.insert(contract_address!("0x2"), class_hash!("0x2"));
-    // TODO(yair): handle replaced classes.
-    state_diff.replaced_classes.clear();
 
     let (thin_state_diff, classes, deprecated_classes) =
         starknet_api::state::ThinStateDiff::from_state_diff(state_diff.clone());
@@ -3678,9 +3758,9 @@ async fn get_deprecated_class_state_mutability() {
     assert_eq!(entry.get("stateMutability").unwrap().as_str().unwrap(), "view");
 }
 
-// TODO (Yael 16/06/2024): Add a test case for block_number which is not the latest.
+// TODO(Yael): Add a test case for block_number which is not the latest.
 #[tokio::test]
-async fn get_compiled_contract_class() {
+async fn get_compiled_class() {
     let cairo1_class_hash = ClassHash(Felt::ONE);
     let cairo0_class_hash = ClassHash(Felt::TWO);
     let invalid_class_hash = ClassHash(Felt::THREE);
@@ -3690,6 +3770,9 @@ async fn get_compiled_contract_class() {
         JsonRpcServerImpl,
     >(None, None, None, None, None);
     let cairo1_contract_class = CasmContractClass::get_test_instance(&mut get_rng());
+    // We need to save the Sierra component of the Cairo 1 contract in storage to maintain
+    // consistency.
+    let sierra_contract_class = StarknetApiContractClass::default();
     let cairo0_contract_class =
         StarknetApiDeprecatedContractClass::get_test_instance(&mut get_rng());
     storage_writer
@@ -3711,28 +3794,34 @@ async fn get_compiled_contract_class() {
         .unwrap()
         // Note: there is no need to write the cairo1 contract class here because the
         // declared_classes_table is not used in the rpc method.
-        .append_classes(BlockNumber(0), &[], &[(cairo0_class_hash, &cairo0_contract_class)])
+        .append_classes(BlockNumber(0), &[(cairo1_class_hash, &sierra_contract_class)], &[(cairo0_class_hash, &cairo0_contract_class)])
         .unwrap()
         .commit()
         .unwrap();
 
     let res = module
-        .call::<_, CompiledContractClass>(
+        .call::<_, (CompiledContractClass, SierraVersion)>(
             method_name,
             (BlockId::Tag(Tag::Latest), cairo1_class_hash),
         )
         .await
         .unwrap();
-    assert_eq!(res, CompiledContractClass::V1(cairo1_contract_class));
+    assert_eq!(
+        res,
+        (
+            CompiledContractClass::V1(cairo1_contract_class),
+            SierraVersion::extract_from_program(&sierra_contract_class.sierra_program).unwrap()
+        )
+    );
 
     let res = module
-        .call::<_, CompiledContractClass>(
+        .call::<_, (CompiledContractClass, SierraVersion)>(
             method_name,
             (BlockId::Tag(Tag::Latest), cairo0_class_hash),
         )
         .await
         .unwrap();
-    assert_eq!(res, CompiledContractClass::V0(cairo0_contract_class));
+    assert_eq!(res, (CompiledContractClass::V0(cairo0_contract_class), SierraVersion::DEPRECATED));
 
     // Ask for an invalid class hash, which does no exist in the table.
     let err = module
@@ -4088,15 +4177,11 @@ auto_impl_get_test_instance! {
         pub parent_hash: BlockHash,
         pub sequencer_address: SequencerContractAddress,
         pub timestamp: BlockTimestamp,
-        pub l1_gas_price: ResourcePrice,
-        pub l1_data_gas_price: ResourcePrice,
-        pub l2_gas_price: ResourcePrice,
+        pub l1_gas_price: GasPricePerToken,
+        pub l1_data_gas_price: GasPricePerToken,
+        pub l2_gas_price: GasPricePerToken,
         pub l1_da_mode: L1DataAvailabilityMode,
         pub starknet_version: String,
-    }
-    pub struct ResourcePrice {
-        pub price_in_wei: GasPrice,
-        pub price_in_fri: GasPrice,
     }
     pub enum TypedInvokeTransaction {
         Invoke(InvokeTransaction) = 0,

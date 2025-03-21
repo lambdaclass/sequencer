@@ -1,7 +1,11 @@
+use blockifier_test_utils::cairo_versions::CairoVersion;
+use blockifier_test_utils::contracts::FeatureContract;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::ContractAddress;
+use starknet_api::executable_transaction::AccountTransaction as ApiExecutableTransaction;
+use starknet_api::test_utils::invoke::executable_invoke_tx;
 use starknet_api::test_utils::NonceManager;
 use starknet_api::transaction::constants::TRANSFER_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::Fee;
@@ -10,20 +14,17 @@ use starknet_api::{calldata, felt, invoke_tx_args};
 use starknet_types_core::felt::Felt;
 
 use crate::blockifier::config::{ConcurrencyConfig, TransactionExecutorConfig};
-use crate::blockifier::transaction_executor::TransactionExecutor;
+use crate::blockifier::transaction_executor::{TransactionExecutor, DEFAULT_STACK_SIZE};
 use crate::context::{BlockContext, ChainInfo};
-use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::dict_state_reader::DictStateReader;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::invoke::invoke_tx;
-use crate::test_utils::{CairoVersion, BALANCE, MAX_FEE};
+use crate::test_utils::{RunnableCairo1, BALANCE, MAX_FEE};
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::transaction_execution::Transaction;
-
 const N_ACCOUNTS: u16 = 10000;
 const N_TXS: usize = 1000;
 const RANDOMIZATION_SEED: u64 = 0;
-const CAIRO_VERSION: CairoVersion = CairoVersion::Cairo0;
+const CAIRO_VERSION: CairoVersion = CairoVersion::Cairo1(RunnableCairo1::Casm);
 const TRANSACTION_VERSION: TransactionVersion = TransactionVersion(Felt::THREE);
 const RECIPIENT_GENERATOR_TYPE: RecipientGeneratorType = RecipientGeneratorType::RoundRobin;
 
@@ -37,10 +38,12 @@ pub struct TransfersGeneratorConfig {
     pub tx_version: TransactionVersion,
     pub recipient_generator_type: RecipientGeneratorType,
     pub concurrency_config: ConcurrencyConfig,
+    pub stack_size: usize,
 }
 
 impl Default for TransfersGeneratorConfig {
     fn default() -> Self {
+        let concurrency_enabled = true;
         Self {
             n_accounts: N_ACCOUNTS,
             balance: Fee(BALANCE.0 * 1000),
@@ -50,7 +53,8 @@ impl Default for TransfersGeneratorConfig {
             cairo_version: CAIRO_VERSION,
             tx_version: TRANSACTION_VERSION,
             recipient_generator_type: RECIPIENT_GENERATOR_TYPE,
-            concurrency_config: ConcurrencyConfig::create_for_testing(false),
+            concurrency_config: ConcurrencyConfig::create_for_testing(concurrency_enabled),
+            stack_size: DEFAULT_STACK_SIZE,
         }
     }
 }
@@ -79,8 +83,10 @@ impl TransfersGenerator {
         let chain_info = block_context.chain_info().clone();
         let state =
             test_state(&chain_info, config.balance, &[(account_contract, config.n_accounts)]);
-        let executor_config =
-            TransactionExecutorConfig { concurrency_config: config.concurrency_config.clone() };
+        let executor_config = TransactionExecutorConfig {
+            concurrency_config: config.concurrency_config.clone(),
+            stack_size: config.stack_size,
+        };
         let executor = TransactionExecutor::new(state, block_context, executor_config);
         let account_addresses = (0..config.n_accounts)
             .map(|instance_id| account_contract.get_instance_address(instance_id))
@@ -143,13 +149,14 @@ impl TransfersGenerator {
             let recipient_address = self.get_next_recipient();
             self.sender_index = (self.sender_index + 1) % self.account_addresses.len();
 
-            let account_tx = self.generate_transfer(sender_address, recipient_address);
+            let tx = self.generate_transfer(sender_address, recipient_address);
+            let account_tx = AccountTransaction::new_for_sequencing(tx);
             txs.push(Transaction::Account(account_tx));
         }
         let results = self.executor.execute_txs(&txs);
         assert_eq!(results.len(), self.config.n_txs);
         for result in results {
-            assert!(!result.unwrap().is_reverted());
+            assert!(!result.unwrap().0.is_reverted());
         }
         // TODO(Avi, 01/06/2024): Run the same transactions concurrently on a new state and compare
         // the state diffs.
@@ -159,7 +166,7 @@ impl TransfersGenerator {
         &mut self,
         sender_address: ContractAddress,
         recipient_address: ContractAddress,
-    ) -> AccountTransaction {
+    ) -> ApiExecutableTransaction {
         let nonce = self.nonce_manager.next(sender_address);
 
         let entry_point_selector = selector_from_name(TRANSFER_ENTRY_POINT_NAME);
@@ -180,7 +187,7 @@ impl TransfersGenerator {
             felt!(0_u8)                 // Calldata: msb amount.
         ];
 
-        invoke_tx(invoke_tx_args! {
+        executable_invoke_tx(invoke_tx_args! {
             max_fee: self.config.max_fee,
             sender_address,
             calldata: execute_calldata,

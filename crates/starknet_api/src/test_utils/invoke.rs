@@ -2,8 +2,17 @@ use crate::abi::abi_utils::selector_from_name;
 use crate::calldata;
 use crate::core::{ContractAddress, Nonce};
 use crate::data_availability::DataAvailabilityMode;
-use crate::executable_transaction::InvokeTransaction as ExecutableInvokeTransaction;
-use crate::rpc_transaction::{RpcInvokeTransaction, RpcInvokeTransactionV3, RpcTransaction};
+use crate::executable_transaction::{
+    AccountTransaction,
+    InvokeTransaction as ExecutableInvokeTransaction,
+};
+use crate::rpc_transaction::{
+    InternalRpcTransaction,
+    InternalRpcTransactionWithoutTxHash,
+    RpcInvokeTransaction,
+    RpcInvokeTransactionV3,
+    RpcTransaction,
+};
 use crate::transaction::constants::EXECUTE_ENTRY_POINT_NAME;
 use crate::transaction::fields::{
     AccountDeploymentData,
@@ -80,7 +89,7 @@ macro_rules! invoke_tx_args {
 }
 
 pub fn invoke_tx(invoke_args: InvokeTxArgs) -> InvokeTransaction {
-    // TODO: Make TransactionVersion an enum and use match here.
+    // TODO(Arni): Make TransactionVersion an enum and use match here.
     if invoke_args.version == TransactionVersion::ZERO {
         InvokeTransaction::V0(InvokeTransactionV0 {
             max_fee: invoke_args.max_fee,
@@ -116,11 +125,12 @@ pub fn invoke_tx(invoke_args: InvokeTxArgs) -> InvokeTransaction {
     }
 }
 
-pub fn executable_invoke_tx(invoke_args: InvokeTxArgs) -> ExecutableInvokeTransaction {
+pub fn executable_invoke_tx(invoke_args: InvokeTxArgs) -> AccountTransaction {
     let tx_hash = invoke_args.tx_hash;
     let tx = invoke_tx(invoke_args);
+    let invoke_tx = ExecutableInvokeTransaction { tx, tx_hash };
 
-    ExecutableInvokeTransaction { tx, tx_hash }
+    AccountTransaction::Invoke(invoke_tx)
 }
 
 pub fn rpc_invoke_tx(invoke_args: InvokeTxArgs) -> RpcTransaction {
@@ -144,4 +154,18 @@ pub fn rpc_invoke_tx(invoke_args: InvokeTxArgs) -> RpcTransaction {
         paymaster_data: invoke_args.paymaster_data,
         account_deployment_data: invoke_args.account_deployment_data,
     }))
+}
+
+pub fn internal_invoke_tx(invoke_args: InvokeTxArgs) -> InternalRpcTransaction {
+    if invoke_args.version != TransactionVersion::THREE {
+        panic!("Unsupported transaction version: {:?}.", invoke_args.version);
+    }
+    let tx_hash = invoke_args.tx_hash;
+    let RpcTransaction::Invoke(tx) = rpc_invoke_tx(invoke_args) else {
+        panic!("Expected RpcTransaction::Invoke");
+    };
+
+    let invoke_tx = InternalRpcTransactionWithoutTxHash::Invoke(tx);
+
+    InternalRpcTransaction { tx: invoke_tx, tx_hash }
 }

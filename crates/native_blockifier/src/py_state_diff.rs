@@ -1,19 +1,13 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
 
-use blockifier::blockifier::block::{BlockInfo, GasPrices};
+use blockifier::blockifier::block::validated_gas_prices;
+use blockifier::blockifier_versioned_constants::VersionedConstants;
 use blockifier::state::cached_state::CommitmentStateDiff;
-use blockifier::test_utils::{
-    DEFAULT_ETH_L1_DATA_GAS_PRICE,
-    DEFAULT_ETH_L1_GAS_PRICE,
-    DEFAULT_STRK_L1_DATA_GAS_PRICE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-};
-use blockifier::versioned_constants::VersionedConstants;
 use indexmap::IndexMap;
 use pyo3::prelude::*;
 use pyo3::FromPyObject;
-use starknet_api::block::{BlockNumber, BlockTimestamp, NonzeroGasPrice};
+use starknet_api::block::{BlockInfo, BlockNumber, BlockTimestamp, GasPrice, NonzeroGasPrice};
 use starknet_api::core::{ClassHash, ContractAddress, Nonce};
 use starknet_api::state::{StateDiff, StorageKey};
 
@@ -25,9 +19,15 @@ use crate::errors::{
 };
 use crate::py_utils::PyFelt;
 
+// TODO(Arni): consider moving to starknet api.
+const DEFAULT_ETH_L1_GAS_PRICE: GasPrice = GasPrice(100 * u128::pow(10, 9));
+const DEFAULT_STRK_L1_GAS_PRICE: GasPrice = GasPrice(100 * u128::pow(10, 9));
+const DEFAULT_ETH_L1_DATA_GAS_PRICE: GasPrice = GasPrice(u128::pow(10, 6));
+const DEFAULT_STRK_L1_DATA_GAS_PRICE: GasPrice = GasPrice(u128::pow(10, 9));
+
 #[pyclass]
 #[derive(Default, FromPyObject)]
-// TODO: Add support for returning the `declared_classes` to python.
+// TODO(Dori): Add support for returning the `declared_classes` to python.
 pub struct PyStateDiff {
     #[pyo3(get)]
     pub address_to_class_hash: HashMap<PyFelt, PyFelt>,
@@ -77,7 +77,6 @@ impl TryFrom<PyStateDiff> for StateDiff {
             declared_classes: IndexMap::new(),
             deprecated_declared_classes: IndexMap::new(),
             nonces,
-            replaced_classes: IndexMap::new(),
         })
     }
 }
@@ -153,19 +152,19 @@ impl Default for PyBlockInfo {
             block_number: u64::default(),
             block_timestamp: u64::default(),
             l1_gas_price: PyResourcePrice {
-                price_in_wei: DEFAULT_ETH_L1_GAS_PRICE.get().0,
-                price_in_fri: DEFAULT_STRK_L1_GAS_PRICE.get().0,
+                price_in_wei: DEFAULT_ETH_L1_GAS_PRICE.0,
+                price_in_fri: DEFAULT_STRK_L1_GAS_PRICE.0,
             },
             l1_data_gas_price: PyResourcePrice {
-                price_in_wei: DEFAULT_ETH_L1_DATA_GAS_PRICE.get().0,
-                price_in_fri: DEFAULT_STRK_L1_DATA_GAS_PRICE.get().0,
+                price_in_wei: DEFAULT_ETH_L1_DATA_GAS_PRICE.0,
+                price_in_fri: DEFAULT_STRK_L1_DATA_GAS_PRICE.0,
             },
             l2_gas_price: PyResourcePrice {
                 price_in_wei: VersionedConstants::latest_constants()
-                    .convert_l1_to_l2_gas_price_round_up(DEFAULT_ETH_L1_GAS_PRICE.into())
+                    .convert_l1_to_l2_gas_price_round_up(DEFAULT_ETH_L1_GAS_PRICE)
                     .0,
                 price_in_fri: VersionedConstants::latest_constants()
-                    .convert_l1_to_l2_gas_price_round_up(DEFAULT_STRK_L1_GAS_PRICE.into())
+                    .convert_l1_to_l2_gas_price_round_up(DEFAULT_STRK_L1_GAS_PRICE)
                     .0,
             },
             sequencer_address: PyFelt::default(),
@@ -182,7 +181,7 @@ impl TryFrom<PyBlockInfo> for BlockInfo {
             block_number: BlockNumber(block_info.block_number),
             block_timestamp: BlockTimestamp(block_info.block_timestamp),
             sequencer_address: ContractAddress::try_from(block_info.sequencer_address.0)?,
-            gas_prices: GasPrices::new(
+            gas_prices: validated_gas_prices(
                 NonzeroGasPrice::try_from(block_info.l1_gas_price.price_in_wei).map_err(|_| {
                     NativeBlockifierInputError::InvalidNativeBlockifierInputError(
                         InvalidNativeBlockifierInputError::InvalidL1GasPriceWei(

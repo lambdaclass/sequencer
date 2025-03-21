@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::felt::Felt;
+use starknet_patricia_storage::map_storage::MapStorage;
+use starknet_types_core::felt::Felt;
+
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::filled_tree::errors::FilledTreeError;
 use crate::patricia_merkle_tree::filled_tree::node::FilledNode;
@@ -27,7 +29,6 @@ use crate::patricia_merkle_tree::updated_skeleton_tree::tree::{
     UpdatedSkeletonTree,
     UpdatedSkeletonTreeImpl,
 };
-use crate::storage::map_storage::MapStorage;
 
 #[tokio::test(flavor = "multi_thread")]
 /// This test is a sanity test for computing the root hash of the patricia merkle tree with a single
@@ -94,7 +95,7 @@ async fn test_small_filled_tree_create() {
     let (updated_skeleton_tree, modifications) =
         get_small_tree_updated_skeleton_and_leaf_modifications();
     let expected_leaf_index_to_leaf_output: HashMap<NodeIndex, String> =
-        modifications.iter().map(|(index, leaf)| (*index, leaf.0.to_hex())).collect();
+        modifications.iter().map(|(index, leaf)| (*index, leaf.0.to_hex_string())).collect();
     let leaf_index_to_leaf_input: HashMap<NodeIndex, Felt> =
         modifications.into_iter().map(|(index, leaf)| (index, leaf.0)).collect();
 

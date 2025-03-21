@@ -2,7 +2,6 @@
 /// to the [`Starknet p2p specs`]
 ///
 /// [`Starknet p2p specs`]: https://github.com/starknet-io/starknet-p2p-specs/
-mod bin_utils;
 mod discovery;
 #[cfg(test)]
 mod e2e_broadcast_test;
@@ -38,11 +37,10 @@ use serde::{Deserialize, Serialize};
 use starknet_api::core::ChainId;
 use validator::Validate;
 
-// TODO: add peer manager config to the network config
+// TODO(Shahak): add peer manager config to the network config
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Validate)]
 pub struct NetworkConfig {
-    pub tcp_port: u16,
-    pub quic_port: u16,
+    pub port: u16,
     #[serde(deserialize_with = "deserialize_seconds_to_duration")]
     pub session_timeout: Duration,
     #[serde(deserialize_with = "deserialize_seconds_to_duration")]
@@ -61,15 +59,9 @@ impl SerializeConfig for NetworkConfig {
     fn dump(&self) -> BTreeMap<ParamPath, SerializedParam> {
         let mut config = BTreeMap::from_iter([
             ser_param(
-                "tcp_port",
-                &self.tcp_port,
+                "port",
+                &self.port,
                 "The port that the node listens on for incoming tcp connections.",
-                ParamPrivacyInput::Public,
-            ),
-            ser_param(
-                "quic_port",
-                &self.quic_port,
-                "The port that the node listens on for incoming quic connections.",
                 ParamPrivacyInput::Public,
             ),
             ser_param(
@@ -125,8 +117,7 @@ impl SerializeConfig for NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            tcp_port: 10000,
-            quic_port: 10001,
+            port: 10000,
             session_timeout: Duration::from_secs(120),
             idle_connection_timeout: Duration::from_secs(120),
             bootstrap_peer_multiaddr: None,

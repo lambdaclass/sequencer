@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 #[cfg(any(feature = "testing", test))]
 use mockall::automock;
-use papyrus_proc_macros::handle_response_variants;
+use papyrus_proc_macros::handle_all_response_variants;
 use serde::{Deserialize, Serialize};
 use starknet_sequencer_infra::component_client::{
     ClientError,
@@ -14,14 +14,18 @@ use starknet_sequencer_infra::component_definitions::{
     ComponentClient,
     ComponentRequestAndResponseSender,
 };
+use starknet_state_sync_types::state_sync_types::SyncBlock;
 use thiserror::Error;
 
 use crate::batcher_types::{
     BatcherResult,
     DecisionReachedInput,
+    DecisionReachedResponse,
+    GetHeightResponse,
     GetProposalContentInput,
     GetProposalContentResponse,
     ProposeBlockInput,
+    RevertBlockInput,
     SendProposalContentInput,
     SendProposalContentResponse,
     StartHeightInput,
@@ -43,6 +47,8 @@ pub type SharedBatcherClient = Arc<dyn BatcherClient>;
 pub trait BatcherClient: Send + Sync {
     /// Starts the process of building a proposal.
     async fn propose_block(&self, input: ProposeBlockInput) -> BatcherClientResult<()>;
+    /// Gets the first height that is not written in the storage yet.
+    async fn get_height(&self) -> BatcherClientResult<GetHeightResponse>;
     /// Gets the next available content from the proposal stream (only relevant when building a
     /// proposal).
     async fn get_proposal_content(
@@ -65,9 +71,17 @@ pub trait BatcherClient: Send + Sync {
     /// From this point onwards, the batcher will accept requests only for proposals associated
     /// with this height.
     async fn start_height(&self, input: StartHeightInput) -> BatcherClientResult<()>;
+    /// Adds a block from the state sync. Updates the batcher's state and commits the
+    /// transactions to the mempool.
+    async fn add_sync_block(&self, sync_block: SyncBlock) -> BatcherClientResult<()>;
     /// Notifies the batcher that a decision has been reached.
     /// This closes the process of the given height, and the accepted proposal is committed.
-    async fn decision_reached(&self, input: DecisionReachedInput) -> BatcherClientResult<()>;
+    async fn decision_reached(
+        &self,
+        input: DecisionReachedInput,
+    ) -> BatcherClientResult<DecisionReachedResponse>;
+    /// Reverts the block with the given block number, only if it is the last in the storage.
+    async fn revert_block(&self, input: RevertBlockInput) -> BatcherClientResult<()>;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -77,17 +91,23 @@ pub enum BatcherRequest {
     ValidateBlock(ValidateBlockInput),
     SendProposalContent(SendProposalContentInput),
     StartHeight(StartHeightInput),
+    GetCurrentHeight,
     DecisionReached(DecisionReachedInput),
+    AddSyncBlock(SyncBlock),
+    RevertBlock(RevertBlockInput),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum BatcherResponse {
     ProposeBlock(BatcherResult<()>),
+    GetCurrentHeight(BatcherResult<GetHeightResponse>),
     GetProposalContent(BatcherResult<GetProposalContentResponse>),
     ValidateBlock(BatcherResult<()>),
     SendProposalContent(BatcherResult<SendProposalContentResponse>),
     StartHeight(BatcherResult<()>),
-    DecisionReached(BatcherResult<()>),
+    DecisionReached(BatcherResult<Box<DecisionReachedResponse>>),
+    AddSyncBlock(BatcherResult<()>),
+    RevertBlock(BatcherResult<()>),
 }
 
 #[derive(Clone, Debug, Error)]
@@ -105,8 +125,13 @@ where
 {
     async fn propose_block(&self, input: ProposeBlockInput) -> BatcherClientResult<()> {
         let request = BatcherRequest::ProposeBlock(input);
-        let response = self.send(request).await;
-        handle_response_variants!(BatcherResponse, ProposeBlock, BatcherClientError, BatcherError)
+        handle_all_response_variants!(
+            BatcherResponse,
+            ProposeBlock,
+            BatcherClientError,
+            BatcherError,
+            Direct
+        )
     }
 
     async fn get_proposal_content(
@@ -114,19 +139,24 @@ where
         input: GetProposalContentInput,
     ) -> BatcherClientResult<GetProposalContentResponse> {
         let request = BatcherRequest::GetProposalContent(input);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             BatcherResponse,
             GetProposalContent,
             BatcherClientError,
-            BatcherError
+            BatcherError,
+            Direct
         )
     }
 
     async fn validate_block(&self, input: ValidateBlockInput) -> BatcherClientResult<()> {
         let request = BatcherRequest::ValidateBlock(input);
-        let response = self.send(request).await;
-        handle_response_variants!(BatcherResponse, ValidateBlock, BatcherClientError, BatcherError)
+        handle_all_response_variants!(
+            BatcherResponse,
+            ValidateBlock,
+            BatcherClientError,
+            BatcherError,
+            Direct
+        )
     }
 
     async fn send_proposal_content(
@@ -134,29 +164,70 @@ where
         input: SendProposalContentInput,
     ) -> BatcherClientResult<SendProposalContentResponse> {
         let request = BatcherRequest::SendProposalContent(input);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             BatcherResponse,
             SendProposalContent,
             BatcherClientError,
-            BatcherError
+            BatcherError,
+            Direct
         )
     }
 
     async fn start_height(&self, input: StartHeightInput) -> BatcherClientResult<()> {
         let request = BatcherRequest::StartHeight(input);
-        let response = self.send(request).await;
-        handle_response_variants!(BatcherResponse, StartHeight, BatcherClientError, BatcherError)
+        handle_all_response_variants!(
+            BatcherResponse,
+            StartHeight,
+            BatcherClientError,
+            BatcherError,
+            Direct
+        )
     }
 
-    async fn decision_reached(&self, input: DecisionReachedInput) -> BatcherClientResult<()> {
+    async fn get_height(&self) -> BatcherClientResult<GetHeightResponse> {
+        let request = BatcherRequest::GetCurrentHeight;
+        handle_all_response_variants!(
+            BatcherResponse,
+            GetCurrentHeight,
+            BatcherClientError,
+            BatcherError,
+            Direct
+        )
+    }
+
+    async fn decision_reached(
+        &self,
+        input: DecisionReachedInput,
+    ) -> BatcherClientResult<DecisionReachedResponse> {
         let request = BatcherRequest::DecisionReached(input);
-        let response = self.send(request).await;
-        handle_response_variants!(
+        handle_all_response_variants!(
             BatcherResponse,
             DecisionReached,
             BatcherClientError,
-            BatcherError
+            BatcherError,
+            Boxed
+        )
+    }
+
+    async fn add_sync_block(&self, sync_block: SyncBlock) -> BatcherClientResult<()> {
+        let request = BatcherRequest::AddSyncBlock(sync_block);
+        handle_all_response_variants!(
+            BatcherResponse,
+            AddSyncBlock,
+            BatcherClientError,
+            BatcherError,
+            Direct
+        )
+    }
+
+    async fn revert_block(&self, input: RevertBlockInput) -> BatcherClientResult<()> {
+        let request = BatcherRequest::RevertBlock(input);
+        handle_all_response_variants!(
+            BatcherResponse,
+            RevertBlock,
+            BatcherClientError,
+            BatcherError,
+            Direct
         )
     }
 }

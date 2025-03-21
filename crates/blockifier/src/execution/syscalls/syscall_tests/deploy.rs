@@ -1,3 +1,5 @@
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::contracts::FeatureContract;
 use pretty_assertions::assert_eq;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::core::calculate_contract_address;
@@ -10,16 +12,15 @@ use crate::execution::call_info::CallExecution;
 use crate::execution::entry_point::CallEntryPoint;
 use crate::retdata;
 use crate::state::state_api::StateReader;
-use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{calldata_for_deploy_test, trivial_external_entry_point_new, CairoVersion};
+use crate::test_utils::{calldata_for_deploy_test, trivial_external_entry_point_new};
 
-#[test_case(CairoVersion::Cairo1;"VM")]
-#[cfg_attr(feature = "cairo_native", test_case(CairoVersion::Native;"Native"))]
-fn no_constructor(cairo_version: CairoVersion) {
+#[test_case(RunnableCairo1::Casm;"VM")]
+#[cfg_attr(feature = "cairo_native", test_case(RunnableCairo1::Native;"Native"))]
+fn no_constructor(runnable_version: RunnableCairo1) {
     // TODO(Yoni): share the init code of the tests in this file.
-    let deployer_contract = FeatureContract::TestContract(cairo_version);
-    let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
+    let deployer_contract = FeatureContract::TestContract(CairoVersion::Cairo1(runnable_version));
+    let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1(runnable_version));
     let class_hash = empty_contract.get_class_hash();
 
     let mut state = test_state(
@@ -38,7 +39,7 @@ fn no_constructor(cairo_version: CairoVersion) {
     let deploy_call = &entry_point_call.execute_directly(&mut state).unwrap();
     assert_eq!(
         deploy_call.execution,
-        CallExecution { retdata: retdata![], gas_consumed: 205200, ..CallExecution::default() }
+        CallExecution { retdata: retdata![], gas_consumed: 158600, ..CallExecution::default() }
     );
 
     let deployed_contract_address = calculate_contract_address(
@@ -59,11 +60,11 @@ fn no_constructor(cairo_version: CairoVersion) {
     assert_eq!(state.get_class_hash_at(deployed_contract_address).unwrap(), class_hash);
 }
 
-#[test_case(CairoVersion::Cairo1;"VM")]
-#[cfg_attr(feature = "cairo_native", test_case(CairoVersion::Native;"Native"))]
-fn no_constructor_nonempty_calldata(cairo_version: CairoVersion) {
-    let deployer_contract = FeatureContract::TestContract(cairo_version);
-    let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1);
+#[test_case(RunnableCairo1::Casm;"VM")]
+#[cfg_attr(feature = "cairo_native", test_case(RunnableCairo1::Native;"Native"))]
+fn no_constructor_nonempty_calldata(runnable_version: RunnableCairo1) {
+    let deployer_contract = FeatureContract::TestContract(CairoVersion::Cairo1(runnable_version));
+    let empty_contract = FeatureContract::Empty(CairoVersion::Cairo1(runnable_version));
     let class_hash = empty_contract.get_class_hash();
 
     let mut state = test_state(
@@ -87,10 +88,10 @@ fn no_constructor_nonempty_calldata(cairo_version: CairoVersion) {
     ));
 }
 
-#[test_case(CairoVersion::Cairo1;"VM")]
-#[cfg_attr(feature = "cairo_native", test_case(CairoVersion::Native;"Native"))]
-fn with_constructor(cairo_version: CairoVersion) {
-    let deployer_contract = FeatureContract::TestContract(cairo_version);
+#[test_case(RunnableCairo1::Casm;"VM")]
+#[cfg_attr(feature = "cairo_native", test_case(RunnableCairo1::Native;"Native"))]
+fn with_constructor(runnable_version: RunnableCairo1) {
+    let deployer_contract = FeatureContract::TestContract(CairoVersion::Cairo1(runnable_version));
     let mut state = test_state(&ChainInfo::create_for_testing(), Fee(0), &[(deployer_contract, 1)]);
 
     let class_hash = deployer_contract.get_class_hash();
@@ -117,9 +118,10 @@ fn with_constructor(cairo_version: CairoVersion) {
     .unwrap();
 
     let deploy_call = &entry_point_call.execute_directly(&mut state).unwrap();
+
     assert_eq!(
         deploy_call.execution,
-        CallExecution { retdata: retdata![], gas_consumed: 214550, ..CallExecution::default() }
+        CallExecution { retdata: retdata![], gas_consumed: 188780, ..CallExecution::default() }
     );
 
     let constructor_call = &deploy_call.inner_calls[0];
@@ -131,17 +133,17 @@ fn with_constructor(cairo_version: CairoVersion) {
             // The test contract constructor returns its first argument.
             retdata: retdata![constructor_calldata[0]],
             // This reflects the gas cost of storage write syscall.
-            gas_consumed: 4610,
+            gas_consumed: 15140,
             ..CallExecution::default()
         }
     );
     assert_eq!(state.get_class_hash_at(contract_address).unwrap(), class_hash);
 }
 
-#[test_case(CairoVersion::Cairo1;"VM")]
-#[cfg_attr(feature = "cairo_native", test_case(CairoVersion::Native;"Native"))]
-fn to_unavailable_address(cairo_version: CairoVersion) {
-    let deployer_contract = FeatureContract::TestContract(cairo_version);
+#[test_case(RunnableCairo1::Casm;"VM")]
+#[cfg_attr(feature = "cairo_native", test_case(RunnableCairo1::Native;"Native"))]
+fn to_unavailable_address(runnable_version: RunnableCairo1) {
+    let deployer_contract = FeatureContract::TestContract(CairoVersion::Cairo1(runnable_version));
     let mut state = test_state(&ChainInfo::create_for_testing(), Fee(0), &[(deployer_contract, 1)]);
 
     let class_hash = deployer_contract.get_class_hash();

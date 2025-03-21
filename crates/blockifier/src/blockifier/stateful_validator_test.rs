@@ -1,4 +1,6 @@
 use assert_matches::assert_matches;
+use blockifier_test_utils::cairo_versions::{CairoVersion, RunnableCairo1};
+use blockifier_test_utils::contracts::FeatureContract;
 use rstest::rstest;
 use starknet_api::executable_transaction::AccountTransaction as Transaction;
 use starknet_api::transaction::fields::ValidResourceBounds;
@@ -6,9 +8,8 @@ use starknet_api::transaction::TransactionVersion;
 
 use crate::blockifier::stateful_validator::StatefulValidator;
 use crate::context::BlockContext;
-use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::{fund_account, test_state};
-use crate::test_utils::{CairoVersion, BALANCE};
+use crate::test_utils::BALANCE;
 use crate::transaction::test_utils::{
     block_context,
     create_account_tx_for_validate_test_nonce_0,
@@ -37,7 +38,8 @@ fn test_tx_validator(
     block_context: BlockContext,
     #[values(default_l1_resource_bounds(), default_all_resource_bounds())]
     resource_bounds: ValidResourceBounds,
-    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1)] cairo_version: CairoVersion,
+    #[values(CairoVersion::Cairo0, CairoVersion::Cairo1(RunnableCairo1::Casm))]
+    cairo_version: CairoVersion,
 ) {
     let chain_info = &block_context.chain_info;
 
@@ -62,8 +64,10 @@ fn test_tx_validator(
     };
 
     // Positive flow.
+    let validate = true;
     let account_tx = create_account_tx_for_validate_test_nonce_0(FaultyAccountTxCreatorArgs {
         scenario: VALID,
+        validate,
         ..tx_args
     });
     if let Transaction::DeployAccount(deploy_tx) = &account_tx.tx {
@@ -72,21 +76,21 @@ fn test_tx_validator(
 
     // Test the stateful validator.
     let mut stateful_validator = StatefulValidator::create(state, block_context);
-    let skip_validate = false;
-    let result = stateful_validator.perform_validations(account_tx, skip_validate);
+    let result = stateful_validator.perform_validations(account_tx);
     assert!(result.is_ok(), "Validation failed: {:?}", result.unwrap_err());
 }
 
 #[rstest]
-fn test_tx_validator_skip_validate(
+fn test_tx_validator_conditional_validate(
     #[values(default_l1_resource_bounds(), default_all_resource_bounds())]
     resource_bounds: ValidResourceBounds,
 ) {
     let block_context = BlockContext::create_for_testing();
-    let faulty_account = FeatureContract::FaultyAccount(CairoVersion::Cairo1);
+    let faulty_account = FeatureContract::FaultyAccount(CairoVersion::Cairo1(RunnableCairo1::Casm));
     let state = test_state(&block_context.chain_info, BALANCE, &[(faulty_account, 1)]);
 
     // Create a transaction that does not pass validations.
+    let validate = false;
     let tx = create_account_tx_for_validate_test_nonce_0(FaultyAccountTxCreatorArgs {
         scenario: INVALID,
         tx_type: TransactionType::InvokeFunction,
@@ -94,11 +98,12 @@ fn test_tx_validator_skip_validate(
         sender_address: faulty_account.get_instance_address(0),
         class_hash: faulty_account.get_class_hash(),
         resource_bounds,
+        validate,
         ..Default::default()
     });
 
     let mut stateful_validator = StatefulValidator::create(state, block_context);
     // The transaction validations should be skipped and the function should return Ok.
-    let result = stateful_validator.perform_validations(tx, true);
+    let result = stateful_validator.perform_validations(tx);
     assert_matches!(result, Ok(()));
 }
