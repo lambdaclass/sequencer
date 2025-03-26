@@ -49,19 +49,19 @@ use starknet_sequencer_node::servers::run_component_servers;
 use starknet_sequencer_node::utils::create_node_modules;
 use starknet_state_sync::config::StateSyncConfig;
 use starknet_types_core::felt::Felt;
-use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::{debug, instrument};
 use url::Url;
 
-use crate::executable_setup::NodeExecutionId;
-use crate::state_reader::StorageTestSetup;
+use crate::state_reader::{StorageTestHandles, StorageTestSetup};
 use crate::utils::{
     create_consensus_manager_configs_from_network_configs,
     create_mempool_p2p_configs,
     create_node_config,
     create_state_sync_configs,
     send_message_to_l2,
+    set_validator_id,
+    spawn_local_eth_to_strk_oracle,
     spawn_local_success_recorder,
     AccumulatedTransactions,
 };
@@ -178,10 +178,8 @@ pub struct FlowSequencerSetup {
     // Client for adding transactions to the sequencer node.
     pub add_tx_http_client: HttpTestClient,
 
-    // Handlers for the storage files, maintained so the files are not deleted.
-    pub batcher_storage_file_handle: Option<TempDir>,
-    pub state_sync_storage_file_handle: Option<TempDir>,
-    pub class_manager_storage_file_handles: Option<starknet_class_manager::test_utils::FileHandles>,
+    // Handles for the storage files, maintained so the files are not deleted.
+    pub storage_handles: StorageTestHandles,
 
     // Node configuration.
     pub node_config: SequencerNodeConfig,
@@ -210,18 +208,18 @@ impl FlowSequencerSetup {
         block_max_capacity_sierra_gas: GasAmount,
     ) -> Self {
         let path = None;
-        let StorageTestSetup {
-            batcher_storage_config,
-            batcher_storage_handle,
-            state_sync_storage_config,
-            state_sync_storage_handle,
-            class_manager_storage_config,
-            class_manager_storage_handles,
-        } = StorageTestSetup::new(accounts, &chain_info, path);
+        let StorageTestSetup { storage_config, storage_handles } =
+            StorageTestSetup::new(accounts, &chain_info, path);
 
         let (recorder_url, _join_handle) =
             spawn_local_success_recorder(available_ports.get_next_port());
         consensus_manager_config.cende_config.recorder_url = recorder_url;
+
+        let (eth_to_strk_oracle_url, _join_handle) =
+            spawn_local_eth_to_strk_oracle(available_ports.get_next_port());
+        consensus_manager_config.eth_to_strk_oracle_config.base_url = eth_to_strk_oracle_url;
+
+        let validator_id = set_validator_id(&mut consensus_manager_config, node_index);
 
         let component_config = ComponentConfig::default();
 
@@ -237,11 +235,8 @@ impl FlowSequencerSetup {
         // Derive the configuration for the sequencer node.
         let (node_config, _config_pointers_map) = create_node_config(
             &mut available_ports,
-            NodeExecutionId::new(node_index, 0),
             chain_info,
-            batcher_storage_config,
-            state_sync_storage_config,
-            class_manager_storage_config,
+            storage_config,
             state_sync_config,
             consensus_manager_config,
             mempool_p2p_config,
@@ -249,6 +244,7 @@ impl FlowSequencerSetup {
             component_config,
             base_layer_config,
             block_max_capacity_sierra_gas,
+            validator_id,
         );
 
         debug!("Sequencer config: {:#?}", node_config);
@@ -266,9 +262,7 @@ impl FlowSequencerSetup {
         Self {
             node_index,
             add_tx_http_client,
-            batcher_storage_file_handle: batcher_storage_handle,
-            state_sync_storage_file_handle: state_sync_storage_handle,
-            class_manager_storage_file_handles: class_manager_storage_handles,
+            storage_handles,
             node_config,
             monitoring_client,
             clients,

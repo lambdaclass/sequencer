@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use serde::ser::{SerializeMap, SerializeStruct};
 use serde::{Serialize, Serializer};
-use starknet_sequencer_metrics::metrics::{MetricCounter, MetricGauge};
+use starknet_sequencer_metrics::metrics::{MetricCounter, MetricGauge, MetricHistogram};
 
 #[cfg(test)]
 #[path = "dashboard_test.rs"]
@@ -43,6 +43,10 @@ impl Panel {
     pub const fn from_gauge(metric: MetricGauge, panel_type: PanelType) -> Self {
         Self::new(metric.get_name(), metric.get_description(), metric.get_name(), panel_type)
     }
+
+    pub const fn from_hist(metric: MetricHistogram, panel_type: PanelType) -> Self {
+        Self::new(metric.get_name(), metric.get_description(), metric.get_name(), panel_type)
+    }
 }
 
 // Custom Serialize implementation for Panel.
@@ -66,13 +70,17 @@ impl Serialize for Panel {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Row<'a> {
+pub struct Row {
     name: &'static str,
-    panels: &'a [Panel],
+    panels: &'static [Panel],
 }
 
-impl<'a> Row<'a> {
-    pub const fn new(name: &'static str, description: &'static str, panels: &'a [Panel]) -> Self {
+impl Row {
+    pub const fn new(
+        name: &'static str,
+        description: &'static str,
+        panels: &'static [Panel],
+    ) -> Self {
         // TODO(Tsabary): remove description.
         let _ = description;
         Self { name, panels }
@@ -80,7 +88,7 @@ impl<'a> Row<'a> {
 }
 
 // Custom Serialize implementation for Row.
-impl Serialize for Row<'_> {
+impl Serialize for Row {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -92,13 +100,13 @@ impl Serialize for Row<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Dashboard<'a> {
+pub struct Dashboard {
     name: &'static str,
-    rows: &'a [Row<'a>],
+    rows: &'static [Row],
 }
 
-impl<'a> Dashboard<'a> {
-    pub const fn new(name: &'static str, description: &'static str, rows: &'a [Row<'a>]) -> Self {
+impl Dashboard {
+    pub const fn new(name: &'static str, description: &'static str, rows: &'static [Row]) -> Self {
         // TODO(Tsabary): remove description.
         let _ = description;
         Self { name, rows }
@@ -106,7 +114,7 @@ impl<'a> Dashboard<'a> {
 }
 
 // Custom Serialize implementation for Dashboard.
-impl Serialize for Dashboard<'_> {
+impl Serialize for Dashboard {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -131,26 +139,23 @@ pub enum AlertComparisonOp {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AlertLogicalOp {
-    #[serde(rename = "and")]
     And,
-    #[serde(rename = "or")]
     Or,
 }
 
 /// Defines the condition to trigger the alert.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlertCondition {
-    // The expression to evaluate for the alert.
-    expr: &'static str,
     // The comparison operator to use when comparing the expression to the value.
-    comparison_op: AlertComparisonOp,
+    pub comparison_op: AlertComparisonOp,
     // The value to compare the expression to.
-    comparison_value: f64,
+    pub comparison_value: f64,
     // The logical operator between this condition and other conditions.
     // TODO(Yael): Consider moving this field to the be one per alert to avoid ambiguity when
     // trying to use a combination of `and` and `or` operators.
-    logical_op: AlertLogicalOp,
+    pub logical_op: AlertLogicalOp,
 }
 
 impl Serialize for AlertCondition {
@@ -158,7 +163,7 @@ impl Serialize for AlertCondition {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("AlertCondition", 3)?;
+        let mut state = serializer.serialize_struct("AlertCondition", 4)?;
 
         state.serialize_field(
             "evaluator",
@@ -176,26 +181,54 @@ impl Serialize for AlertCondition {
         )?;
 
         state.serialize_field(
-            "query",
+            "reducer",
             &serde_json::json!({
-                "expr": self.expr
+                "params": [],
+                "type": "avg"
             }),
         )?;
+
+        state.serialize_field("type", "query")?;
 
         state.end()
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertGroup {
+    Batcher,
+    Gateway,
+    Mempool,
+}
+
 /// Describes the properties of an alert defined in grafana.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Alert {
-    // The required duration for which the conditions must remain true before triggering the alert.
-    name: &'static str,
-    // The message that will be displayed or sent when the alert is triggered.
-    message: &'static str,
+    // The name of the alert.
+    pub name: &'static str,
+    // The title that will be displayed.
+    pub title: &'static str,
+    // The group that the alert will be displayed under.
+    #[serde(rename = "ruleGroup")]
+    pub alert_group: AlertGroup,
+    // The expression to evaluate for the alert.
+    pub expr: &'static str,
     // The conditions that must be met for the alert to be triggered.
-    conditions: &'static [AlertCondition],
+    pub conditions: &'static [AlertCondition],
     // The time duration for which the alert conditions must be true before an alert is triggered.
     #[serde(rename = "for")]
-    pending_duration: &'static str,
+    pub pending_duration: &'static str,
+}
+
+/// Description of the alerts to be configured in the dashboard.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Alerts {
+    alerts: &'static [Alert],
+}
+
+impl Alerts {
+    pub const fn new(alerts: &'static [Alert]) -> Self {
+        Self { alerts }
+    }
 }

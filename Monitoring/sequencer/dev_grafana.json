@@ -160,6 +160,13 @@
         "type": "stat",
         "expr": "apollo_mempool_p2p_num_received_messages",
         "extra_params": {}
+      },
+      {
+        "title": "apollo_mempool_p2p_broadcasted_transaction_batch_size",
+        "description": "The number of transactions in batches broadcast by the mempool p2p component",
+        "type": "stat",
+        "expr": "apollo_mempool_p2p_broadcasted_transaction_batch_size",
+        "extra_params": {}
       }
     ],
     "ConsensusP2p": [
@@ -171,17 +178,31 @@
         "extra_params": {}
       },
       {
-        "title": "apollo_consensus_num_sent_messages",
-        "description": "The number of messages sent by the consensus p2p component",
+        "title": "apollo_consensus_votes_num_sent_messages",
+        "description": "The number of messages sent by the consensus p2p component over the Votes topic",
         "type": "stat",
-        "expr": "apollo_consensus_num_sent_messages",
+        "expr": "apollo_consensus_votes_num_sent_messages",
         "extra_params": {}
       },
       {
-        "title": "apollo_consensus_num_received_messages",
-        "description": "The number of messages received by the consensus p2p component",
+        "title": "apollo_consensus_votes_num_received_messages",
+        "description": "The number of messages received by the consensus p2p component over the Votes topic",
         "type": "stat",
-        "expr": "apollo_consensus_num_received_messages",
+        "expr": "apollo_consensus_votes_num_received_messages",
+        "extra_params": {}
+      },
+      {
+        "title": "apollo_consensus_proposals_num_sent_messages",
+        "description": "The number of messages sent by the consensus p2p component over the Proposals topic",
+        "type": "stat",
+        "expr": "apollo_consensus_proposals_num_sent_messages",
+        "extra_params": {}
+      },
+      {
+        "title": "apollo_consensus_proposals_num_received_messages",
+        "description": "The number of messages received by the consensus p2p component over the Proposals topic",
+        "type": "stat",
+        "expr": "apollo_consensus_proposals_num_received_messages",
         "extra_params": {}
       }
     ],
@@ -228,6 +249,20 @@
         "description": "The rate of transactions received by the gateway during the last 20 minutes",
         "type": "graph",
         "expr": "sum(rate(gateway_transactions_received[20m]))",
+        "extra_params": {}
+      },
+      {
+        "title": "gateway_add_tx_latency",
+        "description": "Latency of gateway add_tx function in secs",
+        "type": "graph",
+        "expr": "avg_over_time(gateway_add_tx_latency[2m])",
+        "extra_params": {}
+      },
+      {
+        "title": "gateway_validate_tx_latency",
+        "description": "Latency of gateway validate function in secs",
+        "type": "graph",
+        "expr": "avg_over_time(gateway_validate_tx_latency[2m])",
         "extra_params": {}
       },
       {

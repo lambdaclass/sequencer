@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use assert_matches::assert_matches;
 use blockifier::blockifier_versioned_constants::VersionedConstants;
@@ -48,6 +47,8 @@ use starknet_types_core::felt::Felt;
 use strum::IntoEnumIterator;
 use tempfile::TempDir;
 
+use crate::storage::StorageExecutablePaths;
+
 pub type TempDirHandlePair = (TempDir, TempDir);
 type ContractClassesMap = (
     Vec<(ClassHash, DeprecatedContractClass)>,
@@ -60,26 +61,58 @@ pub(crate) const CLASS_HASH_STORAGE_DB_PATH_SUFFIX: &str = "class_hash_storage";
 pub(crate) const CLASSES_STORAGE_DB_PATH_SUFFIX: &str = "classes";
 pub(crate) const STATE_SYNC_DB_PATH_SUFFIX: &str = "state_sync";
 
-pub struct StorageTestSetup {
+#[derive(Debug, Clone)]
+pub struct StorageTestConfig {
     pub batcher_storage_config: StorageConfig,
-    pub batcher_storage_handle: Option<TempDir>,
     pub state_sync_storage_config: StorageConfig,
-    pub state_sync_storage_handle: Option<TempDir>,
     pub class_manager_storage_config: FsClassStorageConfig,
+}
+
+impl StorageTestConfig {
+    pub fn new(
+        batcher_storage_config: StorageConfig,
+        state_sync_storage_config: StorageConfig,
+        class_manager_storage_config: FsClassStorageConfig,
+    ) -> Self {
+        Self { batcher_storage_config, state_sync_storage_config, class_manager_storage_config }
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageTestHandles {
+    pub batcher_storage_handle: Option<TempDir>,
+    pub state_sync_storage_handle: Option<TempDir>,
     pub class_manager_storage_handles: Option<TempDirHandlePair>,
+}
+
+impl StorageTestHandles {
+    pub fn new(
+        batcher_storage_handle: Option<TempDir>,
+        state_sync_storage_handle: Option<TempDir>,
+        class_manager_storage_handles: Option<TempDirHandlePair>,
+    ) -> Self {
+        Self { batcher_storage_handle, state_sync_storage_handle, class_manager_storage_handles }
+    }
+}
+
+#[derive(Debug)]
+pub struct StorageTestSetup {
+    pub storage_config: StorageTestConfig,
+    pub storage_handles: StorageTestHandles,
 }
 
 impl StorageTestSetup {
     pub fn new(
         test_defined_accounts: Vec<AccountTransactionGenerator>,
         chain_info: &ChainInfo,
-        path: Option<PathBuf>,
+        storage_exec_paths: Option<StorageExecutablePaths>,
     ) -> Self {
         let preset_test_contracts = PresetTestContracts::new();
         // TODO(yair): Avoid cloning.
         let classes = TestClasses::new(&test_defined_accounts, preset_test_contracts.clone());
 
-        let batcher_db_path = path.as_ref().map(|p| p.join(BATCHER_DB_PATH_SUFFIX));
+        let batcher_db_path =
+            storage_exec_paths.as_ref().map(|p| p.get_batcher_path_with_db_suffix());
         let ((_, mut batcher_storage_writer), batcher_storage_config, batcher_storage_handle) =
             TestStorageBuilder::new(batcher_db_path)
                 .scope(StorageScope::StateOnly)
@@ -93,7 +126,8 @@ impl StorageTestSetup {
             &classes,
         );
 
-        let state_sync_db_path = path.as_ref().map(|p| p.join(STATE_SYNC_DB_PATH_SUFFIX));
+        let state_sync_db_path =
+            storage_exec_paths.as_ref().map(|p| p.get_state_sync_path_with_db_suffix());
         let (
             (_, mut state_sync_storage_writer),
             state_sync_storage_config,
@@ -110,7 +144,8 @@ impl StorageTestSetup {
             &classes,
         );
 
-        let fs_class_storage_db_path = path.as_ref().map(|p| p.join(CLASS_MANAGER_DB_PATH_SUFFIX));
+        let fs_class_storage_db_path =
+            storage_exec_paths.as_ref().map(|p| p.get_class_manager_path_with_db_suffix());
         let mut fs_class_storage_builder = FsClassStorageBuilderForTesting::default();
         if let Some(class_manager_path) = fs_class_storage_db_path.as_ref() {
             let class_hash_storage_path_prefix =
@@ -130,12 +165,16 @@ impl StorageTestSetup {
         initialize_class_manager_test_state(&mut class_manager_storage, classes);
 
         Self {
-            batcher_storage_config,
-            batcher_storage_handle,
-            state_sync_storage_config,
-            state_sync_storage_handle,
-            class_manager_storage_config,
-            class_manager_storage_handles,
+            storage_config: StorageTestConfig::new(
+                batcher_storage_config,
+                state_sync_storage_config,
+                class_manager_storage_config,
+            ),
+            storage_handles: StorageTestHandles::new(
+                batcher_storage_handle,
+                state_sync_storage_handle,
+                class_manager_storage_handles,
+            ),
         }
     }
 }

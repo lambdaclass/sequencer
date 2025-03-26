@@ -306,7 +306,7 @@ async fn collect_execution_results_and_stream_txs(
             // TODO(yael 18/9/2024): add timeout error handling here once this
             // feature is added.
             Err(err) => {
-                debug!("Transaction {:?} failed with error: {}.", input_tx, err);
+                debug!("Transaction {} failed with error: {}.", input_tx.tx_hash(), err);
                 if fail_on_err {
                     return Err(BlockBuilderError::FailOnError(
                         FailOnErrorCause::TransactionFailed(err),
@@ -378,7 +378,7 @@ impl SerializeConfig for BlockBuilderConfig {
         dump.append(&mut BTreeMap::from([ser_param(
             "tx_chunk_size",
             &self.tx_chunk_size,
-            "The size of the transaction chunk.",
+            "Number of transactions in each request from the tx_provider.",
             ParamPrivacyInput::Public,
         )]));
         dump.append(&mut append_sub_config_name(

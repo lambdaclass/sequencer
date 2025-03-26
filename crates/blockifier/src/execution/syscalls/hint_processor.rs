@@ -19,9 +19,9 @@ use starknet_api::transaction::fields::{
     AllResourceBounds,
     Calldata,
     Resource,
+    ResourceBounds,
     ValidResourceBounds,
 };
-use starknet_api::transaction::TransactionVersion;
 use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
@@ -256,6 +256,46 @@ pub struct SyscallHintProcessor<'a> {
     hints: &'a HashMap<String, Hint>,
 }
 
+pub struct ResourceAsFelts {
+    pub resource_name: Felt,
+    pub max_amount: Felt,
+    pub max_price_per_unit: Felt,
+}
+
+impl ResourceAsFelts {
+    pub fn new(resource: Resource, resource_bounds: &ResourceBounds) -> SyscallResult<Self> {
+        Ok(Self {
+            resource_name: Felt::from_hex(resource.to_hex())
+                .map_err(SyscallExecutionError::from)?,
+            max_amount: Felt::from(resource_bounds.max_amount),
+            max_price_per_unit: Felt::from(resource_bounds.max_price_per_unit),
+        })
+    }
+
+    pub fn flatten(self) -> Vec<Felt> {
+        vec![self.resource_name, self.max_amount, self.max_price_per_unit]
+    }
+}
+
+pub fn valid_resource_bounds_as_felts(
+    resource_bounds: &ValidResourceBounds,
+    exclude_l1_data_gas: bool,
+) -> SyscallResult<Vec<ResourceAsFelts>> {
+    let mut resource_bounds_vec: Vec<_> = vec![
+        ResourceAsFelts::new(Resource::L1Gas, &resource_bounds.get_l1_bounds())?,
+        ResourceAsFelts::new(Resource::L2Gas, &resource_bounds.get_l2_bounds())?,
+    ];
+    if exclude_l1_data_gas {
+        return Ok(resource_bounds_vec);
+    }
+    if let ValidResourceBounds::AllResources(AllResourceBounds { l1_data_gas, .. }) =
+        resource_bounds
+    {
+        resource_bounds_vec.push(ResourceAsFelts::new(Resource::L1DataGas, l1_data_gas)?)
+    }
+    Ok(resource_bounds_vec)
+}
+
 impl<'a> SyscallHintProcessor<'a> {
     pub fn new(
         state: &'a mut dyn State,
@@ -422,19 +462,10 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
     ) -> SyscallResult<Relocatable> {
-        let returned_version = self.base.tx_version_for_get_execution_info();
-        let original_version = self.base.context.tx_context.tx_info.signed_version();
-
-        // If the transaction version was overridden, `self.execution_info_ptr` cannot be used.
-        if returned_version != original_version {
-            return self.allocate_execution_info_segment(vm, returned_version);
-        }
-
         match self.execution_info_ptr {
             Some(execution_info_ptr) => Ok(execution_info_ptr),
             None => {
-                let execution_info_ptr =
-                    self.allocate_execution_info_segment(vm, original_version)?;
+                let execution_info_ptr = self.allocate_execution_info_segment(vm)?;
                 self.execution_info_ptr = Some(execution_info_ptr);
                 Ok(execution_info_ptr)
             }
@@ -445,33 +476,13 @@ impl<'a> SyscallHintProcessor<'a> {
         &mut self,
         vm: &mut VirtualMachine,
         tx_info: &CurrentTransactionInfo,
+        exclude_l1_data_gas: bool,
     ) -> SyscallResult<(Relocatable, Relocatable)> {
-        let l1_gas_as_felt =
-            Felt::from_hex(Resource::L1Gas.to_hex()).map_err(SyscallExecutionError::from)?;
-        let l2_gas_as_felt =
-            Felt::from_hex(Resource::L2Gas.to_hex()).map_err(SyscallExecutionError::from)?;
-        let l1_data_gas_as_felt =
-            Felt::from_hex(Resource::L1DataGas.to_hex()).map_err(SyscallExecutionError::from)?;
-
-        let l1_gas_bounds = tx_info.resource_bounds.get_l1_bounds();
-        let l2_gas_bounds = tx_info.resource_bounds.get_l2_bounds();
-        let mut flat_resource_bounds = vec![
-            l1_gas_as_felt,
-            Felt::from(l1_gas_bounds.max_amount),
-            Felt::from(l1_gas_bounds.max_price_per_unit),
-            l2_gas_as_felt,
-            Felt::from(l2_gas_bounds.max_amount),
-            Felt::from(l2_gas_bounds.max_price_per_unit),
-        ];
-        if let ValidResourceBounds::AllResources(AllResourceBounds { l1_data_gas, .. }) =
-            tx_info.resource_bounds
-        {
-            flat_resource_bounds.extend(vec![
-                l1_data_gas_as_felt,
-                Felt::from(l1_data_gas.max_amount),
-                Felt::from(l1_data_gas.max_price_per_unit),
-            ])
-        }
+        let flat_resource_bounds: Vec<_> =
+            valid_resource_bounds_as_felts(&tx_info.resource_bounds, exclude_l1_data_gas)?
+                .into_iter()
+                .flat_map(ResourceAsFelts::flatten)
+                .collect();
 
         self.allocate_data_segment(vm, &flat_resource_bounds)
     }
@@ -576,10 +587,9 @@ impl<'a> SyscallHintProcessor<'a> {
     fn allocate_execution_info_segment(
         &mut self,
         vm: &mut VirtualMachine,
-        tx_version_override: TransactionVersion,
     ) -> SyscallResult<Relocatable> {
         let block_info_ptr = self.allocate_block_info_segment(vm)?;
-        let tx_info_ptr = self.allocate_tx_info_segment(vm, tx_version_override)?;
+        let tx_info_ptr = self.allocate_tx_info_segment(vm)?;
 
         let additional_info: Vec<MaybeRelocatable> = vec![
             block_info_ptr.into(),
@@ -625,17 +635,18 @@ impl<'a> SyscallHintProcessor<'a> {
         Ok((data_segment_start_ptr, data_segment_end_ptr))
     }
 
-    fn allocate_tx_info_segment(
-        &mut self,
-        vm: &mut VirtualMachine,
-        tx_version_override: TransactionVersion,
-    ) -> SyscallResult<Relocatable> {
+    fn allocate_tx_info_segment(&mut self, vm: &mut VirtualMachine) -> SyscallResult<Relocatable> {
         let tx_info = &self.base.context.tx_context.clone().tx_info;
         let (tx_signature_start_ptr, tx_signature_end_ptr) =
             &self.allocate_data_segment(vm, &tx_info.signature().0)?;
 
+        // Note: the returned version might not be equal to the actual transaction version.
+        // Also, the returned version is a property of the current VM execution (of some contract
+        // call) so it is okay to allocate it once whithout re-checking the version in every
+        // `get_execution_info` syscall invocation.
+        let returned_version = self.base.tx_version_for_get_execution_info();
         let mut tx_data: Vec<MaybeRelocatable> = vec![
-            tx_version_override.0.into(),
+            returned_version.0.into(),
             tx_info.sender_address().0.key().into(),
             Felt::from(tx_info.max_fee_for_execution_info_syscall().0).into(),
             tx_signature_start_ptr.into(),
@@ -650,8 +661,10 @@ impl<'a> SyscallHintProcessor<'a> {
 
         match tx_info {
             TransactionInfo::Current(context) => {
-                let (tx_resource_bounds_start_ptr, tx_resource_bounds_end_ptr) =
-                    &self.allocate_tx_resource_bounds_segment(vm, context)?;
+                // See comment above about the returned version.
+                let should_exclude_l1_data_gas = self.base.should_exclude_l1_data_gas();
+                let (tx_resource_bounds_start_ptr, tx_resource_bounds_end_ptr) = &self
+                    .allocate_tx_resource_bounds_segment(vm, context, should_exclude_l1_data_gas)?;
 
                 let (tx_paymaster_data_start_ptr, tx_paymaster_data_end_ptr) =
                     &self.allocate_data_segment(vm, &context.paymaster_data.0)?;

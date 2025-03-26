@@ -1,5 +1,6 @@
 use std::string::FromUtf8Error;
 
+use blockifier::execution::syscalls::hint_processor::SyscallExecutionError;
 use blockifier::state::errors::StateError;
 use cairo_vm::hint_processor::hint_processor_definition::HintExtension;
 use cairo_vm::serde::deserialize_program::Identifier;
@@ -11,6 +12,7 @@ use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use num_bigint::{BigUint, TryFromBigIntError};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::ClassHash;
+use starknet_api::executable_transaction::Transaction;
 use starknet_api::StarknetApiError;
 use starknet_types_core::felt::Felt;
 
@@ -30,6 +32,8 @@ pub enum OsHintError {
     BooleanIdExpected { id: Ids, felt: Felt },
     #[error("Failed to convert {variant:?} felt value {felt:?} to type {ty}: {reason:?}.")]
     ConstConversion { variant: Const, felt: Felt, ty: String, reason: String },
+    #[error("Tried to iterate past the end of {item_type}.")]
+    EndOfIterator { item_type: String },
     #[error(transparent)]
     ExecutionScopes(#[from] ExecScopeError),
     #[error("{id:?} value {felt} is not a bit.")]
@@ -61,6 +65,8 @@ pub enum OsHintError {
     MissingBytecodeSegmentStructure(ClassHash),
     #[error("No preimage found for value {0:?}.")]
     MissingPreimage(Felt),
+    #[error("Failed to parse resource bounds: {0}.")]
+    ResourceBoundsParsing(SyscallExecutionError),
     #[error("{error:?} for json value {value}.")]
     SerdeJsonDeserialize { error: serde_json::Error, value: serde_json::value::Value },
     #[error(transparent)]
@@ -73,6 +79,8 @@ pub enum OsHintError {
     StatelessCompressionOverflow { n_bits: usize, type_name: String },
     #[error(transparent)]
     TryFromBigUint(#[from] TryFromBigIntError<BigUint>),
+    #[error("Unexpected tx type: {0:?}.")]
+    UnexpectedTxType(Transaction),
     #[error("Unknown hint string: {0}")]
     UnknownHint(String),
     #[error(transparent)]

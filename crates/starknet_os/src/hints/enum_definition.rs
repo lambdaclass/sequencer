@@ -66,7 +66,7 @@ use crate::hints::hint_implementation::execute_transactions::{
     skip_tx,
     start_tx,
 };
-use crate::hints::hint_implementation::execution::{
+use crate::hints::hint_implementation::execution::implementation::{
     assert_transaction_hash,
     cache_contract_storage_request_key,
     cache_contract_storage_syscall_request_address,
@@ -124,7 +124,10 @@ use crate::hints::hint_implementation::execution::{
     write_syscall_result_deprecated,
 };
 use crate::hints::hint_implementation::find_element::search_sorted_optimistic;
-use crate::hints::hint_implementation::kzg::implementation::store_da_segment;
+use crate::hints::hint_implementation::kzg::implementation::{
+    store_da_segment,
+    write_split_result,
+};
 use crate::hints::hint_implementation::math::log2_ceil;
 use crate::hints::hint_implementation::os::{
     configure_kzg_manager,
@@ -173,7 +176,6 @@ use crate::hints::hint_implementation::state::{
     set_preimage_for_class_commitments,
     set_preimage_for_current_commitment_info,
     set_preimage_for_state_commitments,
-    write_split_result,
 };
 use crate::hints::hint_implementation::stateful_compression::{
     assert_key_big_enough_for_alias,
@@ -441,7 +443,7 @@ define_hint_enum!(
         WriteUseKzgDaToMemory,
         write_use_kzg_da_to_memory,
         indoc! {r#"memory[fp + 19] = to_felt_or_relocatable(syscall_handler.block_info.use_kzg_da and (
-    not block_input.full_output
+    not os_hints_config.full_output
 ))"#}
     ),
     (
@@ -707,7 +709,7 @@ else:
         update_state_ptr,
         "if state_update_pointers is not None:
     state_update_pointers.state_tree_ptr = (
-        ids.final_squashed_contract_state_changes_end.address_,
+        ids.final_squashed_contract_state_changes_end.address_
     )"
     ),
     (
@@ -1384,7 +1386,7 @@ segments.write_arg(ids.sha256_ptr_end, padding)"#}
     (
         WriteFullOutputToMemory,
         write_full_output_to_memory,
-        indoc! {r#"memory[fp + 20] = to_felt_or_relocatable(block_input.full_output)"#}
+        indoc! {r#"memory[fp + 20] = to_felt_or_relocatable(os_hints_config.full_output)"#}
     ),
     (
         ConfigureKzgManager,
@@ -1697,10 +1699,12 @@ memory[ap] = 1 if case != 'both' else 0"#
     (
         StarknetOsInput,
         starknet_os_input,
-        indoc! {r#"from starkware.starknet.core.os.os_input import StarknetOsInput
+        indoc! {r#"from starkware.starknet.core.os.os_hints import OsHintsConfig
+        from starkware.starknet.core.os.os_input import StarknetOsInput
 
-os_input = StarknetOsInput.load(data=program_input)
-block_input_iterator = iter(os_input.block_inputs)"#
+        os_input = StarknetOsInput.load(data=program_input)
+        os_hints_config = OsHintsConfig.load(data=os_hints_config)
+        block_input_iterator = iter(os_input.block_inputs)"#
         }
     ),
     (
@@ -1739,7 +1743,7 @@ block_input = next(block_input_iterator)
     syscall_handler,
     deprecated_syscall_handler
 ) = get_execution_helper_and_syscall_handlers(
-    block_input=block_input, global_hints=global_hints
+    block_input=block_input, global_hints=global_hints, os_hints_config=os_hints_config
 )"#}
     )
 );

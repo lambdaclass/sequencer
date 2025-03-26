@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use starknet_l1_gas_price_types::errors::EthToStrkOracleClientError;
 use starknet_l1_gas_price_types::EthToStrkOracleClientTrait;
+use tracing::{debug, info};
 use url::Url;
 
 #[cfg(test)]
 #[path = "eth_to_strk_oracle_test.rs"]
 pub mod eth_to_strk_oracle_test;
 
-const DECIMALS: u64 = 18;
+pub const ETH_TO_STRK_QUANTIZATION: u64 = 18;
 
 fn hashmap_to_headermap(hash_map: Option<HashMap<String, String>>) -> HeaderMap {
     let mut header_map = HeaderMap::new();
@@ -75,6 +76,7 @@ pub struct EthToStrkOracleClient {
 
 impl EthToStrkOracleClient {
     pub fn new(base_url: Url, headers: Option<HashMap<String, String>>) -> Self {
+        info!("Creating EthToStrkOracleClient with: base_url={base_url} headers={:?}", headers);
         Self { base_url, headers: hashmap_to_headermap(headers), client: reqwest::Client::new() }
     }
 }
@@ -83,7 +85,7 @@ impl EthToStrkOracleClient {
 impl EthToStrkOracleClientTrait for EthToStrkOracleClient {
     /// The HTTP response must include the following fields:
     /// - `"price"`: a hexadecimal string representing the price.
-    /// - `"decimals"`: a `u64` value, must be equal to `DECIMALS`.
+    /// - `"decimals"`: a `u64` value, must be equal to `ETH_TO_STRK_QUANTIZATION`.
     async fn eth_to_fri_rate(&self, timestamp: u64) -> Result<u128, EthToStrkOracleClientError> {
         let url = format!("{}{}", self.base_url, timestamp);
         let response = self.client.get(&url).headers(self.headers.clone()).send().await?;
@@ -102,9 +104,13 @@ impl EthToStrkOracleClientTrait for EthToStrkOracleClient {
             .get("decimals")
             .and_then(|v| v.as_u64())
             .ok_or(EthToStrkOracleClientError::MissingFieldError("decimals"))?;
-        if decimals != DECIMALS {
-            return Err(EthToStrkOracleClientError::InvalidDecimalsError(DECIMALS, decimals));
+        if decimals != ETH_TO_STRK_QUANTIZATION {
+            return Err(EthToStrkOracleClientError::InvalidDecimalsError(
+                ETH_TO_STRK_QUANTIZATION,
+                decimals,
+            ));
         }
+        debug!("Conversion rate for timestamp {timestamp} is {rate}");
         Ok(rate)
     }
 }

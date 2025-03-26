@@ -2,6 +2,7 @@
 #[path = "consensus_manager_test.rs"]
 mod consensus_manager_test;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use apollo_reverts::revert_blocks_and_eternal_pending;
@@ -20,15 +21,19 @@ use starknet_consensus::types::ConsensusError;
 use starknet_consensus_orchestrator::cende::CendeAmbassador;
 use starknet_consensus_orchestrator::sequencer_consensus_context::SequencerConsensusContext;
 use starknet_infra_utils::type_name::short_type_name;
+use starknet_l1_gas_price::eth_to_strk_oracle::EthToStrkOracleClient;
 use starknet_sequencer_infra::component_definitions::ComponentStarter;
 use starknet_state_sync_types::communication::SharedStateSyncClient;
 use tracing::info;
 
 use crate::config::ConsensusManagerConfig;
 use crate::metrics::{
+    CONSENSUS_NUM_BLACKLISTED_PEERS,
     CONSENSUS_NUM_CONNECTED_PEERS,
-    CONSENSUS_NUM_RECEIVED_MESSAGES,
-    CONSENSUS_NUM_SENT_MESSAGES,
+    CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES,
+    CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES,
+    CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES,
+    CONSENSUS_VOTES_NUM_SENT_MESSAGES,
 };
 
 #[derive(Clone)]
@@ -54,12 +59,25 @@ impl ConsensusManager {
             self.revert_batcher_blocks(self.config.revert_config.revert_up_to_and_including).await;
         }
 
+        let mut broadcast_metrics_by_topic = HashMap::new();
+        broadcast_metrics_by_topic.insert(
+            Topic::new(self.config.votes_topic.clone()).hash(),
+            BroadcastNetworkMetrics {
+                num_sent_broadcast_messages: CONSENSUS_VOTES_NUM_SENT_MESSAGES,
+                num_received_broadcast_messages: CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES,
+            },
+        );
+        broadcast_metrics_by_topic.insert(
+            Topic::new(self.config.proposals_topic.clone()).hash(),
+            BroadcastNetworkMetrics {
+                num_sent_broadcast_messages: CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES,
+                num_received_broadcast_messages: CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES,
+            },
+        );
         let network_manager_metrics = Some(NetworkMetrics {
             num_connected_peers: CONSENSUS_NUM_CONNECTED_PEERS,
-            broadcast_metrics: Some(BroadcastNetworkMetrics {
-                num_sent_broadcast_messages: CONSENSUS_NUM_SENT_MESSAGES,
-                num_received_broadcast_messages: CONSENSUS_NUM_RECEIVED_MESSAGES,
-            }),
+            num_blacklisted_peers: CONSENSUS_NUM_BLACKLISTED_PEERS,
+            broadcast_metrics_by_topic: Some(broadcast_metrics_by_topic),
             sqmr_metrics: None,
         });
         let mut network_manager =
@@ -122,8 +140,10 @@ impl ConsensusManager {
                 self.config.cende_config.clone(),
                 Arc::clone(&self.class_manager_client),
             )),
-            // TODO(Asmaa): Send EthToStrkOracleClient to the context.
-            None,
+            Some(Arc::new(EthToStrkOracleClient::new(
+                self.config.eth_to_strk_oracle_config.base_url.clone(),
+                self.config.eth_to_strk_oracle_config.headers.clone(),
+            ))),
         );
 
         let network_task = tokio::spawn(network_manager.run());

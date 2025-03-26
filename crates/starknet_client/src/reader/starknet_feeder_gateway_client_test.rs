@@ -57,7 +57,7 @@ fn get_block_url(
 ) -> String {
     let mut url = match block_number_or_latest {
         Some(block_number) => format!("/feeder_gateway/get_block?blockNumber={}", block_number),
-        None => "/feeder_gateway/get_block?blockNumber=latest".to_string(),
+        _ => "/feeder_gateway/get_block?blockNumber=latest".to_string(),
     };
 
     if !use_deprecated_feeder_gateway {
@@ -72,10 +72,47 @@ fn starknet_client() -> StarknetFeederGatewayClient {
         .unwrap()
 }
 
+// TODO(Ayelet): Consider making this function generic for all successful mock responses in this
+// file.
+fn mock_successful_get_block_response(
+    response_file: &str,
+    request_param: Option<u64>,
+    use_deprecated_feeder_gateway: bool,
+) -> mockito::Mock {
+    mock("GET", get_block_url(request_param, use_deprecated_feeder_gateway).as_str())
+        .with_status(200)
+        .with_body(read_resource_file(response_file))
+        .create()
+}
+
+// TODO(Ayelet): Consider making this function generic for all error mock responses in this file.
+fn mock_error_get_block_response(
+    error_response_body: String,
+    request_param: Option<u64>,
+    use_deprecated_feeder_gateway: bool,
+) -> mockito::Mock {
+    mock("GET", get_block_url(request_param, use_deprecated_feeder_gateway).as_str())
+        .with_status(400)
+        .with_body(error_response_body)
+        .create()
+}
+
+fn mock_current_feeder_gateway_invalid_get_latest_block_response() -> mockito::Mock {
+    mock_error_get_block_response(malformed_error(), None, false)
+}
+
 fn block_not_found_error(block_number: i64) -> String {
     let error = StarknetError {
         code: StarknetErrorCode::KnownErrorCode(KnownStarknetErrorCode::BlockNotFound),
         message: format!("Block {} was not found.", block_number),
+    };
+    serde_json::to_string(&error).unwrap()
+}
+
+fn malformed_error() -> String {
+    let error = StarknetError {
+        code: StarknetErrorCode::KnownErrorCode(KnownStarknetErrorCode::MalformedRequest),
+        message: "Malformed request.".to_string(),
     };
     serde_json::to_string(&error).unwrap()
 }
@@ -99,11 +136,21 @@ fn new_urls() {
 #[tokio::test]
 async fn get_latest_block_when_blocks_exists() {
     let starknet_client = starknet_client();
-    let mock_block = mock("GET", get_block_url(None, false).as_str())
-        .with_status(200)
-        .with_body(read_resource_file("reader/block_post_0_13_1.json"))
-        .create();
+    let mock_block =
+        mock_successful_get_block_response("reader/block_post_0_14_0.json", None, false);
     let latest_block = starknet_client.latest_block().await.unwrap();
+    mock_block.assert();
+    assert_eq!(latest_block.unwrap().block_number(), BlockNumber(329526));
+}
+
+#[tokio::test]
+async fn fallback_get_latest_block_when_blocks_exists() {
+    let starknet_client = starknet_client();
+    let mock_fallback_error = mock_current_feeder_gateway_invalid_get_latest_block_response();
+    let mock_block =
+        mock_successful_get_block_response("reader/block_post_0_13_1.json", None, true);
+    let latest_block = starknet_client.latest_block().await.unwrap();
+    mock_fallback_error.assert();
     mock_block.assert();
     assert_eq!(latest_block.unwrap().block_number(), BlockNumber(329525));
 }
@@ -111,11 +158,19 @@ async fn get_latest_block_when_blocks_exists() {
 #[tokio::test]
 async fn get_latest_block_when_no_blocks_exist() {
     let starknet_client = starknet_client();
-    let mock_no_block = mock("GET", get_block_url(None, false).as_str())
-        .with_status(400)
-        .with_body(block_not_found_error(-1))
-        .create();
+    let mock_no_block = mock_error_get_block_response(block_not_found_error(-1), None, false);
     let latest_block = starknet_client.latest_block().await.unwrap();
+    mock_no_block.assert();
+    assert!(latest_block.is_none());
+}
+
+#[tokio::test]
+async fn fallback_get_latest_block_when_no_blocks_exist() {
+    let starknet_client = starknet_client();
+    let mock_fallback_error = mock_current_feeder_gateway_invalid_get_latest_block_response();
+    let mock_no_block = mock_error_get_block_response(block_not_found_error(-1), None, true);
+    let latest_block = starknet_client.latest_block().await.unwrap();
+    mock_fallback_error.assert();
     mock_no_block.assert();
     assert!(latest_block.is_none());
 }
@@ -357,35 +412,54 @@ async fn deprecated_pending_data() {
 #[tokio::test]
 async fn get_block() {
     let starknet_client = starknet_client();
-    let test_cases = vec!["0.13.1", "0.14.0"];
+    let json_filename = "reader/block_post_0_14_0.json";
 
-    for starknet_version in test_cases {
-        let json_filename =
-            format!("reader/block_post_{}.json", starknet_version.replace('.', "_"));
-        let raw_block = read_resource_file(&json_filename);
-        let expected_block: Block = serde_json::from_str(&raw_block).unwrap();
+    let mock_block = mock_successful_get_block_response(json_filename, Some(20), false);
+    let block = starknet_client.block(BlockNumber(20)).await.unwrap().unwrap();
+    mock_block.assert();
 
-        let mock_block = mock("GET", get_block_url(Some(20), false).as_str())
-            .with_status(200)
-            .with_body(&raw_block)
-            .create();
-        let block = starknet_client.block(BlockNumber(20)).await.unwrap().unwrap();
-        mock_block.assert();
+    let expected_block: Block = serde_json::from_str(&read_resource_file(json_filename)).unwrap();
+    assert_eq!(block, expected_block);
+}
 
-        assert_eq!(block, expected_block);
-    }
+#[tokio::test]
+async fn fallback_get_block() {
+    let starknet_client = starknet_client();
+    let json_filename = "reader/block_post_0_13_1.json";
+
+    let mock_fallback_error = mock_error_get_block_response(malformed_error(), Some(20), false);
+    let mock_block = mock_successful_get_block_response(json_filename, Some(20), true);
+    let block = starknet_client.block(BlockNumber(20)).await.unwrap().unwrap();
+    mock_fallback_error.assert();
+    mock_block.assert();
+
+    let expected_block: Block = serde_json::from_str(&read_resource_file(json_filename)).unwrap();
+    assert_eq!(block, expected_block);
 }
 
 // Requesting a block that does not exist, expecting a "Block Not Found" error.
 #[tokio::test]
 async fn get_block_not_found() {
     let starknet_client = starknet_client();
-    let mock_no_block = mock("GET", get_block_url(Some(9999999999), false).as_str())
-        .with_status(400)
-        .with_body(block_not_found_error(9999999999))
-        .create();
+    let mock_no_block =
+        mock_error_get_block_response(block_not_found_error(9999999999), Some(9999999999), false);
     let block = starknet_client.block(BlockNumber(9999999999)).await.unwrap();
     mock_no_block.assert();
+    assert!(block.is_none());
+}
+
+#[tokio::test]
+async fn fallback_get_block_not_found() {
+    let starknet_client = starknet_client();
+
+    let mock_fallback_error =
+        mock_error_get_block_response(malformed_error(), Some(9999999999), false);
+    let mock_no_block =
+        mock_error_get_block_response(block_not_found_error(9999999999), Some(9999999999), true);
+    let block = starknet_client.block(BlockNumber(9999999999)).await.unwrap();
+    mock_fallback_error.assert();
+    mock_no_block.assert();
+
     assert!(block.is_none());
 }
 
@@ -474,6 +548,30 @@ async fn test_unserializable<
     assert_matches!(error, ReaderClientError::SerdeError(_));
 }
 
+async fn fallback_test_unserializable<
+    Output: Send + Debug,
+    Fut: Future<Output = ReaderClientResult<Output>>,
+    F: FnOnce(StarknetFeederGatewayClient) -> Fut,
+>(
+    block_number: Option<u64>,
+    call_method: F,
+) {
+    let starknet_client = starknet_client();
+
+    let mock_fallback_error = mock_error_get_block_response(malformed_error(), block_number, false);
+    let mock_success_response = mock("GET", get_block_url(block_number, true).as_str())
+        .with_status(200)
+        .with_body("body")
+        .create();
+
+    let error = call_method(starknet_client).await.unwrap_err();
+
+    mock_fallback_error.assert();
+    mock_success_response.assert();
+
+    assert_matches!(error, ReaderClientError::SerdeError(_));
+}
+
 #[tokio::test]
 async fn latest_block_unserializable() {
     test_unserializable(&get_block_url(None, false), |starknet_client| async move {
@@ -483,8 +581,24 @@ async fn latest_block_unserializable() {
 }
 
 #[tokio::test]
+async fn fallback_latest_block_unserializable() {
+    fallback_test_unserializable(None, |starknet_client| async move {
+        starknet_client.latest_block().await
+    })
+    .await
+}
+
+#[tokio::test]
 async fn block_unserializable() {
     test_unserializable(&get_block_url(Some(20), false), |starknet_client| async move {
+        starknet_client.block(BlockNumber(20)).await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn fallback_block_unserializable() {
+    fallback_test_unserializable(Some(20), |starknet_client| async move {
         starknet_client.block(BlockNumber(20)).await
     })
     .await

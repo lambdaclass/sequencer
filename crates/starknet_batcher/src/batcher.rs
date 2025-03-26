@@ -179,6 +179,14 @@ impl Batcher {
             propose_block_input.retrospective_block_hash,
         )?;
 
+        // TODO(yair): extract function for the following calls, use join_all.
+        self.mempool_client.commit_block(CommitBlockArgs::default()).await.map_err(|err| {
+            error!(
+                "Mempool is not ready to start proposal {}: {}.",
+                propose_block_input.proposal_id, err
+            );
+            BatcherError::NotReady
+        })?;
         self.mempool_client
             .update_gas_price(
                 propose_block_input.block_info.gas_prices.strk_gas_prices.l2_gas_price,
@@ -547,7 +555,10 @@ impl Batcher {
         accepted_l1_handler_tx_hashes: IndexSet<TransactionHash>,
         rejected_tx_hashes: HashSet<TransactionHash>,
     ) -> BatcherResult<()> {
-        info!("Committing block at height {} and notifying mempool of the block.", height);
+        info!(
+            "Committing block at height {} and notifying mempool & L1 event provider of the block.",
+            height
+        );
         trace!("Rejected transactions: {:#?}, State diff: {:#?}.", rejected_tx_hashes, state_diff);
 
         // Commit the proposal to the storage and notify the mempool.

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use blockifier::blockifier_versioned_constants::VersionedConstants;
-use blockifier::execution::call_info::Retdata;
 use cairo_vm::serde::deserialize_program::Member;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout_name::LayoutName;
@@ -10,11 +9,17 @@ use cairo_vm::types::relocatable::{MaybeRelocatable, Relocatable};
 use cairo_vm::utils::is_subsequence;
 use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner};
 use cairo_vm::vm::vm_core::VirtualMachine;
+use log::{debug, info};
 use serde_json::Value;
 use starknet_types_core::felt::Felt;
 
 use crate::hint_processor::snos_hint_processor::SnosHintProcessor;
-use crate::test_utils::errors::{Cairo0EntryPointRunnerError, ExplicitArgError, ImplicitArgError};
+use crate::test_utils::errors::{
+    Cairo0EntryPointRunnerError,
+    ExplicitArgError,
+    ImplicitArgError,
+    LoadReturnValueError,
+};
 
 pub type Cairo0EntryPointRunnerResult<T> = Result<T, Cairo0EntryPointRunnerError>;
 
@@ -23,7 +28,7 @@ pub type Cairo0EntryPointRunnerResult<T> = Result<T, Cairo0EntryPointRunnerError
 mod test;
 
 /// An arg passed by value (i.e., a felt, tuple, named tuple or struct).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ValueArg {
     Single(Felt),
     Array(Vec<Felt>),
@@ -32,13 +37,13 @@ pub enum ValueArg {
 
 /// An arg passed as a pointer. i.e., a pointer to a felt, tuple, named tuple or struct, or a
 /// pointer to a pointer.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PointerArg {
     Array(Vec<Felt>),
     Composed(Vec<EndpointArg>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EndpointArg {
     Value(ValueArg),
     Pointer(PointerArg),
@@ -80,12 +85,38 @@ impl EndpointArg {
             },
         }
     }
+
+    /// Returns the size of the space the arg occupies on the stack (not including referenced
+    /// addresses).
+    fn memory_length(&self) -> usize {
+        match self {
+            Self::Value(value_arg) => match value_arg {
+                ValueArg::Single(_) => 1,
+                ValueArg::Array(array) => array.len(),
+                ValueArg::Composed(endpoint_args) => {
+                    endpoint_args.iter().map(Self::memory_length).sum()
+                }
+            },
+            Self::Pointer(_) => 1,
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ImplicitArg {
     Builtin(BuiltinName),
     NonBuiltin(EndpointArg),
+}
+
+impl ImplicitArg {
+    /// Returns the size of the space the arg occupies on the stack (not including referenced
+    /// addresses).
+    fn memory_length(&self) -> usize {
+        match self {
+            Self::Builtin(_) => 1,
+            Self::NonBuiltin(endpoint_arg) => endpoint_arg.memory_length(),
+        }
+    }
 }
 
 /// Performs basic validations on the cairo arg. Assumes the arg is not a builtin.
@@ -251,7 +282,9 @@ fn convert_implicit_args_to_cairo_args(
     implicit_args
         .iter()
         .flat_map(|arg| match arg {
-            ImplicitArg::Builtin(builtin) => vec![CairoArg::from(all_builtin_map[builtin].clone())],
+            ImplicitArg::Builtin(builtin) => {
+                all_builtin_map[builtin].iter().map(|b| b.clone().into()).collect()
+            }
             ImplicitArg::NonBuiltin(endpoint_arg) => EndpointArg::to_cairo_arg_vec(endpoint_arg),
         })
         .collect()
@@ -286,18 +319,147 @@ fn get_ordered_builtins() -> Cairo0EntryPointRunnerResult<Vec<BuiltinName>> {
     Ok(ordered_builtins)
 }
 
+/// A helper function for `load_endpoint_arg_from_address`.
+/// Loads a sequence of felts from memory and returns it.
+fn load_sequence_of_felts(
+    length: usize,
+    address: Relocatable,
+    vm: &VirtualMachine,
+) -> Result<Vec<Felt>, LoadReturnValueError> {
+    let mut felt_array = vec![];
+    for i in 0..length {
+        felt_array.push(vm.get_integer((address + i)?)?.into_owned());
+    }
+    Ok(felt_array)
+}
+
+/// A helper function for `load_endpoint_arg_from_address`.
+/// Loads a sequence of endpoint args from memory and returns it, together with the first address
+/// after the sequence.
+fn load_sequence_of_endpoint_args(
+    sequence: &[EndpointArg],
+    address: Relocatable,
+    vm: &VirtualMachine,
+) -> Result<(Vec<EndpointArg>, Relocatable), LoadReturnValueError> {
+    let mut current_address = address;
+    let mut endpoint_args = vec![];
+    for endpoint_arg in sequence.iter() {
+        let (value, next_address) =
+            load_endpoint_arg_from_address(endpoint_arg, current_address, vm)?;
+        endpoint_args.push(value);
+        current_address = next_address;
+    }
+    Ok((endpoint_args, current_address))
+}
+
+/// Loads a value from the VM and returns it, together with the address after said value.
+/// Note - the values inside `value_structure` are ignored.
+fn load_endpoint_arg_from_address(
+    value_structure: &EndpointArg,
+    address: Relocatable,
+    vm: &VirtualMachine,
+) -> Result<(EndpointArg, Relocatable), LoadReturnValueError> {
+    let value_size = value_structure.memory_length();
+    match value_structure {
+        EndpointArg::Value(value_arg) => match value_arg {
+            ValueArg::Single(_) => Ok((
+                EndpointArg::Value(ValueArg::Single(vm.get_integer(address)?.into_owned())),
+                (address + value_size)?,
+            )),
+            ValueArg::Array(array) => {
+                let felt_array = load_sequence_of_felts(array.len(), address, vm)?;
+                Ok((EndpointArg::Value(ValueArg::Array(felt_array)), (address + value_size)?))
+            }
+            ValueArg::Composed(endpoint_args) => {
+                let (endpoint_arg_array, next_address) =
+                    load_sequence_of_endpoint_args(endpoint_args, address, vm)?;
+                Ok((EndpointArg::Value(ValueArg::Composed(endpoint_arg_array)), next_address))
+            }
+        },
+        EndpointArg::Pointer(pointer_arg) => match pointer_arg {
+            PointerArg::Array(array) => {
+                let array_pointer = vm.get_relocatable(address)?;
+                let felt_array = load_sequence_of_felts(array.len(), array_pointer, vm)?;
+                Ok((EndpointArg::Pointer(PointerArg::Array(felt_array)), (address + value_size)?))
+            }
+            PointerArg::Composed(endpoint_args) => {
+                let (endpoint_arg_array, _) = load_sequence_of_endpoint_args(
+                    endpoint_args,
+                    vm.get_relocatable(address)?,
+                    vm,
+                )?;
+                Ok((
+                    EndpointArg::Pointer(PointerArg::Composed(endpoint_arg_array)),
+                    (address + value_size)?,
+                ))
+            }
+        },
+    }
+}
+
+/// Loads the explicit and implicit return values from the VM.
+/// The implicit & explicit return values params are used to determine the return
+/// values' structures (their values are ignored).
+fn get_return_values(
+    implicit_return_values_structures: &[ImplicitArg],
+    explicit_return_values_structures: &[EndpointArg],
+    vm: &VirtualMachine,
+) -> Result<(Vec<ImplicitArg>, Vec<EndpointArg>), LoadReturnValueError> {
+    let return_args_len = implicit_return_values_structures
+        .iter()
+        .map(ImplicitArg::memory_length)
+        .sum::<usize>()
+        + explicit_return_values_structures.iter().map(EndpointArg::memory_length).sum::<usize>();
+    let return_values_address = (vm.get_ap() - return_args_len)?;
+    let mut current_address = return_values_address;
+
+    let mut implicit_return_values: Vec<ImplicitArg> = vec![];
+    for (i, implicit_arg) in implicit_return_values_structures.iter().enumerate() {
+        debug!("Loading implicit return value {}. Value: {:?}", i, implicit_arg);
+        match implicit_arg {
+            ImplicitArg::Builtin(builtin) => {
+                implicit_return_values.push(ImplicitArg::Builtin(*builtin));
+                current_address = (current_address + implicit_arg.memory_length())?;
+            }
+            ImplicitArg::NonBuiltin(non_builtin_return_value) => {
+                let (value, next_arg_address) =
+                    load_endpoint_arg_from_address(non_builtin_return_value, current_address, vm)?;
+                implicit_return_values.push(ImplicitArg::NonBuiltin(value));
+                current_address = next_arg_address;
+            }
+        }
+    }
+    info!("Successfully loaded implicit return values.");
+
+    let mut explicit_return_values: Vec<EndpointArg> = vec![];
+    for (i, expected_return_value) in explicit_return_values_structures.iter().enumerate() {
+        debug!("Loading explicit return value {}. Value: {:?}", i, expected_return_value);
+        let (value, next_arg_address) =
+            load_endpoint_arg_from_address(expected_return_value, current_address, vm)?;
+        explicit_return_values.push(value);
+        current_address = next_arg_address;
+    }
+    info!("Successfully loaded explicit return values.");
+
+    Ok((implicit_return_values, explicit_return_values))
+}
+
+// TODO(Amos): Add logs to the runner.
+// TODO(Amos): Return different errors in different stages of the runner, for easier debugging.
+// e.g., `ReturnValueError`.
 pub fn run_cairo_0_entry_point(
     program_str: &str,
     entrypoint: &str,
-    n_expected_return_values: usize,
     explicit_args: &[EndpointArg],
     implicit_args: &[ImplicitArg],
-) -> Cairo0EntryPointRunnerResult<Retdata> {
+    expected_explicit_return_values: &[EndpointArg],
+) -> Cairo0EntryPointRunnerResult<(Vec<ImplicitArg>, Vec<EndpointArg>)> {
     let ordered_builtins = get_ordered_builtins()?;
     let program = inject_builtins(program_str, &ordered_builtins, entrypoint)?;
     let (state_reader, os_input) = (None, None);
     let mut hint_processor =
         SnosHintProcessor::new_for_testing(state_reader, os_input, Some(program.clone()));
+    info!("Program and Hint processor created successfully.");
 
     // TODO(Amos): Perform complete validations.
     perform_basic_validations_on_explicit_args(explicit_args, &program, entrypoint)?;
@@ -307,50 +469,42 @@ pub fn run_cairo_0_entry_point(
         entrypoint,
         &ordered_builtins,
     )?;
+    info!("Performed basic validations on explicit & implicit args.");
 
     let proof_mode = false;
     let trace_enabled = true;
     let mut cairo_runner =
         CairoRunner::new(&program, LayoutName::all_cairo, proof_mode, trace_enabled).unwrap();
-
     let allow_missing_builtins = false;
     cairo_runner.initialize_builtins(allow_missing_builtins).unwrap();
     let program_base: Option<Relocatable> = None;
     cairo_runner.initialize_segments(program_base);
+    info!("Created and initialized Cairo runner.");
 
     let explicit_cairo_args: Vec<CairoArg> =
         explicit_args.iter().flat_map(EndpointArg::to_cairo_arg_vec).collect();
-
     let implicit_cairo_args =
         convert_implicit_args_to_cairo_args(implicit_args, &cairo_runner.vm, &ordered_builtins);
-
     let entrypoint_args: Vec<&CairoArg> =
         implicit_cairo_args.iter().chain(explicit_cairo_args.iter()).collect();
+    info!("Converted explicit & implicit args to Cairo args.");
 
     let verify_secure = true;
     let program_segment_size: Option<usize> = None;
-    cairo_runner.run_from_entrypoint(
-        program
-            .get_identifier(&format!("__main__.{}", entrypoint))
-            .unwrap_or_else(|| panic!("entrypoint {} not found.", entrypoint))
-            .pc
-            .unwrap(),
-        &entrypoint_args,
-        verify_secure,
-        program_segment_size,
-        &mut hint_processor,
-    )?;
+    cairo_runner
+        .run_from_entrypoint(
+            program
+                .get_identifier(&format!("__main__.{}", entrypoint))
+                .unwrap_or_else(|| panic!("entrypoint {} not found.", entrypoint))
+                .pc
+                .unwrap(),
+            &entrypoint_args,
+            verify_secure,
+            program_segment_size,
+            &mut hint_processor,
+        )
+        .map_err(Cairo0EntryPointRunnerError::RunCairoEndpoint)?;
+    info!("Successfully finished running entrypoint {}", entrypoint);
 
-    // TODO(Amos): Return implicit arguments, once the runner supports returning non-felt types.
-    let return_values = cairo_runner.vm.get_return_values(n_expected_return_values).unwrap();
-    Ok(Retdata(
-        return_values
-            .into_iter()
-            .map(|m| {
-                // TODO(Amos): Support returning types other than felts.
-                m.get_int()
-                    .unwrap_or_else(|| panic!("Could not convert return data {:?} to integer.", m))
-            })
-            .collect(),
-    ))
+    Ok(get_return_values(implicit_args, expected_explicit_return_values, &cairo_runner.vm)?)
 }

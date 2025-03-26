@@ -57,6 +57,7 @@ use crate::config::{CentralSyncClientConfig, StateSyncConfig};
 use crate::metrics::{
     STATE_SYNC_P2P_NUM_ACTIVE_INBOUND_SESSIONS,
     STATE_SYNC_P2P_NUM_ACTIVE_OUTBOUND_SESSIONS,
+    STATE_SYNC_P2P_NUM_BLACKLISTED_PEERS,
     STATE_SYNC_P2P_NUM_CONNECTED_PEERS,
 };
 
@@ -157,7 +158,8 @@ impl StateSyncRunner {
 
         let network_manager_metrics = Some(NetworkMetrics {
             num_connected_peers: STATE_SYNC_P2P_NUM_CONNECTED_PEERS,
-            broadcast_metrics: None,
+            num_blacklisted_peers: STATE_SYNC_P2P_NUM_BLACKLISTED_PEERS,
+            broadcast_metrics_by_topic: None,
             sqmr_metrics: Some(SqmrNetworkMetrics {
                 num_active_inbound_sessions: STATE_SYNC_P2P_NUM_ACTIVE_INBOUND_SESSIONS,
                 num_active_outbound_sessions: STATE_SYNC_P2P_NUM_ACTIVE_OUTBOUND_SESSIONS,

@@ -3,8 +3,9 @@ mod test;
 
 use async_trait::async_trait;
 use papyrus_network::network_manager::{BroadcastTopicClient, BroadcastTopicClientTrait};
+use papyrus_network_types::network_types::BroadcastedMessageMetadata;
 use papyrus_protobuf::mempool::RpcTransactionBatch;
-use starknet_api::rpc_transaction::RpcTransaction;
+use starknet_api::rpc_transaction::{InternalRpcTransaction, RpcTransaction};
 use starknet_class_manager_types::transaction_converter::TransactionConverterTrait;
 use starknet_mempool_p2p_types::communication::{
     MempoolP2pPropagatorRequest,
@@ -14,7 +15,10 @@ use starknet_mempool_p2p_types::errors::MempoolP2pPropagatorError;
 use starknet_mempool_p2p_types::mempool_p2p_types::MempoolP2pPropagatorResult;
 use starknet_sequencer_infra::component_definitions::{ComponentRequestHandler, ComponentStarter};
 use starknet_sequencer_infra::component_server::{LocalComponentServer, RemoteComponentServer};
+use starknet_sequencer_metrics::metrics::LossyIntoF64;
 use tracing::{debug, info, warn};
+
+use crate::metrics::MEMPOOL_P2P_BROADCASTED_BATCH_SIZE;
 
 pub struct MempoolP2pPropagator {
     broadcast_topic_client: BroadcastTopicClient<RpcTransactionBatch>,
@@ -29,6 +33,7 @@ impl MempoolP2pPropagator {
         transaction_converter: Box<dyn TransactionConverterTrait + Send>,
         max_transaction_batch_size: usize,
     ) -> Self {
+        MEMPOOL_P2P_BROADCASTED_BATCH_SIZE.register();
         Self {
             broadcast_topic_client,
             transaction_converter,
@@ -48,39 +53,14 @@ impl ComponentRequestHandler<MempoolP2pPropagatorRequest, MempoolP2pPropagatorRe
     ) -> MempoolP2pPropagatorResponse {
         match request {
             MempoolP2pPropagatorRequest::AddTransaction(transaction) => {
-                info!("Received a new transaction to broadcast to other mempool peers");
-                debug!("broadcasted tx_hash: {:?}", transaction.tx_hash);
-                let transaction = match self
-                    .transaction_converter
-                    .convert_internal_rpc_tx_to_rpc_tx(transaction)
-                    .await
-                {
-                    Ok(transaction) => transaction,
-                    Err(err) => {
-                        return MempoolP2pPropagatorResponse::AddTransaction(Err(
-                            MempoolP2pPropagatorError::TransactionConversionError(err.to_string()),
-                        ));
-                    }
-                };
-
-                self.transaction_queue.push(transaction);
-                if self.transaction_queue.len() == self.max_transaction_batch_size {
-                    info!("Transaction batch is full. Broadcasting the transaction batch");
-                    return MempoolP2pPropagatorResponse::AddTransaction(
-                        self.broadcast_queued_transactions().await,
-                    );
-                }
-                MempoolP2pPropagatorResponse::AddTransaction(Ok(()))
+                MempoolP2pPropagatorResponse::AddTransaction(
+                    self.add_transaction(transaction).await,
+                )
             }
-            MempoolP2pPropagatorRequest::ContinuePropagation(propagation_manager) => {
-                info!("Continuing propagation of received transaction");
-                debug!("Propagated transaction metadata: {:?}", propagation_manager);
-                let result = self
-                    .broadcast_topic_client
-                    .continue_propagation(&propagation_manager)
-                    .await
-                    .map_err(|_| MempoolP2pPropagatorError::NetworkSendError);
-                MempoolP2pPropagatorResponse::ContinuePropagation(result)
+            MempoolP2pPropagatorRequest::ContinuePropagation(broadcasted_message_metadata) => {
+                MempoolP2pPropagatorResponse::ContinuePropagation(
+                    self.continue_propagation(broadcasted_message_metadata).await,
+                )
             }
             MempoolP2pPropagatorRequest::BroadcastQueuedTransactions() => {
                 MempoolP2pPropagatorResponse::BroadcastQueuedTransactions(
@@ -92,9 +72,51 @@ impl ComponentRequestHandler<MempoolP2pPropagatorRequest, MempoolP2pPropagatorRe
 }
 
 impl MempoolP2pPropagator {
-    async fn broadcast_queued_transactions(&mut self) -> MempoolP2pPropagatorResult<()> {
+    async fn add_transaction(
+        &mut self,
+        transaction: InternalRpcTransaction,
+    ) -> MempoolP2pPropagatorResult<()> {
+        info!("Received a new transaction to broadcast to other mempool peers");
+        debug!("broadcasted tx_hash: {:?}", transaction.tx_hash);
+        let transaction =
+            match self.transaction_converter.convert_internal_rpc_tx_to_rpc_tx(transaction).await {
+                Ok(transaction) => transaction,
+                Err(err) => {
+                    return Err(MempoolP2pPropagatorError::TransactionConversionError(
+                        err.to_string(),
+                    ));
+                }
+            };
+
+        self.transaction_queue.push(transaction);
+        if self.transaction_queue.len() == self.max_transaction_batch_size {
+            info!("Transaction batch is full. Broadcasting the transaction batch");
+            return self.broadcast_queued_transactions().await;
+        }
+        Ok(())
+    }
+
+    async fn continue_propagation(
+        &mut self,
+        broadcasted_message_metadata: BroadcastedMessageMetadata,
+    ) -> MempoolP2pPropagatorResult<()> {
+        info!("Continuing propagation of received transaction");
+        debug!("Propagated transaction metadata: {:?}", broadcasted_message_metadata);
         self.broadcast_topic_client
-            .broadcast_message(RpcTransactionBatch(self.transaction_queue.drain(..).collect()))
+            .continue_propagation(&broadcasted_message_metadata)
+            .await
+            .map_err(|_| MempoolP2pPropagatorError::NetworkSendError)
+    }
+
+    async fn broadcast_queued_transactions(&mut self) -> MempoolP2pPropagatorResult<()> {
+        let queued_transactions: Vec<RpcTransaction> = self.transaction_queue.drain(..).collect();
+        if queued_transactions.is_empty() {
+            return Ok(());
+        }
+        let number_of_transactions_in_batch = queued_transactions.len().into_f64();
+        let result = self
+            .broadcast_topic_client
+            .broadcast_message(RpcTransactionBatch(queued_transactions))
             .await
             .or_else(|err| {
                 if !err.is_full() {
@@ -105,7 +127,9 @@ impl MempoolP2pPropagator {
                      full. Dropping the transaction batch."
                 );
                 Ok(())
-            })
+            });
+        MEMPOOL_P2P_BROADCASTED_BATCH_SIZE.record(number_of_transactions_in_batch);
+        result
     }
 }
 

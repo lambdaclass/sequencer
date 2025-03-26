@@ -26,6 +26,7 @@ pub(crate) enum Scope {
     Preimage,
     SerializeDataAvailabilityCreatePages,
     StateUpdatePointers,
+    SyscallHandlerType,
     Transactions,
     Tx,
     UseKzgDa,
@@ -53,6 +54,7 @@ impl From<Scope> for &'static str {
                 "__serialize_data_availability_create_pages__"
             }
             Scope::StateUpdatePointers => "state_update_pointers",
+            Scope::SyscallHandlerType => "syscall_handler_type",
             Scope::Transactions => "transactions",
             Scope::Tx => "tx",
             Scope::UseKzgDa => "use_kzg_da",
@@ -74,12 +76,13 @@ impl From<Scope> for String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Ids {
     AliasesEntry,
     Bit,
     BucketIndex,
     BuiltinCosts,
+    BuiltinPtrs,
     CompiledClass,
     CompiledClassFact,
     CompressedDst,
@@ -120,12 +123,15 @@ pub enum Ids {
     PrevValue,
     RangeCheck96Ptr,
     RemainingGas,
+    ResourceBounds,
     Request,
+    Res,
     Sha256Ptr,
     StateEntry,
     StateUpdatesStart,
     SyscallPtr,
     TransactionHash,
+    TxType,
     UseKzgDa,
     Value,
 }
@@ -137,6 +143,7 @@ impl From<Ids> for &'static str {
             Ids::Bit => "bit",
             Ids::BucketIndex => "bucket_index",
             Ids::BuiltinCosts => "builtin_costs",
+            Ids::BuiltinPtrs => "builtin_ptrs",
             Ids::CompiledClass => "compiled_class",
             Ids::CompiledClassFact => "compiled_class_fact",
             Ids::CompressedDst => "compressed_dst",
@@ -177,12 +184,15 @@ impl From<Ids> for &'static str {
             Ids::PrevValue => "prev_value",
             Ids::RangeCheck96Ptr => "range_check96_ptr",
             Ids::RemainingGas => "remaining_gas",
+            Ids::ResourceBounds => "resource_bounds,",
             Ids::Request => "request",
+            Ids::Res => "res",
             Ids::Sha256Ptr => "sha256_ptr",
             Ids::StateEntry => "state_entry",
             Ids::StateUpdatesStart => "state_updates_start",
             Ids::SyscallPtr => "syscall_ptr",
             Ids::TransactionHash => "transaction_hash",
+            Ids::TxType => "tx_type",
             Ids::UseKzgDa => "use_kzg_da",
             Ids::Value => "value",
         }
@@ -197,6 +207,7 @@ pub enum Const {
     BlobLength,
     BlockHashContractAddress,
     CompiledClassVersion,
+    DeprecatedCompiledClassVersion,
     EntryPointInitialBudget,
     InitialAvailableAlias,
     MerkleHeight,
@@ -221,6 +232,10 @@ impl From<Const> for &'static str {
             }
             Const::CompiledClassVersion => {
                 "starkware.starknet.core.os.contract_class.compiled_class.COMPILED_CLASS_VERSION"
+            }
+            Const::DeprecatedCompiledClassVersion => {
+                "starkware.starknet.core.os.contract_class.deprecated_compiled_class.\
+                 DEPRECATED_COMPILED_CLASS_VERSION"
             }
             Const::InitialAvailableAlias => {
                 "starkware.starknet.core.os.state.aliases.INITIAL_AVAILABLE_ALIAS"
@@ -274,18 +289,24 @@ impl Const {
 #[derive(Copy, Clone)]
 pub enum CairoStruct {
     BigInt3,
+    BuiltinPointersPtr,
     CompiledClass,
     CompiledClassEntryPoint,
     CompiledClassFact,
     DeprecatedCompiledClass,
     DeprecatedCompiledClassFact,
+    DeprecatedContractEntryPoint,
     DictAccess,
     ExecutionContext,
     NodeEdge,
+    NonSelectableBuiltins,
     OsStateUpdate,
+    ResourceBounds,
+    SelectableBuiltins,
     StateEntry,
     StorageReadPtr,
     StorageReadRequestPtr,
+    StorageWritePtr,
 }
 
 impl From<CairoStruct> for &'static str {
@@ -293,6 +314,9 @@ impl From<CairoStruct> for &'static str {
         match struct_name {
             CairoStruct::BigInt3 => {
                 "starkware.starknet.core.os.data_availability.bls_field.BigInt3"
+            }
+            CairoStruct::BuiltinPointersPtr => {
+                "starkware.starknet.core.os.builtins.BuiltinPointers*"
             }
             CairoStruct::CompiledClass => {
                 "starkware.starknet.core.os.contract_class.compiled_class.CompiledClass"
@@ -311,16 +335,30 @@ impl From<CairoStruct> for &'static str {
                 "starkware.starknet.core.os.contract_class.deprecated_compiled_class.\
                  DeprecatedCompiledClassFact"
             }
+            CairoStruct::DeprecatedContractEntryPoint => {
+                "starkware.starknet.core.os.contract_class.deprecated_compiled_class.\
+                 DeprecatedContractEntryPoint"
+            }
             CairoStruct::DictAccess => "starkware.cairo.common.dict_access.DictAccess",
             CairoStruct::ExecutionContext => {
                 "starkware.starknet.core.os.execution.execute_entry_point.ExecutionContext"
             }
             CairoStruct::NodeEdge => "starkware.cairo.common.patricia_utils.NodeEdge",
+            CairoStruct::NonSelectableBuiltins => {
+                "starkware.starknet.core.os.builtins.NonSelectableBuiltins"
+            }
             CairoStruct::OsStateUpdate => "starkware.starknet.core.os.state.state.OsStateUpdate",
+            CairoStruct::ResourceBounds => "starkware.starknet.common.new_syscalls.ResourceBounds",
+            CairoStruct::SelectableBuiltins => {
+                "starkware.starknet.core.os.builtins.SelectableBuiltins"
+            }
             CairoStruct::StateEntry => "starkware.starknet.core.os.state.state.StateEntry",
             CairoStruct::StorageReadPtr => "starkware.starknet.common.syscalls.StorageRead*",
             CairoStruct::StorageReadRequestPtr => {
                 "starkware.starknet.core.os.storage.StorageReadRequest*"
+            }
+            CairoStruct::StorageWritePtr => {
+                "starkware.starknet.common.syscalls.StorageWriteRequest*"
             }
         }
     }

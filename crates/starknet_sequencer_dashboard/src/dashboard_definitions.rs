@@ -24,10 +24,14 @@ use starknet_consensus::metrics::{
 };
 use starknet_consensus_manager::metrics::{
     CONSENSUS_NUM_CONNECTED_PEERS,
-    CONSENSUS_NUM_RECEIVED_MESSAGES,
-    CONSENSUS_NUM_SENT_MESSAGES,
+    CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES,
+    CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES,
+    CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES,
+    CONSENSUS_VOTES_NUM_SENT_MESSAGES,
 };
 use starknet_gateway::metrics::{
+    GATEWAY_ADD_TX_LATENCY,
+    GATEWAY_VALIDATE_TX_LATENCY,
     LABEL_NAME_SOURCE,
     LABEL_NAME_TX_TYPE as GATEWAY_LABEL_NAME_TX_TYPE,
     TRANSACTIONS_FAILED,
@@ -48,6 +52,7 @@ use starknet_mempool::metrics::{
     TRANSACTION_TIME_SPENT_IN_MEMPOOL,
 };
 use starknet_mempool_p2p::metrics::{
+    MEMPOOL_P2P_BROADCASTED_BATCH_SIZE,
     MEMPOOL_P2P_NUM_CONNECTED_PEERS,
     MEMPOOL_P2P_NUM_RECEIVED_MESSAGES,
     MEMPOOL_P2P_NUM_SENT_MESSAGES,
@@ -116,12 +121,18 @@ const PANEL_MEMPOOL_P2P_NUM_SENT_MESSAGES: Panel =
     Panel::from_counter(MEMPOOL_P2P_NUM_SENT_MESSAGES, PanelType::Stat);
 const PANEL_MEMPOOL_P2P_NUM_RECEIVED_MESSAGES: Panel =
     Panel::from_counter(MEMPOOL_P2P_NUM_RECEIVED_MESSAGES, PanelType::Stat);
+const PANEL_MEMPOOL_P2P_BROADCASTED_BATCH_SIZE: Panel =
+    Panel::from_hist(MEMPOOL_P2P_BROADCASTED_BATCH_SIZE, PanelType::Stat);
 const PANEL_CONSENSUS_NUM_CONNECTED_PEERS: Panel =
     Panel::from_gauge(CONSENSUS_NUM_CONNECTED_PEERS, PanelType::Stat);
-const PANEL_CONSENSUS_NUM_SENT_MESSAGES: Panel =
-    Panel::from_counter(CONSENSUS_NUM_SENT_MESSAGES, PanelType::Stat);
-const PANEL_CONSENSUS_NUM_RECEIVED_MESSAGES: Panel =
-    Panel::from_counter(CONSENSUS_NUM_RECEIVED_MESSAGES, PanelType::Stat);
+const PANEL_CONSENSUS_VOTES_NUM_SENT_MESSAGES: Panel =
+    Panel::from_counter(CONSENSUS_VOTES_NUM_SENT_MESSAGES, PanelType::Stat);
+const PANEL_CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES: Panel =
+    Panel::from_counter(CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES, PanelType::Stat);
+const PANEL_CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES: Panel =
+    Panel::from_counter(CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES, PanelType::Stat);
+const PANEL_CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES: Panel =
+    Panel::from_counter(CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES, PanelType::Stat);
 const PANEL_STATE_SYNC_P2P_NUM_CONNECTED_PEERS: Panel =
     Panel::from_gauge(STATE_SYNC_P2P_NUM_CONNECTED_PEERS, PanelType::Stat);
 const PANEL_STATE_SYNC_P2P_NUM_ACTIVE_INBOUND_SESSIONS: Panel =
@@ -146,6 +157,20 @@ const PANEL_GATEWAY_TRANSACTIONS_RECEIVED_RATE: Panel = Panel::new(
     "gateway_transactions_received_rate (TPS)",
     "The rate of transactions received by the gateway during the last 20 minutes",
     formatcp!("sum(rate({}[20m]))", TRANSACTIONS_RECEIVED.get_name()),
+    PanelType::Graph,
+);
+
+const PANEL_GATEWAY_ADD_TX_LATENCY: Panel = Panel::new(
+    GATEWAY_ADD_TX_LATENCY.get_name(),
+    GATEWAY_ADD_TX_LATENCY.get_description(),
+    formatcp!("avg_over_time({}[2m])", GATEWAY_ADD_TX_LATENCY.get_name()),
+    PanelType::Graph,
+);
+
+const PANEL_GATEWAY_VALIDATE_TX_LATENCY: Panel = Panel::new(
+    GATEWAY_VALIDATE_TX_LATENCY.get_name(),
+    GATEWAY_VALIDATE_TX_LATENCY.get_description(),
+    formatcp!("avg_over_time({}[2m])", GATEWAY_VALIDATE_TX_LATENCY.get_name()),
     PanelType::Graph,
 );
 
@@ -230,27 +255,30 @@ const PANEL_MEMPOOL_TRANSACTION_TIME_SPENT: Panel = Panel::new(
     PanelType::Graph,
 );
 
-const MEMPOOL_P2P_ROW: Row<'_> = Row::new(
+const MEMPOOL_P2P_ROW: Row = Row::new(
     "MempoolP2p",
     "Mempool peer to peer metrics",
     &[
         PANEL_MEMPOOL_P2P_NUM_CONNECTED_PEERS,
         PANEL_MEMPOOL_P2P_NUM_SENT_MESSAGES,
         PANEL_MEMPOOL_P2P_NUM_RECEIVED_MESSAGES,
+        PANEL_MEMPOOL_P2P_BROADCASTED_BATCH_SIZE,
     ],
 );
 
-const CONSENSUS_P2P_ROW: Row<'_> = Row::new(
+const CONSENSUS_P2P_ROW: Row = Row::new(
     "ConsensusP2p",
     "Consensus peer to peer metrics",
     &[
         PANEL_CONSENSUS_NUM_CONNECTED_PEERS,
-        PANEL_CONSENSUS_NUM_SENT_MESSAGES,
-        PANEL_CONSENSUS_NUM_RECEIVED_MESSAGES,
+        PANEL_CONSENSUS_VOTES_NUM_SENT_MESSAGES,
+        PANEL_CONSENSUS_VOTES_NUM_RECEIVED_MESSAGES,
+        PANEL_CONSENSUS_PROPOSALS_NUM_SENT_MESSAGES,
+        PANEL_CONSENSUS_PROPOSALS_NUM_RECEIVED_MESSAGES,
     ],
 );
 
-const STATE_SYNC_P2P_ROW: Row<'_> = Row::new(
+const STATE_SYNC_P2P_ROW: Row = Row::new(
     "StateSyncP2p",
     "State sync peer to peer metrics",
     &[
@@ -260,7 +288,7 @@ const STATE_SYNC_P2P_ROW: Row<'_> = Row::new(
     ],
 );
 
-const BATCHER_ROW: Row<'_> = Row::new(
+const BATCHER_ROW: Row = Row::new(
     "Batcher",
     "Batcher metrics including proposals and transactions",
     &[
@@ -272,7 +300,7 @@ const BATCHER_ROW: Row<'_> = Row::new(
     ],
 );
 
-const CONSENSUS_ROW: Row<'_> = Row::new(
+const CONSENSUS_ROW: Row = Row::new(
     "Consensus",
     "Consensus metrics including block number, round, and so on.",
     &[
@@ -292,25 +320,27 @@ const CONSENSUS_ROW: Row<'_> = Row::new(
     ],
 );
 
-const HTTP_SERVER_ROW: Row<'_> = Row::new(
+const HTTP_SERVER_ROW: Row = Row::new(
     "Http Server",
     "Http Server metrics including added transactions",
     &[PANEL_ADDED_TRANSACTIONS_TOTAL],
 );
 
-pub const GATEWAY_ROW: Row<'_> = Row::new(
+pub const GATEWAY_ROW: Row = Row::new(
     "Gateway",
     "Gateway metrics",
     &[
         PANEL_GATEWAY_TRANSACTIONS_RECEIVED_BY_TYPE,
         PANEL_GATEWAY_TRANSACTIONS_RECEIVED_BY_SOURCE,
         PANEL_GATEWAY_TRANSACTIONS_RECEIVED_RATE,
+        PANEL_GATEWAY_ADD_TX_LATENCY,
+        PANEL_GATEWAY_VALIDATE_TX_LATENCY,
         PANEL_GATEWAY_TRANSACTIONS_FAILED,
         PANEL_GATEWAY_TRANSACTIONS_SENT_TO_MEMPOOL,
     ],
 );
 
-pub const MEMPOOL_ROW: Row<'_> = Row::new(
+pub const MEMPOOL_ROW: Row = Row::new(
     "Mempool",
     "Mempool metrics",
     &[
@@ -326,7 +356,7 @@ pub const MEMPOOL_ROW: Row<'_> = Row::new(
     ],
 );
 
-pub const SEQUENCER_DASHBOARD: Dashboard<'_> = Dashboard::new(
+pub const SEQUENCER_DASHBOARD: Dashboard = Dashboard::new(
     "Sequencer Node Dashboard",
     "Monitoring of the decentralized sequencer node",
     &[

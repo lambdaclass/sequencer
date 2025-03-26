@@ -70,7 +70,7 @@
     "value": 62914560
   },
   "batcher_config.block_builder_config.tx_chunk_size": {
-    "description": "The size of the transaction chunk.",
+    "description": "Number of transactions in each request from the tx_provider.",
     "privacy": "Public",
     "value": 100
   },
@@ -1009,6 +1009,11 @@
     "pointer_target": "strk_fee_token_address",
     "privacy": "Public"
   },
+  "gateway_config.stateful_tx_validator_config.max_allowed_nonce_gap": {
+    "description": "The maximum allowed gap between the account nonce and the transaction nonce.",
+    "privacy": "Public",
+    "value": 50
+  },
   "gateway_config.stateful_tx_validator_config.max_nonce_for_validation_skip": {
     "description": "Maximum nonce for which the validation is skipped.",
     "privacy": "Public",
@@ -1127,7 +1132,7 @@
   "l1_gas_price_scraper_config.finality": {
     "description": "Number of blocks to wait for finality in L1",
     "privacy": "Public",
-    "value": 3
+    "value": 0
   },
   "l1_gas_price_scraper_config.number_of_blocks_for_mean": {
     "description": "Number of blocks to use for the mean gas price calculation",
@@ -1309,13 +1314,13 @@
     "privacy": "Public",
     "value": 1000
   },
-  "monitoring_config.collect_profiling_metrics": {
-    "description": "Indicating if profiling metrics should be collected.",
+  "monitoring_config.collect_metrics": {
+    "description": "Indicating if metrics should be recorded.",
     "privacy": "Public",
     "value": true
   },
-  "monitoring_config.collect_metrics": {
-    "description": "Indicating if metrics should be recorded.",
+  "monitoring_config.collect_profiling_metrics": {
+    "description": "Indicating if profiling metrics should be collected.",
     "privacy": "Public",
     "value": true
   },

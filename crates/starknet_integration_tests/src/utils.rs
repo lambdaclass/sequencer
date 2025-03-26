@@ -3,9 +3,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use alloy::primitives::U256;
+use axum::extract::Query;
 use axum::http::StatusCode;
-use axum::routing::post;
-use axum::Router;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use blockifier::blockifier::config::TransactionExecutorConfig;
 use blockifier::bouncer::{BouncerConfig, BouncerWeights};
 use blockifier::context::ChainInfo;
@@ -23,7 +24,8 @@ use papyrus_base_layer::test_utils::StarknetL1Contract;
 use papyrus_network::network_manager::test_utils::create_connected_network_configs;
 use papyrus_network::NetworkConfig;
 use papyrus_storage::StorageConfig;
-use serde_json::to_value;
+use serde::Deserialize;
+use serde_json::{json, to_value};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, ContractAddress};
 use starknet_api::execution_resources::GasAmount;
@@ -50,7 +52,7 @@ use starknet_gateway::config::{
 };
 use starknet_http_server::test_utils::create_http_server_config;
 use starknet_infra_utils::test_utils::AvailablePorts;
-use starknet_l1_gas_price::eth_to_strk_oracle::EthToStrkOracleConfig;
+use starknet_l1_gas_price::eth_to_strk_oracle::{EthToStrkOracleConfig, ETH_TO_STRK_QUANTIZATION};
 use starknet_l1_provider::l1_scraper::L1ScraperConfig;
 use starknet_l1_provider::L1ProviderConfig;
 use starknet_mempool::config::MempoolConfig;
@@ -65,7 +67,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, Instrument};
 use url::Url;
 
-use crate::executable_setup::NodeExecutionId;
+use crate::state_reader::StorageTestConfig;
 
 pub const ACCOUNT_ID_0: AccountId = 0;
 pub const ACCOUNT_ID_1: AccountId = 1;
@@ -79,6 +81,8 @@ pub const N_TXS_IN_FIRST_BLOCK: usize = 2;
 const PAID_FEE_ON_L1: U256 = U256::from_be_slice(b"paid"); // Arbitrary value.
 
 pub type CreateRpcTxsFn = fn(&mut MultiAccountTransactionGenerator) -> Vec<RpcTransaction>;
+pub type CreateL1HandlerTxsFn =
+    fn(&mut MultiAccountTransactionGenerator) -> Vec<L1HandlerTransaction>;
 pub type TestTxHashesFn = fn(&[TransactionHash]) -> Vec<TransactionHash>;
 pub type ExpectedContentId = Felt;
 
@@ -142,25 +146,21 @@ impl TestScenario for BootstrapTxs {
 #[allow(clippy::too_many_arguments)]
 pub fn create_node_config(
     available_ports: &mut AvailablePorts,
-    node_execution_id: NodeExecutionId,
     chain_info: ChainInfo,
-    batcher_storage_config: StorageConfig,
-    state_sync_storage_config: StorageConfig,
-    class_manager_storage_config: FsClassStorageConfig,
+    storage_config: StorageTestConfig,
     mut state_sync_config: StateSyncConfig,
-    mut consensus_manager_config: ConsensusManagerConfig,
+    consensus_manager_config: ConsensusManagerConfig,
     mempool_p2p_config: MempoolP2pConfig,
     monitoring_endpoint_config: MonitoringEndpointConfig,
     component_config: ComponentConfig,
     base_layer_config: EthereumBaseLayerConfig,
     block_max_capacity_sierra_gas: GasAmount,
+    validator_id: ValidatorId,
 ) -> (SequencerNodeConfig, ConfigPointersMap) {
-    let validator_id =
-        set_validator_id(&mut consensus_manager_config, node_execution_id.get_node_index());
     let recorder_url = consensus_manager_config.cende_config.recorder_url.clone();
     let fee_token_addresses = chain_info.fee_token_addresses.clone();
     let batcher_config = create_batcher_config(
-        batcher_storage_config,
+        storage_config.batcher_storage_config,
         chain_info.clone(),
         block_max_capacity_sierra_gas,
     );
@@ -174,8 +174,9 @@ pub fn create_node_config(
     let mempool_config = create_mempool_config();
     let http_server_config =
         create_http_server_config(available_ports.get_next_local_host_socket());
-    let class_manager_config = create_class_manager_config(class_manager_storage_config);
-    state_sync_config.storage_config = state_sync_storage_config;
+    let class_manager_config =
+        create_class_manager_config(storage_config.class_manager_storage_config);
+    state_sync_config.storage_config = storage_config.state_sync_storage_config;
 
     // Update config pointer values.
     let mut config_pointers_map = ConfigPointersMap::new(CONFIG_POINTERS.clone());
@@ -293,6 +294,41 @@ pub fn spawn_local_success_recorder(port: u16) -> (Url, JoinHandle<()>) {
     (url, join_handle)
 }
 
+/// Fake eth to strk oracle endpoint.
+const ETH_TO_STRK_ORACLE_PATH: &str = "/eth_to_strk_oracle";
+
+/// Expected query parameters.
+#[derive(Deserialize)]
+struct EthToStrkOracleQuery {
+    timestamp: u64,
+}
+
+/// Returns a fake eth to fri rate response.
+async fn get_price(Query(query): Query<EthToStrkOracleQuery>) -> Json<serde_json::Value> {
+    // TODO(Asmaa): Retrun timestamp as price once we start mocking out time in the tests.
+    let price = format!("0x{:x}", 10000);
+    let response = json!({ "timestamp": query.timestamp ,"price": price, "decimals": ETH_TO_STRK_QUANTIZATION });
+    Json(response)
+}
+
+/// Spawns a local fake eth to fri oracle server.
+pub fn spawn_eth_to_strk_oracle_server(socket_address: SocketAddr) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let router = Router::new().route(ETH_TO_STRK_ORACLE_PATH, get(get_price));
+        axum::Server::bind(&socket_address).serve(router.into_make_service()).await.unwrap();
+    })
+}
+
+/// Starts the fake eth to fri oracle server and returns its URL and handle.
+pub fn spawn_local_eth_to_strk_oracle(port: u16) -> (Url, JoinHandle<()>) {
+    let socket_address = SocketAddr::from(([127, 0, 0, 1], port));
+    let url =
+        Url::parse(&format!("http://{}{}?timestamp=", socket_address, ETH_TO_STRK_ORACLE_PATH))
+            .unwrap();
+    let join_handle = spawn_eth_to_strk_oracle_server(socket_address);
+    (url, join_handle)
+}
+
 pub fn create_mempool_p2p_configs(chain_id: ChainId, ports: Vec<u16>) -> Vec<MempoolP2pConfig> {
     create_connected_network_configs(ports)
         .into_iter()
@@ -398,6 +434,13 @@ pub fn create_invoke_txs(
     (0..n_txs)
         .map(|_| tx_generator.account_with_id_mut(account_id).generate_invoke_with_tip(1))
         .collect()
+}
+
+pub fn create_l1_handler_tx(
+    tx_generator: &mut MultiAccountTransactionGenerator,
+) -> Vec<L1HandlerTransaction> {
+    const N_TXS: usize = 1;
+    create_l1_handler_txs(tx_generator, N_TXS)
 }
 
 pub fn create_l1_handler_txs(
@@ -579,7 +622,7 @@ pub fn create_class_manager_config(
     FsClassManagerConfig { class_manager_config, class_storage_config }
 }
 
-fn set_validator_id(
+pub fn set_validator_id(
     consensus_manager_config: &mut ConsensusManagerConfig,
     node_index: usize,
 ) -> ValidatorId {

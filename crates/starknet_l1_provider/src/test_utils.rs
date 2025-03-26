@@ -51,6 +51,10 @@ impl L1ProviderContent {
         if let Some(state) = &self.state {
             assert_eq!(&l1_provider.state, state);
         }
+
+        if let Some(current_height) = &self.current_height {
+            assert_eq!(&l1_provider.current_height, current_height);
+        }
     }
 }
 
@@ -128,20 +132,19 @@ impl TransactionManagerContent {
                 &tx_manager.txs.txs.values().map(|tx| tx.transaction.clone()).collect_vec()
             );
         }
+
+        if let Some(committed) = &self.committed {
+            assert_eq!(committed, &tx_manager.committed);
+        }
     }
 }
 
 impl From<TransactionManagerContent> for TransactionManager {
     fn from(mut content: TransactionManagerContent) -> TransactionManager {
-        let txs: Vec<_> = mem::take(&mut content.txs).unwrap();
+        let txs: Vec<_> = mem::take(&mut content.txs).unwrap_or_default();
         TransactionManager {
             txs: SoftDeleteIndexMap::from(txs),
-            committed: content
-                .committed
-                .unwrap_or_default()
-                .into_iter()
-                .map(|tx_hash| (tx_hash, None))
-                .collect(),
+            committed: content.committed.unwrap_or_default(),
         }
     }
 }
@@ -176,6 +179,8 @@ impl TransactionManagerContentBuilder {
     }
 }
 
+/// A fake L1 provider client that buffers all received messages, allow asserting the order in which
+/// they were received, and forward them to the l1 provider (flush the messages).
 #[derive(Default)]
 pub struct FakeL1ProviderClient {
     // Interior mutability needed since this is modifying during client API calls, which are all
@@ -185,6 +190,16 @@ pub struct FakeL1ProviderClient {
 }
 
 impl FakeL1ProviderClient {
+    /// Apply all messages received to the l1 provider.
+    pub async fn flush_messages(&self, l1_provider: &mut L1Provider) {
+        let commit_blocks = self.commit_blocks_received.lock().unwrap().drain(..).collect_vec();
+        for CommitBlockBacklog { height, committed_txs } in commit_blocks {
+            l1_provider.commit_block(&committed_txs, height).unwrap();
+        }
+
+        // TODO(gilad): flush other buffers if necessary.
+    }
+
     #[track_caller]
     pub fn assert_add_events_received_with(&self, expected: &[Event]) {
         let events_received = mem::take(&mut *self.events_received.lock().unwrap());

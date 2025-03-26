@@ -84,6 +84,7 @@ use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrumen
 use crate::cende::{BlobParameters, CendeContext};
 use crate::config::ContextConfig;
 use crate::fee_market::{calculate_next_base_gas_price, FeeMarketInfo};
+use crate::metrics::{CONSENSUS_NUM_BATCHES_IN_PROPOSAL, CONSENSUS_NUM_TXS_IN_PROPOSAL};
 use crate::orchestrator_versioned_constants::VersionedConstants;
 
 // Contains parameters required for validating block info.
@@ -248,6 +249,7 @@ struct ProposalBuildArguments {
     gas_prices: GasPrices,
     transaction_converter: TransactionConverter,
     builder_address: ContractAddress,
+    cancel_token: CancellationToken,
 }
 
 struct ProposalValidateArguments {
@@ -302,6 +304,8 @@ impl ConsensusContext for SequencerConsensusContext {
 
         info!(?proposal_init, ?timeout, %proposal_id, "Building proposal");
         let batcher_timeout = timeout - self.config.build_proposal_margin;
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
         let handle = tokio::spawn(
             async move {
                 build_proposal(ProposalBuildArguments {
@@ -318,6 +322,7 @@ impl ConsensusContext for SequencerConsensusContext {
                     gas_prices,
                     transaction_converter,
                     builder_address,
+                    cancel_token,
                 })
                 .await;
             }
@@ -326,8 +331,7 @@ impl ConsensusContext for SequencerConsensusContext {
             ),
         );
         assert!(self.active_proposal.is_none());
-        // The cancellation token is unused by the spawned build.
-        self.active_proposal = Some((CancellationToken::new(), handle));
+        self.active_proposal = Some((cancel_token_clone, handle));
 
         fin_receiver
     }
@@ -722,6 +726,7 @@ async fn build_proposal(mut args: ProposalBuildArguments) {
         args.proposal_sender,
         args.cende_write_success,
         &args.transaction_converter,
+        args.cancel_token,
     )
     .await
     else {
@@ -790,9 +795,14 @@ async fn get_proposal_content(
     mut proposal_sender: mpsc::Sender<ProposalPart>,
     cende_write_success: AbortOnDropHandle<bool>,
     transaction_converter: &TransactionConverter,
+    cancel_token: CancellationToken,
 ) -> Option<(ProposalCommitment, Vec<Vec<InternalConsensusTransaction>>)> {
     let mut content = Vec::new();
     loop {
+        if cancel_token.is_cancelled() {
+            warn!("Proposal interrupted during building.");
+            return None;
+        }
         // We currently want one part of the node failing to cause all components to fail. If this
         // changes, we can simply return None and consider this as a failed proposal which consensus
         // should support.
@@ -819,9 +829,15 @@ async fn get_proposal_content(
                 }))
                 .await
                 .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-                // TODO(shahak): Don't panic here.
-                .expect("Failed converting consensus transaction to external representation");
+                .collect::<Result<Vec<_>, _>>();
+                let transactions = match transactions {
+                    Ok(txs) => txs,
+                    Err(e) => {
+                        error!("Failed to convert transactions. {e:?}");
+                        return None;
+                    }
+                };
+
                 trace!(?transactions, "Sending transaction batch with {} txs.", transactions.len());
                 proposal_sender
                     .send(ProposalPart::Transactions(TransactionBatch { transactions }))
@@ -830,13 +846,14 @@ async fn get_proposal_content(
             }
             GetProposalContent::Finished(id) => {
                 let proposal_commitment = BlockHash(id.state_diff_commitment.0.0);
-                info!(?proposal_commitment, num_txs = content.len(), "Finished building proposal",);
+                let num_txs: usize = content.iter().map(|batch| batch.len()).sum();
+                info!(?proposal_commitment, num_txs = num_txs, "Finished building proposal",);
 
                 // If the blob writing operation to Aerospike doesn't return a success status, we
                 // can't finish the proposal.
                 match cende_write_success.now_or_never() {
                     Some(Ok(true)) => {
-                        debug!("Writing blob to Aerospike completed successfully.");
+                        info!("Writing blob to Aerospike completed successfully.");
                     }
                     Some(Ok(false)) => {
                         warn!("Writing blob to Aerospike failed.");
@@ -862,7 +879,6 @@ async fn get_proposal_content(
     }
 }
 
-// TODO(Arni): Remove the clippy when switch to ProposalInit.
 async fn validate_proposal(mut args: ProposalValidateArguments) {
     let mut content = Vec::new();
     let deadline = tokio::time::Instant::now() + args.timeout;
@@ -894,12 +910,11 @@ async fn validate_proposal(mut args: ProposalValidateArguments) {
         error!("Failed to initiate proposal validation. {e:?}");
         return;
     }
-
     // Validating the rest of the proposal parts.
     let (built_block, received_fin) = loop {
         tokio::select! {
             _ = args.cancel_token.cancelled() => {
-                warn!("Proposal interrupted");
+                warn!("Proposal interrupted during validation.");
                 batcher_abort_proposal(args.batcher.as_ref(), args.proposal_id).await;
                 return;
             }
@@ -934,6 +949,10 @@ async fn validate_proposal(mut args: ProposalValidateArguments) {
             }
         }
     };
+
+    let num_txs: usize = content.iter().map(|batch| batch.len()).sum();
+    CONSENSUS_NUM_BATCHES_IN_PROPOSAL.set_lossy(content.len());
+    CONSENSUS_NUM_TXS_IN_PROPOSAL.set_lossy(num_txs);
 
     // Update valid_proposals before sending fin to avoid a race condition
     // with `get_proposal` being called before `valid_proposals` is updated.
@@ -1067,14 +1086,22 @@ async fn handle_proposal_part(
         }
         Some(ProposalPart::Transactions(TransactionBatch { transactions: txs })) => {
             debug!("Received transaction batch with {} txs", txs.len());
-            let txs = futures::future::join_all(txs.into_iter().map(|tx| {
-                transaction_converter.convert_consensus_tx_to_internal_consensus_tx(tx)
-            }))
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            // TODO(shahak): Don't panic here.
-            .expect("Failed converting consensus transaction to internal representation");
+            let txs =
+                futures::future::join_all(txs.into_iter().map(|tx| {
+                    transaction_converter.convert_consensus_tx_to_internal_consensus_tx(tx)
+                }))
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>();
+            let txs = match txs {
+                Ok(txs) => txs,
+                Err(e) => {
+                    return HandledProposalPart::Failed(format!(
+                        "Failed to convert transactions. Stopping the build of the current \
+                         proposal. {e:?}"
+                    ));
+                }
+            };
             debug!("Converted transactions to internal representation.");
 
             content.push(txs.clone());

@@ -14,6 +14,7 @@ use starknet_api::test_utils::{
 };
 use starknet_api::transaction::fields::{
     AccountDeploymentData,
+    AllResourceBounds,
     Calldata,
     Fee,
     PaymasterData,
@@ -31,6 +32,7 @@ use crate::blockifier_versioned_constants::VersionedConstants;
 use crate::context::ChainInfo;
 use crate::execution::common_hints::ExecutionMode;
 use crate::execution::entry_point::CallEntryPoint;
+use crate::execution::syscalls::hint_processor::valid_resource_bounds_as_felts;
 use crate::test_utils::contracts::FeatureContractData;
 use crate::test_utils::initial_test_state::test_state_ex;
 use crate::test_utils::{trivial_external_entry_point_with_address, BALANCE};
@@ -49,6 +51,7 @@ use crate::transaction::objects::{
         TransactionVersion::ONE,
         false,
         false,
+        false,
         false;
         "Native: Validate execution mode: block info fields should be zeroed. Transaction V1."
     )
@@ -59,6 +62,7 @@ use crate::transaction::objects::{
         FeatureContract::SierraExecutionInfoV1Contract(RunnableCairo1::Native),
         ExecutionMode::Execute,
         TransactionVersion::ONE,
+        false,
         false,
         false,
         false;
@@ -73,6 +77,7 @@ use crate::transaction::objects::{
         TransactionVersion::THREE,
         false,
         false,
+        false,
         false;
         "Native: Validate execution mode: block info fields should be zeroed. Transaction V3."
     )
@@ -85,6 +90,7 @@ use crate::transaction::objects::{
         TransactionVersion::THREE,
         false,
         false,
+        false,
         false;
         "Native: Execute execution mode: block info should be as usual. Transaction V3."
     )
@@ -95,6 +101,7 @@ use crate::transaction::objects::{
     FeatureContract::LegacyTestContract,
     ExecutionMode::Execute,
     TransactionVersion::ONE,
+    false,
     false,
     false,
     false;
@@ -110,6 +117,7 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     false,
     false,
+    false,
     false;
     "Native: Legacy contract. Execute execution mode: block info should be as usual. Transaction
     V3."
@@ -123,6 +131,7 @@ use crate::transaction::objects::{
         TransactionVersion::THREE,
         true,
         false,
+        false,
         false;
         "Native: Execute execution mode: block info should be as usual. Transaction V3. Query"
     )
@@ -135,6 +144,7 @@ use crate::transaction::objects::{
         TransactionVersion::THREE,
         false,
         true,
+        false,
         false;
         "Native: V1 bound account: execute"
     )
@@ -147,14 +157,42 @@ use crate::transaction::objects::{
         TransactionVersion::THREE,
         true,
         true,
+        false,
         false;
         "Native: V1 bound account: query"
+    )
+)]
+#[cfg_attr(
+    feature = "cairo_native",
+    test_case(
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Native)),
+        ExecutionMode::Execute,
+        TransactionVersion::THREE,
+        true,
+        false,
+        false,
+        true;
+        "Native: data gas account: query"
+    )
+)]
+#[cfg_attr(
+    feature = "cairo_native",
+    test_case(
+        FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Native)),
+        ExecutionMode::Execute,
+        TransactionVersion::THREE,
+        false,
+        false,
+        false,
+        true;
+        "Native: data gas account"
     )
 )]
 #[test_case(
     FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
     ExecutionMode::Validate,
     TransactionVersion::ONE,
+    false,
     false,
     false,
     false;
@@ -165,12 +203,14 @@ use crate::transaction::objects::{
     TransactionVersion::ONE,
     false,
     false,
+    false,
     false;
     "Execute execution mode: block info should be as usual. Transaction V1.")]
 #[test_case(
     FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
     ExecutionMode::Validate,
     TransactionVersion::THREE,
+    false,
     false,
     false,
     false;
@@ -181,12 +221,14 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     false,
     false,
+    false,
     false;
     "Execute execution mode: block info should be as usual. Transaction V3.")]
 #[test_case(
     FeatureContract::LegacyTestContract,
     ExecutionMode::Execute,
     TransactionVersion::ONE,
+    false,
     false,
     false,
     false;
@@ -197,6 +239,7 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     false,
     false,
+    false,
     false;
     "Legacy contract. Execute execution mode: block info should be as usual. Transaction V3.")]
 #[test_case(
@@ -204,6 +247,7 @@ use crate::transaction::objects::{
     ExecutionMode::Execute,
     TransactionVersion::THREE,
     true,
+    false,
     false,
     false;
     "Execute execution mode: block info should be as usual. Transaction V3. Query.")]
@@ -213,6 +257,7 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     false,
     true,
+    false,
     false;
     "V1 bound account: execute")]
 #[test_case(
@@ -221,7 +266,8 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     false,
     true,
-    true;
+    true,
+    false;
     "V1 bound account: execute, high tip")]
 #[test_case(
     FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
@@ -229,8 +275,27 @@ use crate::transaction::objects::{
     TransactionVersion::THREE,
     true,
     true,
+    false,
     false;
     "V1 bound account: query")]
+#[test_case(
+    FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
+    ExecutionMode::Execute,
+    TransactionVersion::THREE,
+    false,
+    false,
+    false,
+    true;
+    "Exclude l1 data gas: execute")]
+#[test_case(
+    FeatureContract::TestContract(CairoVersion::Cairo1(RunnableCairo1::Casm)),
+    ExecutionMode::Execute,
+    TransactionVersion::THREE,
+    true,
+    false,
+    false,
+    true;
+    "Exclude l1 data gas: query")]
 fn test_get_execution_info(
     test_contract: FeatureContract,
     execution_mode: ExecutionMode,
@@ -239,13 +304,21 @@ fn test_get_execution_info(
     v1_bound_account: bool,
     // Whether the tip is larger than `v1_bound_accounts_max_tip`.
     high_tip: bool,
+    exclude_l1_data_gas: bool,
 ) {
     let mut test_contract_data: FeatureContractData = test_contract.into();
     if v1_bound_account {
+        assert!(
+            !exclude_l1_data_gas,
+            "Unable to set both exclude_l1_data_gas and v1_bound_account."
+        );
         let optional_class_hash =
             VersionedConstants::latest_constants().os_constants.v1_bound_accounts_cairo1.first();
         test_contract_data.class_hash =
             *optional_class_hash.expect("No v1 bound accounts found in versioned constants.");
+    } else if exclude_l1_data_gas {
+        test_contract_data.class_hash =
+            *VersionedConstants::latest_constants().os_constants.data_gas_accounts.first().unwrap();
     }
     let state =
         &mut test_state_ex(&ChainInfo::create_for_testing(), BALANCE, &[(test_contract_data, 1)]);
@@ -312,8 +385,13 @@ fn test_get_execution_info(
     let nonce = nonce!(3_u16);
     let sender_address = test_contract_address;
 
-    let max_amount = GasAmount(13);
-    let max_price_per_unit = GasPrice(61);
+    let resource_bounds =
+        ResourceBounds { max_amount: GasAmount(13), max_price_per_unit: GasPrice(61) };
+    let all_resource_bounds = ValidResourceBounds::AllResources(AllResourceBounds {
+        l1_gas: resource_bounds,
+        l2_gas: resource_bounds,
+        l1_data_gas: resource_bounds,
+    });
 
     let expected_resource_bounds: Vec<Felt> = match (test_contract, version) {
         (FeatureContract::LegacyTestContract, _) => vec![],
@@ -322,15 +400,17 @@ fn test_get_execution_info(
         (_, version) if version == TransactionVersion::ONE => vec![
             felt!(0_u16), // Length of resource bounds array.
         ],
-        (_, _) => vec![
-            Felt::from(2u32),                // Length of ResourceBounds array.
-            felt!(Resource::L1Gas.to_hex()), // Resource.
-            max_amount.into(),               // Max amount.
-            max_price_per_unit.into(),       // Max price per unit.
-            felt!(Resource::L2Gas.to_hex()), // Resource.
-            Felt::ZERO,                      // Max amount.
-            Felt::ZERO,                      // Max price per unit.
-        ],
+        (_, _) => {
+            vec![felt!(if exclude_l1_data_gas { 2_u8 } else { 3_u8 })] // Length of resource bounds array.
+                .into_iter()
+                .chain(
+                    valid_resource_bounds_as_felts(&all_resource_bounds, exclude_l1_data_gas)
+                        .unwrap()
+                        .into_iter()
+                        .flat_map(|bounds| bounds.flatten()),
+                )
+                .collect()
+        }
     };
 
     let expected_tx_info: Vec<Felt>;
@@ -377,10 +457,7 @@ fn test_get_execution_info(
                 only_query,
                 ..Default::default()
             },
-            resource_bounds: ValidResourceBounds::L1Gas(ResourceBounds {
-                max_amount,
-                max_price_per_unit,
-            }),
+            resource_bounds: all_resource_bounds,
             tip,
             nonce_data_availability_mode: DataAvailabilityMode::L1,
             fee_data_availability_mode: DataAvailabilityMode::L1,

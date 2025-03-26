@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -17,14 +18,22 @@ use papyrus_network::network_manager::test_utils::create_connected_network_confi
 use papyrus_storage::StorageConfig;
 use starknet_api::block::BlockNumber;
 use starknet_api::core::{ChainId, Nonce};
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::rpc_transaction::RpcTransaction;
 use starknet_api::transaction::TransactionHash;
+use starknet_http_server::config::HttpServerConfig;
+use starknet_http_server::test_utils::HttpTestClient;
 use starknet_infra_utils::test_utils::{AvailablePortsGenerator, TestIdentifier};
 use starknet_infra_utils::tracing::{CustomLogger, TraceLevel};
+use starknet_monitoring_endpoint::config::MonitoringEndpointConfig;
 use starknet_monitoring_endpoint::test_utils::MonitoringClient;
-use starknet_sequencer_node::config::config_utils::dump_json_data;
+use starknet_sequencer_node::config::component_config::ComponentConfig;
+use starknet_sequencer_node::config::config_utils::{dump_json_data, DeploymentBaseAppConfig};
 use starknet_sequencer_node::config::definitions::ConfigPointersMap;
-use starknet_sequencer_node::config::node_config::SequencerNodeConfig;
+use starknet_sequencer_node::config::node_config::{
+    SequencerNodeConfig,
+    CONFIG_NON_POINTERS_WHITELIST,
+};
 use starknet_sequencer_node::test_utils::node_runner::{get_node_executable_path, spawn_run_node};
 use tokio::join;
 use tokio::task::JoinHandle;
@@ -36,27 +45,34 @@ use crate::monitoring_utils::{
     await_block,
     await_sync_block,
     await_txs_accepted,
+    sequencer_num_accepted_txs,
     verify_txs_accepted,
 };
 use crate::node_component_configs::{
     create_consolidated_sequencer_configs,
     create_nodes_deployment_units_configs,
-    NodeComponentConfigs,
 };
+use crate::sequencer_simulator_utils::SequencerSimulator;
+use crate::state_reader::StorageTestHandles;
+use crate::storage::{get_integration_test_storage, CustomPaths};
 use crate::utils::{
     create_consensus_manager_configs_from_network_configs,
     create_integration_test_tx_generator,
     create_mempool_p2p_configs,
+    create_node_config,
     create_state_sync_configs,
     send_consensus_txs,
     send_message_to_l2_and_calculate_tx_hash,
+    set_validator_id,
+    spawn_local_eth_to_strk_oracle,
     spawn_local_success_recorder,
     BootstrapTxs,
     ConsensusTxs,
     TestScenario,
 };
 
-const DEFAULT_SENDER_ACCOUNT: AccountId = 0;
+pub const DEFAULT_SENDER_ACCOUNT: AccountId = 0;
+const BLOCK_MAX_CAPACITY_N_STEPS: GasAmount = GasAmount(30000000);
 pub const BLOCK_TO_WAIT_FOR_BOOTSTRAP: BlockNumber = BlockNumber(2);
 
 pub const HTTP_PORT_ARG: &str = "http-port";
@@ -67,14 +83,27 @@ pub struct NodeSetup {
     batcher_index: usize,
     http_server_index: usize,
     state_sync_index: usize,
+
+    // Client for adding transactions to the sequencer node.
+    pub add_tx_http_client: HttpTestClient,
+
+    // Handles for the storage files, maintained so the files are not deleted. Since
+    // these are only maintained to avoid dropping the handles, private visibility suffices, and
+    // as such, the '#[allow(dead_code)]' attributes are used to suppress the warning.
+    #[allow(dead_code)]
+    storage_handles: StorageTestHandles,
 }
 
+// TODO(Nadin): reduce the number of arguments.
+#[allow(clippy::too_many_arguments)]
 impl NodeSetup {
     pub fn new(
         executables: Vec<ExecutableSetup>,
         batcher_index: usize,
         http_server_index: usize,
         state_sync_index: usize,
+        add_tx_http_client: HttpTestClient,
+        storage_handles: StorageTestHandles,
     ) -> Self {
         let len = executables.len();
 
@@ -92,11 +121,18 @@ impl NodeSetup {
         validate_index(http_server_index, len, "HTTP server");
         validate_index(state_sync_index, len, "State sync");
 
-        Self { executables, batcher_index, http_server_index, state_sync_index }
+        Self {
+            executables,
+            batcher_index,
+            http_server_index,
+            state_sync_index,
+            add_tx_http_client,
+            storage_handles,
+        }
     }
 
     async fn send_rpc_tx_fn(&self, rpc_tx: RpcTransaction) -> TransactionHash {
-        self.executables[self.http_server_index].assert_add_tx_success(rpc_tx).await
+        self.add_tx_http_client.assert_add_tx_success(rpc_tx).await
     }
 
     pub fn batcher_monitoring_client(&self) -> &MonitoringClient {
@@ -194,33 +230,6 @@ pub struct IntegrationTestManager {
     starknet_l1_contract: StarknetL1Contract,
 }
 
-pub struct CustomPaths {
-    db_base: Option<PathBuf>,
-    config_base: Option<PathBuf>,
-    data_prefix_base: Option<PathBuf>,
-}
-
-impl CustomPaths {
-    pub fn new(
-        db_base: Option<PathBuf>,
-        config_base: Option<PathBuf>,
-        data_prefix_base: Option<PathBuf>,
-    ) -> Self {
-        Self { db_base, config_base, data_prefix_base }
-    }
-    pub fn get_db_path(&self, node_execution_id: &NodeExecutionId) -> Option<PathBuf> {
-        self.db_base.as_ref().map(|p| node_execution_id.build_path(p))
-    }
-
-    pub fn get_config_path(&self, node_execution_id: &NodeExecutionId) -> Option<PathBuf> {
-        self.config_base.as_ref().map(|p| node_execution_id.build_path(p))
-    }
-
-    pub fn get_data_prefix_path(&self, node_execution_id: &NodeExecutionId) -> Option<PathBuf> {
-        self.data_prefix_base.as_ref().map(|p| node_execution_id.build_path(p))
-    }
-}
-
 impl IntegrationTestManager {
     pub async fn new(
         num_of_consolidated_nodes: usize,
@@ -236,7 +245,6 @@ impl IntegrationTestManager {
             num_of_distributed_nodes,
             custom_paths,
             test_unique_id,
-            create_nodes_deployment_units_configs,
         )
         .await;
 
@@ -440,6 +448,28 @@ impl IntegrationTestManager {
         .await;
     }
 
+    /// Create a simulator that's connected to the http server of Node 0.
+    pub fn create_simulator(&self) -> SequencerSimulator {
+        let node_0_setup = self
+            .running_nodes
+            .get(&0)
+            .map(|node| &(node.node_setup))
+            .unwrap_or_else(|| self.idle_nodes.get(&0).expect("Node 0 doesn't exist"));
+        let config = node_0_setup
+            .executables
+            .get(node_0_setup.http_server_index)
+            .expect("http_server_index points to a non existing executable index")
+            .config();
+
+        let localhost_url = format!("http://{}", Ipv4Addr::LOCALHOST);
+        SequencerSimulator::new(
+            localhost_url.clone(),
+            config.http_server_config.port,
+            localhost_url,
+            config.monitoring_endpoint_config.port,
+        )
+    }
+
     pub async fn await_txs_accepted_on_all_running_nodes(&mut self, target_n_txs: usize) {
         self.perform_action_on_all_running_nodes(|sequencer_idx, running_node| {
             let monitoring_client = running_node.node_setup.state_sync_monitoring_client();
@@ -602,6 +632,19 @@ impl IntegrationTestManager {
             .chain_id
             .clone()
     }
+
+    /// This function returns the number of accepted transactions on all running nodes.
+    /// It queries the state sync monitoring client to get the latest value of the processed txs
+    /// metric.
+    pub async fn get_num_accepted_txs_on_all_running_nodes(&self) -> HashMap<usize, usize> {
+        let mut result = HashMap::new();
+        for (index, running_node) in self.running_nodes.iter() {
+            let monitoring_client = running_node.node_setup.state_sync_monitoring_client();
+            let num_accepted = sequencer_num_accepted_txs(monitoring_client).await;
+            result.insert(*index, num_accepted);
+        }
+        result
+    }
 }
 
 pub fn nonce_to_usize(nonce: Nonce) -> usize {
@@ -612,27 +655,23 @@ pub fn nonce_to_usize(nonce: Nonce) -> usize {
 
 pub async fn get_sequencer_setup_configs(
     tx_generator: &MultiAccountTransactionGenerator,
+    // TODO(Tsabary/Nadin): instead of number of nodes, this should be a vector of deployments.
     num_of_consolidated_nodes: usize,
     num_of_distributed_nodes: usize,
     custom_paths: Option<CustomPaths>,
     test_unique_id: TestIdentifier,
-    distributed_configs_creation_function: fn(
-        &mut AvailablePortsGenerator,
-        usize,
-    ) -> Vec<NodeComponentConfigs>,
 ) -> (Vec<NodeSetup>, HashSet<usize>) {
     let mut available_ports_generator = AvailablePortsGenerator::new(test_unique_id.into());
 
-    let node_component_configs: Vec<NodeComponentConfigs> = {
-        let mut combined = Vec::new();
-        // Create elements in place.
-        combined.extend(create_consolidated_sequencer_configs(num_of_consolidated_nodes));
-        combined.extend(distributed_configs_creation_function(
-            &mut available_ports_generator,
-            num_of_distributed_nodes,
-        ));
-        combined
-    };
+    let mut node_component_configs =
+        Vec::with_capacity(num_of_consolidated_nodes + num_of_distributed_nodes);
+    for _ in 0..num_of_consolidated_nodes {
+        node_component_configs.push(create_consolidated_sequencer_configs());
+    }
+    for _ in 0..num_of_distributed_nodes {
+        node_component_configs
+            .push(create_nodes_deployment_units_configs(&mut available_ports_generator));
+    }
 
     info!("Creating node configurations.");
     let chain_info = ChainInfo::create_for_testing();
@@ -682,56 +721,96 @@ pub async fn get_sequencer_setup_configs(
 
     let mut nodes = Vec::new();
 
-    // All nodes use the same recorder_url.
+    // All nodes use the same recorder_url and eth_to_strk_oracle_url.
     let (recorder_url, _join_handle) =
         spawn_local_success_recorder(base_layer_ports.get_next_port());
+    let (eth_to_strk_oracle_url, _join_handle_eth_to_strk_oracle) =
+        spawn_local_eth_to_strk_oracle(base_layer_ports.get_next_port());
+
+    let mut config_available_ports = available_ports_generator
+        .next()
+        .expect("Failed to get an AvailablePorts instance for node configs");
 
     for (node_index, node_component_config) in node_component_configs.into_iter().enumerate() {
         let mut executables = Vec::new();
         let batcher_index = node_component_config.get_batcher_index();
         let http_server_index = node_component_config.get_http_server_index();
         let state_sync_index = node_component_config.get_state_sync_index();
+        let class_manager_index = node_component_config.get_class_manager_index();
 
         let mut consensus_manager_config = consensus_manager_configs.remove(0);
         let mempool_p2p_config = mempool_p2p_configs.remove(0);
         let state_sync_config = state_sync_configs.remove(0);
 
         consensus_manager_config.cende_config.recorder_url = recorder_url.clone();
+        consensus_manager_config.eth_to_strk_oracle_config.base_url =
+            eth_to_strk_oracle_url.clone();
+
+        let validator_id = set_validator_id(&mut consensus_manager_config, node_index);
+        let chain_info = chain_info.clone();
+
+        let storage_setup = get_integration_test_storage(
+            node_index,
+            batcher_index,
+            state_sync_index,
+            class_manager_index,
+            custom_paths.clone(),
+            accounts.to_vec(),
+            &chain_info,
+        );
+
+        // Derive the configuration for the sequencer node.
+        let (config, config_pointers_map) = create_node_config(
+            &mut config_available_ports,
+            chain_info,
+            storage_setup.storage_config.clone(),
+            state_sync_config,
+            consensus_manager_config,
+            mempool_p2p_config,
+            MonitoringEndpointConfig::default(),
+            ComponentConfig::default(),
+            base_layer_config.clone(),
+            BLOCK_MAX_CAPACITY_N_STEPS,
+            validator_id,
+        );
+        let base_app_config = DeploymentBaseAppConfig::new(
+            config.clone(),
+            config_pointers_map.clone(),
+            CONFIG_NON_POINTERS_WHITELIST.clone(),
+        );
+
+        let HttpServerConfig { ip, port } = config.http_server_config;
+        let add_tx_http_client = HttpTestClient::new(SocketAddr::from((ip, port)));
 
         for (executable_index, executable_component_config) in
             node_component_config.into_iter().enumerate()
         {
             let node_execution_id = NodeExecutionId::new(node_index, executable_index);
-            let chain_info = chain_info.clone();
-            let exec_db_path =
-                custom_paths.as_ref().and_then(|paths| paths.get_db_path(&node_execution_id));
             let exec_config_path =
                 custom_paths.as_ref().and_then(|paths| paths.get_config_path(&node_execution_id));
-            let exec_data_prefix_dir = custom_paths
-                .as_ref()
-                .and_then(|paths| paths.get_data_prefix_path(&node_execution_id));
 
             executables.push(
                 ExecutableSetup::new(
-                    accounts.to_vec(),
+                    base_app_config.clone(),
+                    config_pointers_map.clone(),
                     node_execution_id,
-                    chain_info,
-                    consensus_manager_config.clone(),
-                    mempool_p2p_config.clone(),
-                    state_sync_config.clone(),
                     available_ports_generator
                         .next()
                         .expect("Failed to get an AvailablePorts instance for executable configs"),
-                    executable_component_config.clone(),
-                    base_layer_config.clone(),
-                    exec_db_path,
                     exec_config_path,
-                    exec_data_prefix_dir,
+                    executable_component_config,
                 )
                 .await,
             );
         }
-        nodes.push(NodeSetup::new(executables, batcher_index, http_server_index, state_sync_index));
+        nodes.push(NodeSetup::new(
+            executables,
+            batcher_index,
+            http_server_index,
+            state_sync_index,
+            add_tx_http_client,
+            storage_setup.storage_handles,
+        ));
     }
 
     (nodes, node_indices)
