@@ -2417,7 +2417,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.3.4"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=4ca2b563aedc76853406978198a63b654398c654#4ca2b563aedc76853406978198a63b654398c654"
+source = "git+https://github.com/lambdaclass/cairo_native?branch=add-meta_tx_v0-syscall#49607306ca66ae8272879e13d84ade1c4a133533"
 dependencies = [
  "anyhow",
  "aquamarine",
