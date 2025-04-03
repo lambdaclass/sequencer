@@ -2426,8 +2426,8 @@ dependencies = [
 
 [[package]]
 name = "cairo-native"
-version = "0.3.4"
-source = "git+https://github.com/lambdaclass/cairo_native?branch=bump-cairo-v2.12.0-dev.0#88f6901e6e4f584062ccb6bae7011458c1f1ab64"
+version = "0.4.0"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=fe539d2f3f09bdac99f89db3e3e44549ef5d01ad#fe539d2f3f09bdac99f89db3e3e44549ef5d01ad"
 dependencies = [
  "anyhow",
  "aquamarine",
