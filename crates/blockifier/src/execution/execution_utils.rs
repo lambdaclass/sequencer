@@ -57,7 +57,7 @@ pub fn execute_entry_point_call_wrapper(
     context: &mut EntryPointExecutionContext,
     remaining_gas: &mut u64,
 ) -> EntryPointExecutionResult<CallInfo> {
-    println!("Executing class: {}", call.class_hash.unwrap_or_default().to_hex_string());
+    println!("Executing class: {}", call.class_hash.to_hex_string());
     let current_tracked_resource = compiled_class.get_current_tracked_resource(context);
     if current_tracked_resource == TrackedResource::CairoSteps {
         // Override the initial gas with a high value so it won't limit the run.

@@ -1654,7 +1654,7 @@ dependencies = [
  "cairo-lang-sierra",
  "cairo-lang-starknet-classes",
  "cairo-native",
- "cairo-vm 2.0.1 (git+https://github.com/lambdaclass/cairo-vm?rev=368e3fb311601a33ff8945e784eaa332f1fd499a)",
+ "cairo-vm",
  "criterion",
  "derive_more 0.99.19",
  "glob",
@@ -2111,7 +2111,7 @@ dependencies = [
  "cairo-lang-sierra-to-casm",
  "cairo-lang-sierra-type-size",
  "cairo-lang-utils",
- "cairo-vm 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cairo-vm",
  "itertools 0.14.0",
  "thiserror 2.0.12",
 ]
@@ -2133,7 +2133,7 @@ dependencies = [
  "cairo-lang-sierra-to-casm",
  "cairo-lang-starknet",
  "cairo-lang-utils",
- "cairo-vm 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cairo-vm",
  "itertools 0.14.0",
  "keccak",
  "num-bigint 0.4.6",
@@ -2428,7 +2428,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.5.0-rc.1"
-source = "git+https://github.com/lambdaclass/cairo_native?branch=trace-dump-feature#ca3bd20deb5f953aa340e05d92b5f375ce1531a8"
+source = "git+https://github.com/lambdaclass/cairo_native?branch=trace-dump-feature#f3a08282efc6215544ba63479be004829c816f9f"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -2509,37 +2509,6 @@ dependencies = [
  "starknet-crypto 0.7.4",
  "starknet-types-core",
  "thiserror-no-std",
- "zip",
-]
-
-[[package]]
-name = "cairo-vm"
-version = "2.0.1"
-source = "git+https://github.com/lambdaclass/cairo-vm?rev=368e3fb311601a33ff8945e784eaa332f1fd499a#368e3fb311601a33ff8945e784eaa332f1fd499a"
-dependencies = [
- "anyhow",
- "bincode 2.0.1",
- "bitvec",
- "generic-array",
- "hashbrown 0.15.2",
- "hex",
- "indoc 2.0.6",
- "keccak",
- "lazy_static",
- "nom 7.1.3",
- "num-bigint 0.4.6",
- "num-integer",
- "num-prime",
- "num-traits",
- "rand 0.8.5",
- "rust_decimal",
- "serde",
- "serde_json",
- "sha2",
- "sha3",
- "starknet-crypto 0.7.4",
- "starknet-types-core",
- "thiserror 2.0.12",
  "zip",
 ]
 
@@ -4849,9 +4818,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5017294ff4bb30944501348f6f8e42e6ad28f42c8bbef7a74029aff064a4e3c2"
+checksum = "75249d144030531f8dee69fe9cea04d3edf809a017ae445e2abdff6629e86633"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -5169,7 +5138,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "h2 0.4.8",
+ "h2 0.4.9",
  "http 1.3.1",
  "http-body 1.0.1",
  "httparse",
@@ -7180,7 +7149,7 @@ dependencies = [
  "blockifier",
  "cached",
  "cairo-lang-starknet-classes",
- "cairo-vm 2.0.1 (git+https://github.com/lambdaclass/cairo-vm?rev=368e3fb311601a33ff8945e784eaa332f1fd499a)",
+ "cairo-vm",
  "indexmap 2.9.0",
  "log",
  "num-bigint 0.4.6",
@@ -7866,7 +7835,7 @@ dependencies = [
  "cairo-lang-casm",
  "cairo-lang-starknet-classes",
  "cairo-lang-utils",
- "cairo-vm 2.0.1 (git+https://github.com/lambdaclass/cairo-vm?rev=368e3fb311601a33ff8945e784eaa332f1fd499a)",
+ "cairo-vm",
  "indexmap 2.9.0",
  "itertools 0.12.1",
  "lazy_static",
