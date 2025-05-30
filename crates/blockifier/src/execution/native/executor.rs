@@ -187,7 +187,7 @@ impl ContractExecutor {
 
                     // Save trace dump to file
                     let profile_path =
-                        PathBuf::from(format!("libfunc_profiles/native/{counter}.json"));
+                        PathBuf::from(format!("libfunc_profiles/native/{counter}.md"));
                     let profile_parent_path = profile_path.parent().unwrap();
                     fs::create_dir_all(profile_parent_path).unwrap();
                     let mut profile_file = File::create(&profile_path).unwrap();
