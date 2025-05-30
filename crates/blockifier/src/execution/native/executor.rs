@@ -1,8 +1,8 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
@@ -22,7 +22,7 @@ pub enum ContractExecutor {
     Aot(AotContractExecutor),
     Emu((Arc<Program>, ContractEntryPoints, VersionId)),
     // must use a different variant as we need `Program` for trace feature
-    #[cfg(feature = "with-trace-dump")]
+    #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
     AotTrace((AotContractExecutor, Program)),
 }
 
@@ -95,50 +95,115 @@ impl ContractExecutor {
                     error_msg: result.error_msg,
                 })
             }
-            #[cfg(feature = "with-trace-dump")]
+            #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
             ContractExecutor::AotTrace((executor, program)) => {
-                use cairo_lang_sierra::program_registry::ProgramRegistry;
-                use cairo_native::metadata::trace_dump::trace_dump_runtime::{
-                    TraceDump,
-                    TRACE_DUMP,
+                #[cfg(feature = "with-trace-dump")] 
+                use {
+                    cairo_lang_sierra::program_registry::ProgramRegistry,
+                    cairo_native::metadata::trace_dump::TraceBinding,
+                    cairo_native::metadata::trace_dump::trace_dump_runtime::{
+                        TRACE_DUMP, TraceDump,
+                    }
                 };
-                use cairo_native::metadata::trace_dump::TraceBinding;
+                #[cfg(feature = "with-libfunc-profiling")] 
+                use {
+                    cairo_native::metadata::profiler::ProfilerBinding,
+                    cairo_native::metadata::profiler::{
+                        LIBFUNC_PROFILE, ProfileImpl,
+                    }
+                };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
+                
+                let mut trace_id: &mut u64 = &mut 0; 
+                let mut old_trace_id: u64 = 0;
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                TRACE_DUMP
-                    .lock()
-                    .unwrap()
-                    .insert(counter, TraceDump::new(ProgramRegistry::new(&program).unwrap()));
+                #[cfg(feature = "with-trace-dump")]
+                {
+                    TRACE_DUMP.lock().unwrap().insert(
+                        trace_dump_counter,
+                        TraceDump::new(ProgramRegistry::new(&program).unwrap()),
+                    );
 
-                let trace_id = unsafe {
-                    let trace_id_ptr =
-                        executor.find_symbol_ptr(TraceBinding::TraceId.symbol()).unwrap();
-                    trace_id_ptr.cast::<u64>().as_mut().unwrap()
-                };
+                    trace_id = unsafe {
+                        let trace_id_ptr =
+                            executor.find_symbol_ptr(TraceBinding::TraceId.symbol()).unwrap();
+                        trace_id_ptr.cast::<u64>().as_mut().unwrap()
+                    };
 
-                let old_trace_id = *trace_id;
-                *trace_id = counter;
+                    old_trace_id = *trace_id;
+                    *trace_id = counter;
+                }
+
+                #[cfg(feature = "with-libfunc-profiling")]
+                {
+                    LIBFUNC_PROFILE.lock().unwrap().insert(
+                        counter,
+                        ProfileImpl::new(program.clone()),
+                    );
+
+                    trace_id = unsafe {
+                        let trace_id_ptr =
+                            executor.find_symbol_ptr(ProfilerBinding::TraceId.symbol()).unwrap();
+                        trace_id_ptr.cast::<u64>().as_mut().unwrap()
+                    };
+
+                    old_trace_id = *trace_id;
+                    *trace_id = counter;
+                }
 
                 let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
 
-                // Retreive trace dump for current execution
-                let trace = TRACE_DUMP
-                    .lock()
-                    .unwrap()
-                    .remove(&u64::try_from(counter).unwrap())
-                    .unwrap()
-                    .trace;
+                #[cfg(feature = "with-trace-dump")]
+                {
+                    // Retreive trace dump for current execution
+                    let trace = TRACE_DUMP
+                        .lock()
+                        .unwrap()
+                        .remove(&u64::try_from(counter).unwrap())
+                        .unwrap()
+                        .trace;
 
-                // Save trace dump to file
-                let trace_path = PathBuf::from(format!("traces/native/{counter}.json"));
-                let trace_parent_path = trace_path.parent().unwrap();
-                fs::create_dir_all(trace_parent_path).unwrap();
-                let trace_file = File::create(&trace_path).unwrap();
-                serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+                    // Save trace dump to file
+                    let trace_path =
+                        PathBuf::from(format!("traces/native/{counter}.json"));
+                    let trace_parent_path = trace_path.parent().unwrap();
+                    fs::create_dir_all(trace_parent_path).unwrap();
+                    let trace_file = File::create(&trace_path).unwrap();
+                    serde_json::to_writer_pretty(trace_file, &trace).unwrap();
 
-                *trace_id = old_trace_id;
+                    *trace_id = old_trace_id;
+                }
+
+                #[cfg(feature = "with-libfunc-profiling")]
+                {
+                    // Retreive trace dump for current execution
+                    let profile = LIBFUNC_PROFILE
+                        .lock()
+                        .unwrap()
+                        .remove(&u64::try_from(counter).unwrap())
+                        .unwrap();
+
+                    // Save trace dump to file
+                    let profile_path =
+                        PathBuf::from(format!("libfunc_profiles/native/{counter}.json"));
+                    let profile_parent_path = profile_path.parent().unwrap();
+                    fs::create_dir_all(profile_parent_path).unwrap();
+                    let mut profile_file = File::create(&profile_path).unwrap();
+                    
+                    for (libfunc_id, (n_samples, sum, quartiles, average, std_dev)) in profile.process() {
+                        writeln!(profile_file, "{libfunc_id}")?;
+                        writeln!(profile_file, "    Samples  : {n_samples}")?;
+                        writeln!(profile_file, "    Sum      : {sum}")?;
+                        writeln!(profile_file, "    Average  : {average}")?;
+                        writeln!(profile_file, "    Deviation: {std_dev}")?;
+                        writeln!(profile_file, "    Quartiles: {quartiles:?}")?;
+                        writeln!(profile_file)?;
+                    }
+
+                    *trace_id = old_trace_id;
+                }
 
                 result
             }
