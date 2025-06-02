@@ -97,36 +97,34 @@ impl ContractExecutor {
             }
             #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
             ContractExecutor::AotTrace((executor, program)) => {
-                #[cfg(feature = "with-trace-dump")] 
+                #[cfg(feature = "with-trace-dump")]
                 use {
                     cairo_lang_sierra::program_registry::ProgramRegistry,
                     cairo_native::metadata::trace_dump::TraceBinding,
                     cairo_native::metadata::trace_dump::trace_dump_runtime::{
                         TRACE_DUMP, TraceDump,
-                    }
+                    },
                 };
-                #[cfg(feature = "with-libfunc-profiling")] 
+                #[cfg(feature = "with-libfunc-profiling")]
                 use {
                     cairo_native::metadata::profiler::ProfilerBinding,
-                    cairo_native::metadata::profiler::{
-                        LIBFUNC_PROFILE, ProfileImpl,
-                    }
+                    cairo_native::metadata::profiler::{LIBFUNC_PROFILE, ProfileImpl},
                 };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
-                
-                let mut trace_dump_trace_id: &mut u64 = &mut 0; 
+
+                let mut trace_dump_trace_id: &mut u64 = &mut 0;
                 let mut trace_dump_old_trace_id: u64 = 0;
-                let mut libfunc_profiling_trace_id: &mut u64 = &mut 0; 
+                let mut libfunc_profiling_trace_id: &mut u64 = &mut 0;
                 let mut libfunc_profiling_old_trace_id: u64 = 0;
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 #[cfg(feature = "with-trace-dump")]
                 {
-                    TRACE_DUMP.lock().unwrap().insert(
-                        counter,
-                        TraceDump::new(ProgramRegistry::new(&program).unwrap()),
-                    );
+                    TRACE_DUMP
+                        .lock()
+                        .unwrap()
+                        .insert(counter, TraceDump::new(ProgramRegistry::new(&program).unwrap()));
 
                     trace_dump_trace_id = unsafe {
                         let trace_id_ptr =
@@ -140,10 +138,10 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    LIBFUNC_PROFILE.lock().unwrap().insert(
-                        counter,
-                        ProfileImpl::new(program.clone()),
-                    );
+                    LIBFUNC_PROFILE
+                        .lock()
+                        .unwrap()
+                        .insert(counter, ProfileImpl::new(program.clone()));
 
                     libfunc_profiling_trace_id = unsafe {
                         let trace_id_ptr =
@@ -168,8 +166,7 @@ impl ContractExecutor {
                         .trace;
 
                     // Save trace dump to file
-                    let trace_path =
-                        PathBuf::from(format!("traces/native/{counter}.json"));
+                    let trace_path = PathBuf::from(format!("traces/native/{counter}.json"));
                     let trace_parent_path = trace_path.parent().unwrap();
                     fs::create_dir_all(trace_parent_path).unwrap();
                     let trace_file = File::create(&trace_path).unwrap();
@@ -188,19 +185,20 @@ impl ContractExecutor {
                         .unwrap();
 
                     // Save trace dump to file
-                    let profile_path =
-                        PathBuf::from(format!("libfunc_profiles/{counter}.md"));
+                    let profile_path = PathBuf::from(format!("libfunc_profiles/{counter}.md"));
                     let profile_parent_path = profile_path.parent().unwrap();
                     fs::create_dir_all(profile_parent_path).unwrap();
                     let mut profile_file = File::create(&profile_path).unwrap();
-                    
-                    for (libfunc_id, (n_samples, sum, quartiles, average, std_dev)) in profile.process() {
+
+                    for (libfunc_id, (n_samples, sum, quartiles, average, std_dev)) in
+                        profile.process()
+                    {
                         writeln!(profile_file, "{libfunc_id}")?;
-                        writeln!(profile_file, "    Samples  : {n_samples}")?;
-                        writeln!(profile_file, "    Sum      : {sum}")?;
-                        writeln!(profile_file, "    Average  : {average}")?;
-                        writeln!(profile_file, "    Deviation: {std_dev}")?;
-                        writeln!(profile_file, "    Quartiles: {quartiles:?}")?;
+                        writeln!(profile_file, "    Total Samples:          {n_samples}")?;
+                        writeln!(profile_file, "    Total Execution Time:   {sum}")?;
+                        writeln!(profile_file, "    Average Execution Time: {average}")?;
+                        writeln!(profile_file, "    Standard Deviation:     {std_dev}")?;
+                        writeln!(profile_file, "    Quartiles:              {quartiles:?}")?;
                         writeln!(profile_file)?;
                     }
 
