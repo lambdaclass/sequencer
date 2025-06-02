@@ -1,8 +1,8 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
@@ -100,15 +100,16 @@ impl ContractExecutor {
                 #[cfg(feature = "with-trace-dump")]
                 use {
                     cairo_lang_sierra::program_registry::ProgramRegistry,
-                    cairo_native::metadata::trace_dump::TraceBinding,
                     cairo_native::metadata::trace_dump::trace_dump_runtime::{
-                        TRACE_DUMP, TraceDump,
+                        TraceDump,
+                        TRACE_DUMP,
                     },
+                    cairo_native::metadata::trace_dump::TraceBinding,
                 };
                 #[cfg(feature = "with-libfunc-profiling")]
                 use {
                     cairo_native::metadata::profiler::ProfilerBinding,
-                    cairo_native::metadata::profiler::{LIBFUNC_PROFILE, ProfileImpl},
+                    cairo_native::metadata::profiler::{ProfileImpl, LIBFUNC_PROFILE},
                 };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
