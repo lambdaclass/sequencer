@@ -114,10 +114,10 @@ impl ContractExecutor {
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-                let mut trace_dump_trace_id: &mut u64 = &mut 0;
-                let mut trace_dump_old_trace_id: u64 = 0;
-                let mut libfunc_profiling_trace_id: &mut u64 = &mut 0;
-                let mut libfunc_profiling_old_trace_id: u64 = 0;
+                let trace_dump_trace_id: &mut u64;
+                let trace_dump_old_trace_id: u64;
+                let libfunc_profiling_trace_id: &mut u64;
+                let libfunc_profiling_old_trace_id: u64;
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 #[cfg(feature = "with-trace-dump")]
@@ -125,7 +125,7 @@ impl ContractExecutor {
                     TRACE_DUMP
                         .lock()
                         .unwrap()
-                        .insert(counter, TraceDump::new(ProgramRegistry::new(&program).unwrap()));
+                        .insert(counter, TraceDump::new(ProgramRegistry::new(program).unwrap()));
 
                     trace_dump_trace_id = unsafe {
                         let trace_id_ptr =
@@ -159,12 +159,7 @@ impl ContractExecutor {
                 #[cfg(feature = "with-trace-dump")]
                 {
                     // Retreive trace dump for current execution
-                    let trace = TRACE_DUMP
-                        .lock()
-                        .unwrap()
-                        .remove(&u64::try_from(counter).unwrap())
-                        .unwrap()
-                        .trace;
+                    let trace = TRACE_DUMP.lock().unwrap().remove(&counter).unwrap().trace;
 
                     // Save trace dump to file
                     let trace_path = PathBuf::from(format!("traces/native/{counter}.json"));
@@ -179,11 +174,7 @@ impl ContractExecutor {
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
                     // Retreive trace dump for current execution
-                    let profile = LIBFUNC_PROFILE
-                        .lock()
-                        .unwrap()
-                        .remove(&u64::try_from(counter).unwrap())
-                        .unwrap();
+                    let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
                     // Save trace dump to file
                     let profile_path = PathBuf::from(format!("libfunc_profiles/{counter}.md"));
