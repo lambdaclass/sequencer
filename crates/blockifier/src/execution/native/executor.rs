@@ -115,25 +115,27 @@ impl ContractExecutor {
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
                 
-                let mut trace_id: &mut u64 = &mut 0; 
-                let mut old_trace_id: u64 = 0;
+                let mut trace_dump_trace_id: &mut u64 = &mut 0; 
+                let mut trace_dump_old_trace_id: u64 = 0;
+                let mut libfunc_profiling_trace_id: &mut u64 = &mut 0; 
+                let mut libfunc_profiling_old_trace_id: u64 = 0;
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 #[cfg(feature = "with-trace-dump")]
                 {
                     TRACE_DUMP.lock().unwrap().insert(
-                        trace_dump_counter,
+                        counter,
                         TraceDump::new(ProgramRegistry::new(&program).unwrap()),
                     );
 
-                    trace_id = unsafe {
+                    trace_dump_trace_id = unsafe {
                         let trace_id_ptr =
                             executor.find_symbol_ptr(TraceBinding::TraceId.symbol()).unwrap();
                         trace_id_ptr.cast::<u64>().as_mut().unwrap()
                     };
 
-                    old_trace_id = *trace_id;
-                    *trace_id = counter;
+                    trace_dump_old_trace_id = *trace_dump_trace_id;
+                    *trace_dump_trace_id = counter;
                 }
 
                 #[cfg(feature = "with-libfunc-profiling")]
@@ -143,14 +145,14 @@ impl ContractExecutor {
                         ProfileImpl::new(program.clone()),
                     );
 
-                    trace_id = unsafe {
+                    libfunc_profiling_trace_id = unsafe {
                         let trace_id_ptr =
                             executor.find_symbol_ptr(ProfilerBinding::TraceId.symbol()).unwrap();
                         trace_id_ptr.cast::<u64>().as_mut().unwrap()
                     };
 
-                    old_trace_id = *trace_id;
-                    *trace_id = counter;
+                    libfunc_profiling_old_trace_id = *libfunc_profiling_trace_id;
+                    *libfunc_profiling_trace_id = counter;
                 }
 
                 let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
@@ -173,7 +175,7 @@ impl ContractExecutor {
                     let trace_file = File::create(&trace_path).unwrap();
                     serde_json::to_writer_pretty(trace_file, &trace).unwrap();
 
-                    *trace_id = old_trace_id;
+                    *trace_dump_trace_id = trace_dump_old_trace_id;
                 }
 
                 #[cfg(feature = "with-libfunc-profiling")]
@@ -187,7 +189,7 @@ impl ContractExecutor {
 
                     // Save trace dump to file
                     let profile_path =
-                        PathBuf::from(format!("libfunc_profiles/native/{counter}.md"));
+                        PathBuf::from(format!("libfunc_profiles/{counter}.md"));
                     let profile_parent_path = profile_path.parent().unwrap();
                     fs::create_dir_all(profile_parent_path).unwrap();
                     let mut profile_file = File::create(&profile_path).unwrap();
@@ -202,7 +204,7 @@ impl ContractExecutor {
                         writeln!(profile_file)?;
                     }
 
-                    *trace_id = old_trace_id;
+                    *libfunc_profiling_trace_id = libfunc_profiling_old_trace_id;
                 }
 
                 result
