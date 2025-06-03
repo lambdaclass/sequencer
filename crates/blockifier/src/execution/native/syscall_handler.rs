@@ -17,6 +17,7 @@ use cairo_native::starknet::{
     U256,
 };
 use num_bigint::BigUint;
+use serde::Serialize;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector, EthAddress};
 use starknet_api::execution_resources::GasAmount;
@@ -49,7 +50,7 @@ pub const LIBRARY_CALL_SELECTOR_NAME: &str = "library_call";
 pub static SYSCALL_COUNTER: LazyLock<Mutex<SyscallCounts>> =
     LazyLock::new(|| Mutex::new(SyscallCounts::default()));
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct SyscallCounts {
     pub get_block_hash: u64,
     pub get_execution_info: u64,
