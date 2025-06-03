@@ -47,9 +47,11 @@ use crate::versioned_constants::GasCosts;
 pub const CALL_CONTRACT_SELECTOR_NAME: &str = "call_contract";
 pub const LIBRARY_CALL_SELECTOR_NAME: &str = "library_call";
 
+#[cfg(feature = "block-composition")]
 pub static SYSCALL_COUNTER: LazyLock<Mutex<SyscallCounts>> =
     LazyLock::new(|| Mutex::new(SyscallCounts::default()));
 
+#[cfg(feature = "block-composition")]
 #[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct SyscallCounts {
     pub get_block_hash: u64,
@@ -273,6 +275,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         block_number: u64,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().get_block_hash += 1;
 
         self.pre_execute_syscall(
@@ -287,6 +290,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
     }
 
     fn get_execution_info(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfo> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().get_execution_info += 1;
 
         self.pre_execute_syscall(
@@ -308,6 +312,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         contract_address: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().get_class_hash_at += 1;
 
         self.pre_execute_syscall(
@@ -325,6 +330,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
     }
 
     fn get_execution_info_v2(&mut self, remaining_gas: &mut u64) -> SyscallResult<ExecutionInfoV2> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().get_execution_info_v2 += 1;
 
         self.pre_execute_syscall(
@@ -349,6 +355,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         deploy_from_zero: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(Felt, Vec<Felt>)> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().deploy += 1;
         // The cost of deploying a contract is the base cost plus the linear cost of the calldata
         // len.
@@ -373,6 +380,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         Ok((Felt::from(deployed_contract_address), constructor_retdata))
     }
     fn replace_class(&mut self, class_hash: Felt, remaining_gas: &mut u64) -> SyscallResult<()> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().replace_class += 1;
         self.pre_execute_syscall(
             remaining_gas,
@@ -392,6 +400,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         calldata: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().library_call += 1;
         self.pre_execute_syscall(
             remaining_gas,
@@ -437,6 +446,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         calldata: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().call_contract += 1;
 
         self.pre_execute_syscall(
@@ -495,6 +505,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         address: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Felt> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().storage_read += 1;
 
         self.pre_execute_syscall(
@@ -522,6 +533,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         value: Felt,
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().storage_write += 1;
 
         self.pre_execute_syscall(
@@ -548,6 +560,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         data: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().emit_event += 1;
 
         self.pre_execute_syscall(
@@ -570,6 +583,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         payload: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().send_message_to_l1 += 1;
 
         self.pre_execute_syscall(
@@ -585,6 +599,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
     }
 
     fn keccak(&mut self, input: &[u64], remaining_gas: &mut u64) -> SyscallResult<U256> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().keccak += 1;
 
         self.pre_execute_syscall(
@@ -607,6 +622,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256k1Point>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256k1_new += 1;
 
         self.pre_execute_syscall(
@@ -625,6 +641,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p1: Secp256k1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256k1Point> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256k1_add += 1;
         self.pre_execute_syscall(
             remaining_gas,
@@ -640,6 +657,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         m: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256k1Point> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256k1_mul += 1;
 
         self.pre_execute_syscall(
@@ -656,6 +674,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y_parity: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256k1Point>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256k1_get_point_from_x += 1;
 
         self.pre_execute_syscall(
@@ -673,6 +692,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p: Secp256k1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(U256, U256)> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256k1_get_xy += 1;
         self.pre_execute_syscall(
             remaining_gas,
@@ -688,6 +708,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256r1Point>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256r1_new += 1;
 
         self.pre_execute_syscall(
@@ -706,6 +727,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p1: Secp256r1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256r1Point> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256r1_add += 1;
 
         self.pre_execute_syscall(
@@ -721,6 +743,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         m: U256,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Secp256r1Point> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256r1_mul += 1;
 
         self.pre_execute_syscall(
@@ -737,6 +760,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         y_parity: bool,
         remaining_gas: &mut u64,
     ) -> SyscallResult<Option<Secp256r1Point>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256r1_get_point_from_x += 1;
 
         self.pre_execute_syscall(
@@ -754,6 +778,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         p: Secp256r1Point,
         remaining_gas: &mut u64,
     ) -> SyscallResult<(U256, U256)> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().secp256r1_get_xy += 1;
 
         self.pre_execute_syscall(
@@ -770,6 +795,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         current_block: &[u32; 16],
         remaining_gas: &mut u64,
     ) -> SyscallResult<()> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().sha256_process_block += 1;
 
         self.pre_execute_syscall(
@@ -797,6 +823,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         signature: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
+        #[cfg(feature = "block-composition")]
         SYSCALL_COUNTER.lock().unwrap().meta_tx_v0 += 1;
         todo!(
             "implement meta_tx_v0 {:?}",
