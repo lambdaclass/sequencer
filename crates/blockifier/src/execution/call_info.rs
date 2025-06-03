@@ -3,6 +3,8 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+#[cfg(feature = "block-composition")]
+use serde::Deserialize;
 use serde::Serialize;
 use starknet_api::core::{ClassHash, ContractAddress, EthAddress};
 use starknet_api::execution_resources::{GasAmount, GasVector};
@@ -13,7 +15,6 @@ use starknet_types_core::felt::Felt;
 
 use crate::execution::contract_class::TrackedResource;
 use crate::execution::entry_point::CallEntryPoint;
-use crate::execution::native::syscall_handler::SyscallCounts;
 use crate::state::cached_state::StorageEntry;
 use crate::utils::u64_from_usize;
 use crate::versioned_constants::VersionedConstants;
@@ -196,13 +197,27 @@ impl AddAssign<&ChargedResources> for ChargedResources {
     }
 }
 
+#[cfg(feature = "block-composition")]
+#[derive(PartialEq, Eq, Default, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SyscallCount(pub u64);
+
+impl SyscallCount {
+    pub fn increase(&mut self) {
+        self.0 += 1;
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+}
+
 /// Represents the full effects of executing an entry point, including the inner calls it invoked.
 #[cfg_attr(any(test, feature = "testing"), derive(Clone))]
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CallInfo {
     #[cfg(feature = "block-composition")]
-    pub syscall_counts: SyscallCounts,
+    pub syscall_counts: SyscallCount,
     pub call: CallEntryPoint,
     pub execution: CallExecution,
     pub inner_calls: Vec<CallInfo>,

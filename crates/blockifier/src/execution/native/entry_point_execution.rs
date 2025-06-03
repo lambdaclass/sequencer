@@ -86,11 +86,11 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
-    #[cfg(feature = "block_composition")]
-    let syscalls_coutnts = *SYSCALL_COUNTER.lock().unwrap();
+    #[cfg(feature = "block-composition")]
+    let syscall_counts = *SYSCALL_COUNTER.lock().unwrap();
 
     Ok(CallInfo {
-        #[cfg(feature = "block_composition")]
+        #[cfg(feature = "block-composition")]
         syscall_counts,
         call: syscall_handler.base.call.into(),
         execution: CallExecution {
