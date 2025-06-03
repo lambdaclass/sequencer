@@ -341,7 +341,13 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
                 .expect("Output must be ready.");
             let tx_execution_output = locked_execution_output
                 .result
-                .map(|tx_execution_info| (locked_execution_output.tx_hash, tx_execution_info, locked_execution_output.state_diff))
+                .map(|tx_execution_info| {
+                    (
+                        locked_execution_output.tx_hash,
+                        tx_execution_info,
+                        locked_execution_output.state_diff,
+                    )
+                })
                 .map_err(TransactionExecutorError::from);
             tx_execution_results.push(tx_execution_output);
         }
