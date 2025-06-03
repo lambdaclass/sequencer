@@ -7,7 +7,7 @@ use starknet_api::test_utils::invoke::executable_invoke_tx;
 use starknet_api::test_utils::NonceManager;
 use starknet_api::transaction::constants::TRANSFER_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::Fee;
-use starknet_api::transaction::TransactionVersion;
+use starknet_api::transaction::{TransactionHash, TransactionVersion};
 use starknet_api::{calldata, felt, invoke_tx_args};
 use starknet_types_core::felt::Felt;
 
@@ -141,7 +141,7 @@ impl TransfersGenerator {
     }
 
     pub fn execute_transfers(&mut self) {
-        let mut txs: Vec<Transaction> = Vec::with_capacity(self.config.n_txs);
+        let mut txs: Vec<(TransactionHash, Transaction)> = Vec::with_capacity(self.config.n_txs);
         for _ in 0..self.config.n_txs {
             let sender_address = self.account_addresses[self.sender_index];
             let recipient_address = self.get_next_recipient();
@@ -149,12 +149,12 @@ impl TransfersGenerator {
 
             let tx = self.generate_transfer(sender_address, recipient_address);
             let account_tx = AccountTransaction::new_for_sequencing(tx);
-            txs.push(Transaction::Account(account_tx));
+            txs.push((TransactionHash::default(), Transaction::Account(account_tx)));
         }
         let results = self.executor.execute_txs(&txs);
         assert_eq!(results.len(), self.config.n_txs);
         for result in results {
-            assert!(!result.unwrap().0.is_reverted());
+            assert!(!result.unwrap().1.is_reverted());
         }
         // TODO(Avi, 01/06/2024): Run the same transactions concurrently on a new state and compare
         // the state diffs.

@@ -6,7 +6,7 @@ use starknet_api::test_utils::deploy_account::executable_deploy_account_tx;
 use starknet_api::test_utils::invoke::executable_invoke_tx;
 use starknet_api::test_utils::{NonceManager, DEFAULT_STRK_L1_GAS_PRICE};
 use starknet_api::transaction::fields::Fee;
-use starknet_api::transaction::TransactionVersion;
+use starknet_api::transaction::{TransactionHash, TransactionVersion};
 use starknet_api::{declare_tx_args, deploy_account_tx_args, felt, invoke_tx_args, nonce};
 use starknet_types_core::felt::Felt;
 
@@ -59,7 +59,7 @@ fn tx_executor_test_body<S: StateReader>(
     // TODO(Arni, 30/03/2024): Consider adding a test for the transaction execution info. If A test
     // should not be added, rename the test to `test_bouncer_info`.
     // TODO(Arni, 30/03/2024): Test all bouncer weights.
-    let _tx_execution_output = tx_executor.execute(&tx).unwrap();
+    let _tx_execution_output = tx_executor.execute(&(TransactionHash::default(), tx)).unwrap();
     let bouncer_weights = tx_executor.bouncer.get_accumulated_weights();
     assert_eq!(bouncer_weights.state_diff_size, expected_bouncer_weights.state_diff_size);
     assert_eq!(
@@ -279,14 +279,15 @@ fn test_bouncing(#[case] initial_bouncer_weights: BouncerWeights, #[case] n_even
     tx_executor.bouncer.set_accumulated_weights(initial_bouncer_weights);
 
     tx_executor
-        .execute(
-            &emit_n_events_tx(
+        .execute(&(
+            TransactionHash::default(),
+            emit_n_events_tx(
                 n_events,
                 account_address,
                 contract_address,
                 nonce_manager.next(account_address),
             )
-            .into(),
+            .into()),
         )
         .map_err(|error| panic!("{error:?}: {error}"))
         .unwrap();
@@ -305,7 +306,7 @@ fn test_execute_txs_bouncing(#[values(true, false)] concurrency_enabled: bool) {
 
     let mut tx_executor = TransactionExecutor::new(state, block_context, config);
 
-    let txs: Vec<Transaction> = [
+    let txs: Vec<(TransactionHash, Transaction)> = [
         emit_n_events_tx(1, account_address, contract_address, nonce!(0_u32)),
         // Transaction too big.
         emit_n_events_tx(
@@ -322,6 +323,7 @@ fn test_execute_txs_bouncing(#[values(true, false)] concurrency_enabled: bool) {
     ]
     .into_iter()
     .map(Transaction::Account)
+    .map(|tx| (TransactionHash::default(), tx))
     .collect();
 
     // Run.
@@ -406,9 +408,9 @@ fn test_stack_overflow(#[values(true, false)] concurrency_enabled: bool) {
     // Run.
     let config = TransactionExecutorConfig::create_for_testing(concurrency_enabled);
     let mut executor = TransactionExecutor::new(state, block_context, config);
-    let results = executor.execute_txs(&vec![account_tx.into()]);
+    let results = executor.execute_txs(&vec![(TransactionHash::default(), account_tx.into())]);
 
-    let (tx_execution_info, _state_diff) = results[0].as_ref().unwrap();
+    let (_, tx_execution_info, _state_diff) = results[0].as_ref().unwrap();
     assert!(tx_execution_info.is_reverted());
     let err = tx_execution_info.revert_error.clone().unwrap().to_string();
 

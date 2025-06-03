@@ -8,7 +8,7 @@ use starknet_api::test_utils::declare::executable_declare_tx;
 use starknet_api::test_utils::{NonceManager, TEST_ERC20_CONTRACT_ADDRESS2};
 use starknet_api::transaction::constants::DEPLOY_CONTRACT_FUNCTION_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::{ContractAddressSalt, Fee, ValidResourceBounds};
-use starknet_api::transaction::TransactionVersion;
+use starknet_api::transaction::{TransactionHash, TransactionVersion};
 use starknet_api::{contract_address, declare_tx_args, felt, invoke_tx_args, nonce, storage_key};
 use starknet_types_core::felt::Felt;
 
@@ -100,7 +100,8 @@ pub fn test_commit_tx() {
     ]
     .into_iter()
     .map(Transaction::Account)
-    .collect::<Vec<Transaction>>();
+    .map(|tx| (TransactionHash::default(), tx))
+    .collect::<Vec<(TransactionHash, Transaction)>>();
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let cached_state =
         test_state(&block_context.chain_info, BALANCE, &[(account, 1), (test_contract, 1)]);
@@ -169,7 +170,7 @@ pub fn test_commit_tx() {
                 assert_eq!(felt!(expected_sequencer_storage_read), actual_sequencer_storage_read,);
             }
         }
-        let tx_context = executor.block_context.to_tx_context(&txs[commit_idx]);
+        let tx_context = executor.block_context.to_tx_context(&txs[commit_idx].1);
         expected_sequencer_balance_low += actual_fee;
         // Check that the sequencer balance was updated correctly in the state.
         verify_sequencer_balance_update(
@@ -196,11 +197,11 @@ fn test_commit_tx_when_sender_is_sequencer() {
     let (sequencer_balance_key_low, sequencer_balance_key_high) =
         get_sequencer_balance_keys(&block_context);
 
-    let sequencer_tx = [Transaction::Account(trivial_calldata_invoke_tx(
+    let sequencer_tx = [(TransactionHash::default(), Transaction::Account(trivial_calldata_invoke_tx(
         account_address,
         test_contract_address,
         nonce!(0_u8),
-    ))];
+    )))];
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
 
@@ -224,7 +225,7 @@ fn test_commit_tx_when_sender_is_sequencer() {
     let read_values_before_commit = fee_transfer_call_info.storage_read_values.clone();
     drop(execution_task_outputs);
 
-    let tx_context = &executor.block_context.to_tx_context(&sequencer_tx[0]);
+    let tx_context = &executor.block_context.to_tx_context(&sequencer_tx[0].1);
     let fee_token_address =
         executor.block_context.chain_info.fee_token_address(&tx_context.tx_info.fee_type());
     let sequencer_balance_high_before =
@@ -310,8 +311,8 @@ fn test_worker_execute(default_all_resource_bounds: ValidResourceBounds) {
 
     let txs = [tx_success, tx_failure, tx_revert]
         .into_iter()
-        .map(Transaction::Account)
-        .collect::<Vec<Transaction>>();
+        .map(|tx| (TransactionHash::default(), tx.into()))
+        .collect::<Vec<(TransactionHash, Transaction)>>();
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor = WorkerExecutor::new(
@@ -470,9 +471,8 @@ fn test_worker_validate(default_all_resource_bounds: ValidResourceBounds) {
 
     let txs = [account_tx0, account_tx1]
         .into_iter()
-        .map(Transaction::Account)
-        .collect::<Vec<Transaction>>();
-
+        .map(|tx| (TransactionHash::default(), tx.into()))
+        .collect::<Vec<(TransactionHash, Transaction)>>();
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor = WorkerExecutor::new(
         safe_versioned_state.clone(),
@@ -583,7 +583,7 @@ fn test_deploy_before_declare(
     });
 
     let txs =
-        [declare_tx, invoke_tx].into_iter().map(Transaction::Account).collect::<Vec<Transaction>>();
+        [declare_tx, invoke_tx].into_iter().map(Transaction::Account).map(|tx| (TransactionHash::default(), tx)).collect::<Vec<(TransactionHash, Transaction)>>();
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor =
@@ -656,7 +656,8 @@ fn test_worker_commit_phase(default_all_resource_bounds: ValidResourceBounds) {
                 nonce: nonce_manager.next(sender_address)
             }))
         })
-        .collect::<Vec<Transaction>>();
+        .map(|tx| (TransactionHash::default(), tx))
+        .collect::<Vec<(TransactionHash, Transaction)>>();
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor =
@@ -747,7 +748,8 @@ fn test_worker_commit_phase_with_halt() {
                 nonce_manager.next(sender_address),
             ))
         })
-        .collect::<Vec<Transaction>>();
+        .map(|tx| (TransactionHash::default(), tx))
+        .collect::<Vec<(TransactionHash, Transaction)>>();
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor =
