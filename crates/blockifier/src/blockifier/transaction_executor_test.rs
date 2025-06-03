@@ -287,8 +287,8 @@ fn test_bouncing(#[case] initial_bouncer_weights: BouncerWeights, #[case] n_even
                 contract_address,
                 nonce_manager.next(account_address),
             )
-            .into()),
-        )
+            .into(),
+        ))
         .map_err(|error| panic!("{error:?}: {error}"))
         .unwrap();
 }

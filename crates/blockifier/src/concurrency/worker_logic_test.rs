@@ -197,11 +197,14 @@ fn test_commit_tx_when_sender_is_sequencer() {
     let (sequencer_balance_key_low, sequencer_balance_key_high) =
         get_sequencer_balance_keys(&block_context);
 
-    let sequencer_tx = [(TransactionHash::default(), Transaction::Account(trivial_calldata_invoke_tx(
-        account_address,
-        test_contract_address,
-        nonce!(0_u8),
-    )))];
+    let sequencer_tx = [(
+        TransactionHash::default(),
+        Transaction::Account(trivial_calldata_invoke_tx(
+            account_address,
+            test_contract_address,
+            nonce!(0_u8),
+        )),
+    )];
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
 
@@ -582,8 +585,11 @@ fn test_deploy_before_declare(
         nonce: nonce!(0_u8)
     });
 
-    let txs =
-        [declare_tx, invoke_tx].into_iter().map(Transaction::Account).map(|tx| (TransactionHash::default(), tx)).collect::<Vec<(TransactionHash, Transaction)>>();
+    let txs = [declare_tx, invoke_tx]
+        .into_iter()
+        .map(Transaction::Account)
+        .map(|tx| (TransactionHash::default(), tx))
+        .collect::<Vec<(TransactionHash, Transaction)>>();
 
     let mut bouncer = Bouncer::new(block_context.bouncer_config.clone());
     let worker_executor =
