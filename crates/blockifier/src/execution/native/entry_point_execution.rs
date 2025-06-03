@@ -10,7 +10,7 @@ use crate::execution::entry_point::{
 };
 use crate::execution::errors::{EntryPointExecutionError, PostExecutionError, PreExecutionError};
 use crate::execution::native::contract_class::NativeCompiledClassV1;
-use crate::execution::native::syscall_handler::NativeSyscallHandler;
+use crate::execution::native::syscall_handler::{NativeSyscallHandler, SYSCALL_COUNTER};
 use crate::state::state_api::State;
 
 // todo(rodrigo): add an `entry point not found` test for Native
@@ -86,7 +86,12 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
+    #[cfg(feature = "block_composition")]
+    let syscalls_coutnts = *SYSCALL_COUNTER.lock().unwrap();
+
     Ok(CallInfo {
+        #[cfg(feature = "block_composition")]
+        syscall_counts,
         call: syscall_handler.base.call.into(),
         execution: CallExecution {
             retdata: Retdata(call_result.return_values),

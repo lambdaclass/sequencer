@@ -13,6 +13,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::execution::contract_class::TrackedResource;
 use crate::execution::entry_point::CallEntryPoint;
+use crate::execution::native::syscall_handler::SyscallCounts;
 use crate::state::cached_state::StorageEntry;
 use crate::utils::u64_from_usize;
 use crate::versioned_constants::VersionedConstants;
@@ -200,6 +201,8 @@ impl AddAssign<&ChargedResources> for ChargedResources {
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CallInfo {
+    #[cfg(feature = "block_composition")]
+    pub syscall_counts: SyscallCounts,
     pub call: CallEntryPoint,
     pub execution: CallExecution,
     pub inner_calls: Vec<CallInfo>,

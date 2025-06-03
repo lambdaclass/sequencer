@@ -16,6 +16,7 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 
 use super::syscall_handler::NativeSyscallHandler;
+use crate::execution::native::syscall_handler::{SyscallCounts, SYSCALL_COUNTER};
 
 #[derive(Debug)]
 pub enum ContractExecutor {
@@ -48,7 +49,13 @@ impl ContractExecutor {
     ) -> cairo_native::error::Result<ContractExecutionResult> {
         match self {
             ContractExecutor::Aot(aot_contract_executor) => {
-                aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler)
+                let result =
+                    aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler);
+
+                #[cfg(feature = "block_composition")]
+                SYSCALL_COUNTER.set(SyscallCounts::default())?;
+
+                result
             }
             ContractExecutor::Emu((program, entrypoints, version)) => {
                 let mut virtual_machine =
