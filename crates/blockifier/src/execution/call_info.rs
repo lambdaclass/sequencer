@@ -3,8 +3,6 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
-#[cfg(feature = "block-composition")]
-use serde::Deserialize;
 use serde::Serialize;
 use starknet_api::core::{ClassHash, ContractAddress, EthAddress};
 use starknet_api::execution_resources::{GasAmount, GasVector};
@@ -197,27 +195,13 @@ impl AddAssign<&ChargedResources> for ChargedResources {
     }
 }
 
-#[cfg(feature = "block-composition")]
-#[derive(PartialEq, Eq, Default, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct SyscallCount(pub u64);
-
-impl SyscallCount {
-    pub fn increase(&mut self) {
-        self.0 += 1;
-    }
-
-    pub fn clear(&mut self) {
-        self.0 = 0;
-    }
-}
-
 /// Represents the full effects of executing an entry point, including the inner calls it invoked.
 #[cfg_attr(any(test, feature = "testing"), derive(Clone))]
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CallInfo {
     #[cfg(feature = "block-composition")]
-    pub syscall_counts: SyscallCount,
+    pub syscall_counts: u64,
     pub call: CallEntryPoint,
     pub execution: CallExecution,
     pub inner_calls: Vec<CallInfo>,

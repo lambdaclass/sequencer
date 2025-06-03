@@ -1,3 +1,6 @@
+#[cfg(feature = "block-composition")]
+use std::sync::atomic::Ordering;
+
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::utils::BuiltinCosts;
 
@@ -87,7 +90,7 @@ fn create_callinfo(
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
     #[cfg(feature = "block-composition")]
-    let syscall_counts = *SYSCALL_COUNTER.lock().unwrap();
+    let syscall_counts = SYSCALL_COUNTER.load(Ordering::Relaxed);
 
     Ok(CallInfo {
         #[cfg(feature = "block-composition")]

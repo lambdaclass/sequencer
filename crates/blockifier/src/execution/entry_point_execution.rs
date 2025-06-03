@@ -10,8 +10,6 @@ use cairo_vm::vm::security::verify_secure_runner;
 use num_traits::{ToPrimitive, Zero};
 use starknet_types_core::felt::Felt;
 
-#[cfg(feature = "block-composition")]
-use crate::execution::call_info::SyscallCount;
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::{CompiledClassV1, EntryPointV1, TrackedResource};
 use crate::execution::entry_point::{
@@ -381,7 +379,7 @@ pub fn finalize_execution(
     let syscall_handler_base = syscall_handler.base;
     Ok(CallInfo {
         #[cfg(feature = "block-composition")]
-        syscall_counts: SyscallCount(0),
+        syscall_counts: 0,
         call: syscall_handler_base.call.into(),
         execution: CallExecution {
             retdata: call_result.retdata,

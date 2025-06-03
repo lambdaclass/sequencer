@@ -2,6 +2,8 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
+#[cfg(feature = "block-composition")]
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use cairo_lang_sierra::program::Program;
@@ -53,7 +55,7 @@ impl ContractExecutor {
                     aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler);
 
                 #[cfg(feature = "block-composition")]
-                SYSCALL_COUNTER.lock().unwrap().clear();
+                SYSCALL_COUNTER.fetch_and(0, Ordering::Relaxed);
 
                 result
             }
