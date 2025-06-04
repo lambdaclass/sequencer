@@ -2,8 +2,6 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-#[cfg(feature = "block-composition")]
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use cairo_lang_sierra::program::Program;
@@ -18,7 +16,6 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 
 use super::syscall_handler::NativeSyscallHandler;
-use crate::execution::native::syscall_handler::SYSCALL_COUNTER;
 
 #[derive(Debug)]
 pub enum ContractExecutor {
@@ -51,13 +48,7 @@ impl ContractExecutor {
     ) -> cairo_native::error::Result<ContractExecutionResult> {
         match self {
             ContractExecutor::Aot(aot_contract_executor) => {
-                let result =
-                    aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler);
-
-                #[cfg(feature = "block-composition")]
-                SYSCALL_COUNTER.fetch_and(0, Ordering::Relaxed);
-
-                result
+                aot_contract_executor.run(selector, args, gas, builtin_costs, syscall_handler)
             }
             ContractExecutor::Emu((program, entrypoints, version)) => {
                 let mut virtual_machine =

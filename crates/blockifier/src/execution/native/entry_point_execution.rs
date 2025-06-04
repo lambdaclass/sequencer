@@ -67,7 +67,12 @@ pub fn execute_entry_point_call(
         return Err(EntryPointExecutionError::NativeUnrecoverableError(Box::new(error)));
     }
 
-    create_callinfo(call_result, syscall_handler)
+    let result = create_callinfo(call_result, syscall_handler);
+
+    #[cfg(feature = "block-composition")]
+    SYSCALL_COUNTER.fetch_and(0, Ordering::Relaxed);
+
+    result
 }
 
 fn create_callinfo(
