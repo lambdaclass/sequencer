@@ -30,6 +30,7 @@ pub struct ProfilerResults {
     pub quartiles: [u64; 5],
 }
 
+#[cfg(feature = "with-libfunc-profiling")]
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<HashMap<Felt, Vec<ProfilerResults>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
