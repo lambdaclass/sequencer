@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
@@ -12,10 +13,25 @@ use cairo_native::executor::AotContractExecutor;
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
+use serde::Serialize;
 use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 
 use super::syscall_handler::NativeSyscallHandler;
+
+#[cfg(feature = "with-libfunc-profiling")]
+#[derive(Debug, Serialize)]
+pub struct ProfilerResults {
+    pub libfunc_idx: u64,
+    pub samples: u64,
+    pub total_time: u64,
+    pub average_time: f64,
+    pub std_deviation: f64,
+    pub quartiles: [u64; 5],
+}
+
+pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<HashMap<Felt, Vec<ProfilerResults>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub enum ContractExecutor {
@@ -176,22 +192,28 @@ impl ContractExecutor {
                     // Retreive trace dump for current execution
                     let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
-                    // Save trace dump to file
-                    let profile_path = PathBuf::from(format!("libfunc_profiles/{counter}.md"));
-                    let profile_parent_path = profile_path.parent().unwrap();
-                    fs::create_dir_all(profile_parent_path).unwrap();
-                    let mut profile_file = File::create(&profile_path).unwrap();
-
                     for (libfunc_id, (n_samples, sum, quartiles, average, std_dev)) in
                         profile.process()
                     {
-                        writeln!(profile_file, "{libfunc_id}")?;
-                        writeln!(profile_file, "    Total Samples:          {n_samples}")?;
-                        writeln!(profile_file, "    Total Execution Time:   {sum}")?;
-                        writeln!(profile_file, "    Average Execution Time: {average}")?;
-                        writeln!(profile_file, "    Standard Deviation:     {std_dev}")?;
-                        writeln!(profile_file, "    Quartiles:              {quartiles:?}")?;
-                        writeln!(profile_file)?;
+                        let profile_result = ProfilerResults {
+                            libfunc_idx: libfunc_id.id,
+                            samples: n_samples,
+                            total_time: sum,
+                            average_time: average,
+                            std_deviation: std_dev,
+                            quartiles,
+                        };
+
+                        let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
+
+                        match profiles_map.get_mut(&selector) {
+                            Some(profiles) => {
+                                profiles.push(profile_result);
+                            }
+                            None => {
+                                profiles_map.insert(selector, vec![profile_result]);
+                            }
+                        }
                     }
 
                     *libfunc_profiling_trace_id = libfunc_profiling_old_trace_id;
