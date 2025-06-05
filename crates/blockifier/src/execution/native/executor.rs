@@ -20,7 +20,7 @@ use starknet_types_core::felt::Felt;
 use super::syscall_handler::NativeSyscallHandler;
 
 #[cfg(feature = "with-libfunc-profiling")]
-#[derive(Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct ProfilerResults {
     pub libfunc_idx: u64,
     pub samples: u64,
