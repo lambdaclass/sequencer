@@ -16,13 +16,14 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
 use {
-    crate::execution::native::utils::libfunc_profiler::LibfuncProfileSummary,
+    super::utils::libfunc_profiler::LibfuncProfileSummary,
     std::collections::HashMap,
     std::sync::{LazyLock, Mutex},
 };
 
 use super::syscall_handler::NativeSyscallHandler;
 
+#[cfg(feature = "with-libfunc-profiling")]
 type ProfileByEntrypoint = HashMap<(Felt, Felt), Vec<LibfuncProfileSummary>>;
 
 #[cfg(feature = "with-libfunc-profiling")]

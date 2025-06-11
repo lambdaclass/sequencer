@@ -83,7 +83,7 @@ pub fn calculate_resource_bounds(
     })
 }
 
-#[cfg(feature = "with-trace-dump")]
+#[cfg(feature = "with-libfunc-profiling")]
 pub mod libfunc_profiler {
     use cairo_lang_sierra::ids::ConcreteLibfuncId;
     use num_traits::ToPrimitive;
