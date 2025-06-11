@@ -24,8 +24,9 @@ use {
 use super::syscall_handler::NativeSyscallHandler;
 
 #[cfg(feature = "with-libfunc-profiling")]
-pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<HashMap<Felt, Vec<LibfuncProfileSummary>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static LIBFUNC_PROFILES_MAP: LazyLock<
+    Mutex<HashMap<(Felt, Felt), Vec<LibfuncProfileSummary>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub enum ContractExecutor {
@@ -212,12 +213,17 @@ impl ContractExecutor {
                     for summary in profile.summarize_profiles(process_profiles) {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
-                        match profiles_map.get_mut(&selector) {
+                        match profiles_map
+                            .get_mut(&(syscall_handler.base.call.class_hash, selector))
+                        {
                             Some(profiles) => {
                                 profiles.push(summary);
                             }
                             None => {
-                                profiles_map.insert(selector, vec![summary]);
+                                profiles_map.insert(
+                                    (syscall_handler.base.call.class_hash, selector),
+                                    vec![summary],
+                                );
                             }
                         }
                     }
