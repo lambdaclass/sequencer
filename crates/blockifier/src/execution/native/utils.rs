@@ -82,3 +82,87 @@ pub fn calculate_resource_bounds(
         }
     })
 }
+
+#[cfg(feature = "with-trace-dump")]
+pub mod libfunc_profiler {
+    use cairo_lang_sierra::ids::ConcreteLibfuncId;
+    use num_traits::ToPrimitive;
+    use serde::Serialize;
+
+    #[derive(Clone, Copy, Debug, Serialize)]
+    pub struct LibfuncProfileSummary {
+        pub libfunc_idx: u64,
+        pub samples: u64,
+        pub total_time: u64,
+        pub average_time: f64,
+        pub std_deviation: f64,
+        pub quartiles: [u64; 5],
+    }
+
+    pub fn process_profiles(
+        profile: (ConcreteLibfuncId, (Vec<u64>, u64)),
+    ) -> LibfuncProfileSummary {
+        let (libfunc_idx, (mut tick_deltas, extra_count)) = profile;
+
+        // if no deltas were registered, we only return the libfunc's calls amount
+        if tick_deltas.is_empty() {
+            return LibfuncProfileSummary {
+                libfunc_idx: libfunc_idx.id,
+                samples: extra_count,
+                total_time: 0,
+                average_time: 0.0,
+                std_deviation: 0.0,
+                quartiles: [0; 5],
+            };
+        }
+
+        tick_deltas.sort();
+
+        // Drop outliers.
+        {
+            let q1 = tick_deltas[tick_deltas.len() / 4];
+            let q3 = tick_deltas[3 * tick_deltas.len() / 4];
+            let iqr = q3 - q1;
+
+            let q1_thr = q1.saturating_sub(iqr + iqr / 2);
+            let q3_thr = q3 + (iqr + iqr / 2);
+
+            tick_deltas.retain(|x| *x >= q1_thr && *x <= q3_thr);
+        }
+
+        // Compute the quartiles.
+        let quartiles = [
+            *tick_deltas.first().unwrap(),
+            tick_deltas[tick_deltas.len() / 4],
+            tick_deltas[tick_deltas.len() / 2],
+            tick_deltas[3 * tick_deltas.len() / 4],
+            *tick_deltas.last().unwrap(),
+        ];
+
+        // Compuite the average.
+        let average = tick_deltas.iter().copied().sum::<u64>().to_f64().unwrap()
+            / tick_deltas.len().to_f64().unwrap();
+
+        // Compute the standard deviation.
+        let std_dev = {
+            let sum = tick_deltas
+                .iter()
+                .copied()
+                .map(|x| x.to_f64().unwrap())
+                .map(|x| (x - average))
+                .map(|x| x * x)
+                .sum::<f64>();
+            sum / (tick_deltas.len().to_u64().unwrap() + extra_count).to_f64().unwrap()
+        };
+
+        LibfuncProfileSummary {
+            libfunc_idx: libfunc_idx.id,
+            samples: tick_deltas.len().to_u64().unwrap() + extra_count,
+            total_time: tick_deltas.iter().sum::<u64>()
+                + (extra_count.to_f64().unwrap() * average).round().to_u64().unwrap(),
+            average_time: average,
+            std_deviation: std_dev,
+            quartiles,
+        }
+    }
+}

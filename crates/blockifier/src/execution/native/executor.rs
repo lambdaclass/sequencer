@@ -16,7 +16,7 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
 use {
-    serde::Serialize,
+    crate::execution::native::utils::libfunc_profiler::LibfuncProfileSummary,
     std::collections::HashMap,
     std::sync::{LazyLock, Mutex},
 };
@@ -24,18 +24,7 @@ use {
 use super::syscall_handler::NativeSyscallHandler;
 
 #[cfg(feature = "with-libfunc-profiling")]
-#[derive(Clone, Copy, Debug, Serialize)]
-pub struct ProfilerResults {
-    pub libfunc_idx: u64,
-    pub samples: u64,
-    pub total_time: u64,
-    pub average_time: f64,
-    pub std_deviation: f64,
-    pub quartiles: [u64; 5],
-}
-
-#[cfg(feature = "with-libfunc-profiling")]
-pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<HashMap<Felt, Vec<ProfilerResults>>>> =
+pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<HashMap<Felt, Vec<LibfuncProfileSummary>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
@@ -44,7 +33,7 @@ pub enum ContractExecutor {
     Emu((Arc<Program>, ContractEntryPoints, VersionId)),
     // must use a different variant as we need `Program` for trace feature
     #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
-    AotTrace((AotContractExecutor, Program)),
+    AotWithProgram((AotContractExecutor, Program)),
 }
 
 impl From<AotContractExecutor> for ContractExecutor {
@@ -117,7 +106,7 @@ impl ContractExecutor {
                 })
             }
             #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
-            ContractExecutor::AotTrace((executor, program)) => {
+            ContractExecutor::AotWithProgram((executor, program)) => {
                 #[cfg(feature = "with-trace-dump")]
                 use {
                     cairo_lang_sierra::program_registry::ProgramRegistry,
@@ -173,7 +162,7 @@ impl ContractExecutor {
 
                     libfunc_profiling_trace_id = unsafe {
                         let trace_id_ptr =
-                            executor.find_symbol_ptr(ProfilerBinding::TraceId.symbol()).unwrap();
+                            executor.find_symbol_ptr(ProfilerBinding::ProfileId.symbol()).unwrap();
                         trace_id_ptr.cast::<u64>().as_mut().unwrap()
                     };
 
@@ -200,29 +189,35 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    // Retreive trace dump for current execution
+                    use super::utils::libfunc_profiler::process_profiles;
+                    use crate::execution::native::utils::libfunc_profiler::LibfuncProfileSummary;
+
+                    // Retreive profile for current execution
                     let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
-                    for (libfunc_id, (n_samples, sum, quartiles, average, std_dev)) in
-                        profile.process()
-                    {
-                        let profile_result = ProfilerResults {
-                            libfunc_idx: libfunc_id.id,
-                            samples: n_samples,
-                            total_time: sum,
-                            average_time: average,
-                            std_deviation: std_dev,
-                            quartiles,
-                        };
+                    let mut processed_profiles = profile.summarize_profiles(process_profiles);
 
+                    processed_profiles.sort_by_key(
+                        |LibfuncProfileSummary { libfunc_idx, .. }| {
+                            profile
+                                .sierra_program()
+                                .libfunc_declarations
+                                .iter()
+                                .enumerate()
+                                .find_map(|(i, x)| (x.id.id == *libfunc_idx).then_some(i))
+                                .unwrap()
+                        },
+                    );
+
+                    for summary in profile.summarize_profiles(process_profiles) {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
                         match profiles_map.get_mut(&selector) {
                             Some(profiles) => {
-                                profiles.push(profile_result);
+                                profiles.push(summary);
                             }
                             None => {
-                                profiles_map.insert(selector, vec![profile_result]);
+                                profiles_map.insert(selector, vec![summary]);
                             }
                         }
                     }
