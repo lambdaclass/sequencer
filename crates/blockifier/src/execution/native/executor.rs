@@ -23,10 +23,11 @@ use {
 
 use super::syscall_handler::NativeSyscallHandler;
 
+type ProfileByEntrypoint = HashMap<(Felt, Felt), Vec<LibfuncProfileSummary>>;
+
 #[cfg(feature = "with-libfunc-profiling")]
-pub static LIBFUNC_PROFILES_MAP: LazyLock<
-    Mutex<HashMap<(Felt, Felt), Vec<LibfuncProfileSummary>>>,
-> = LazyLock::new(|| Mutex::new(HashMap::new()));
+pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfileByEntrypoint>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub enum ContractExecutor {
@@ -134,6 +135,8 @@ impl ContractExecutor {
                 let libfunc_profiling_trace_id: &mut u64;
                 #[cfg(feature = "with-libfunc-profiling")]
                 let libfunc_profiling_old_trace_id: u64;
+                #[cfg(feature = "with-libfunc-profiling")]
+                let class_hash = *syscall_handler.base.call.class_hash;
 
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -213,17 +216,12 @@ impl ContractExecutor {
                     for summary in profile.summarize_profiles(process_profiles) {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
-                        match profiles_map
-                            .get_mut(&(syscall_handler.base.call.class_hash, selector))
-                        {
+                        match profiles_map.get_mut(&(class_hash, selector)) {
                             Some(profiles) => {
                                 profiles.push(summary);
                             }
                             None => {
-                                profiles_map.insert(
-                                    (syscall_handler.base.call.class_hash, selector),
-                                    vec![summary],
-                                );
+                                profiles_map.insert((class_hash, selector), vec![summary]);
                             }
                         }
                     }
