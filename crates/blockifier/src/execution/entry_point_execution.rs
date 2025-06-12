@@ -378,6 +378,8 @@ pub fn finalize_execution(
         + &CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
     let syscall_handler_base = syscall_handler.base;
     Ok(CallInfo {
+        #[cfg(feature = "block-composition")]
+        syscall_counts: 0,
         call: syscall_handler_base.call.into(),
         execution: CallExecution {
             retdata: call_result.retdata,

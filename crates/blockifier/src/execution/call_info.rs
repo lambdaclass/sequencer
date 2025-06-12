@@ -200,6 +200,8 @@ impl AddAssign<&ChargedResources> for ChargedResources {
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
 #[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CallInfo {
+    #[cfg(feature = "block-composition")]
+    pub syscall_counts: u64,
     pub call: CallEntryPoint,
     pub execution: CallExecution,
     pub inner_calls: Vec<CallInfo>,

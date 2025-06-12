@@ -1,5 +1,7 @@
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::utils::BuiltinCosts;
+#[cfg(feature = "block-composition")]
+use {crate::execution::native::syscall_handler::SYSCALL_COUNTER, std::sync::atomic::Ordering};
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -64,7 +66,12 @@ pub fn execute_entry_point_call(
         return Err(EntryPointExecutionError::NativeUnrecoverableError(Box::new(error)));
     }
 
-    create_callinfo(call_result, syscall_handler)
+    let result = create_callinfo(call_result, syscall_handler);
+
+    #[cfg(feature = "block-composition")]
+    SYSCALL_COUNTER.fetch_and(0, Ordering::Relaxed);
+
+    result
 }
 
 fn create_callinfo(
@@ -86,7 +93,12 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
+    #[cfg(feature = "block-composition")]
+    let syscall_counts = SYSCALL_COUNTER.load(Ordering::Relaxed);
+
     Ok(CallInfo {
+        #[cfg(feature = "block-composition")]
+        syscall_counts,
         call: syscall_handler.base.call.into(),
         execution: CallExecution {
             retdata: Retdata(call_result.return_values),
