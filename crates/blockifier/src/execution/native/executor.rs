@@ -160,10 +160,7 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    LIBFUNC_PROFILE
-                        .lock()
-                        .unwrap()
-                        .insert(counter, ProfileImpl::new(program.clone()));
+                    LIBFUNC_PROFILE.lock().unwrap().insert(counter, ProfileImpl::new());
 
                     libfunc_profiling_trace_id = unsafe {
                         let trace_id_ptr =
@@ -195,26 +192,14 @@ impl ContractExecutor {
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
                     use super::utils::libfunc_profiler::process_profiles;
-                    use crate::execution::native::utils::libfunc_profiler::LibfuncProfileSummary;
 
                     // Retreive profile for current execution
                     let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
-                    let mut processed_profiles = profile.summarize_profiles(process_profiles);
+                    let raw_profiles = profile.get_profiles(program);
+                    let processed_progiles = process_profiles(raw_profiles, program);
 
-                    processed_profiles.sort_by_key(
-                        |LibfuncProfileSummary { libfunc_idx, .. }| {
-                            profile
-                                .sierra_program()
-                                .libfunc_declarations
-                                .iter()
-                                .enumerate()
-                                .find_map(|(i, x)| (x.id.id == *libfunc_idx).then_some(i))
-                                .unwrap()
-                        },
-                    );
-
-                    for summary in profile.summarize_profiles(process_profiles) {
+                    for summary in processed_progiles {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
                         match profiles_map.get_mut(&(class_hash, selector)) {
