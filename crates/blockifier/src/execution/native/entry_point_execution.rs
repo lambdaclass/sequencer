@@ -1,8 +1,7 @@
-#[cfg(feature = "block-composition")]
-use std::sync::atomic::Ordering;
-
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::utils::BuiltinCosts;
+#[cfg(feature = "block-composition")]
+use {crate::execution::native::syscall_handler::SYSCALL_COUNTER, std::sync::atomic::Ordering};
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -13,7 +12,7 @@ use crate::execution::entry_point::{
 };
 use crate::execution::errors::{EntryPointExecutionError, PostExecutionError, PreExecutionError};
 use crate::execution::native::contract_class::NativeCompiledClassV1;
-use crate::execution::native::syscall_handler::{NativeSyscallHandler, SYSCALL_COUNTER};
+use crate::execution::native::syscall_handler::NativeSyscallHandler;
 use crate::state::state_api::State;
 
 // todo(rodrigo): add an `entry point not found` test for Native
