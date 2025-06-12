@@ -656,6 +656,7 @@ fn test_invoke_tx(
             gas: total_gas,
         },
         revert_error: None,
+        time: None,
     };
 
     // Test execution info result.
@@ -1702,6 +1703,7 @@ fn test_declare_tx(
             gas: expected_total_gas,
         },
         revert_error: None,
+        time: None,
     };
 
     // Test execution info result.
@@ -1947,6 +1949,7 @@ fn test_deploy_account_tx(
             gas: expected_total_gas,
         },
         revert_error: None,
+        time: None,
     };
 
     // Test execution info result.
@@ -2538,6 +2541,7 @@ fn test_l1_handler(#[values(false, true)] use_kzg_da: bool) {
             gas: total_gas,
         },
         revert_error: None,
+        time: None,
     };
 
     // Check the actual returned execution info.
