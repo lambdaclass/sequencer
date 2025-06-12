@@ -103,6 +103,5 @@ fn create_callinfo(
         read_class_hash_values: syscall_handler.base.read_class_hash_values,
         tracked_resource: TrackedResource::SierraGas,
         time: std::time::Duration::default(),
-        call_counter: 0,
     })
 }

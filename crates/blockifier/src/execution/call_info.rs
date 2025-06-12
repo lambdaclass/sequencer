@@ -208,7 +208,6 @@ pub struct CallInfo {
     pub tracked_resource: TrackedResource,
 
     // Additional information gathered during execution.
-    pub call_counter: usize,
     pub storage_read_values: Vec<Felt>,
     pub accessed_storage_keys: HashSet<StorageKey>,
     pub read_class_hash_values: Vec<ClassHash>,
