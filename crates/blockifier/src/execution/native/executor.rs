@@ -122,7 +122,7 @@ impl ContractExecutor {
                 #[cfg(feature = "with-libfunc-profiling")]
                 use {
                     cairo_native::metadata::profiler::ProfilerBinding,
-                    cairo_native::metadata::profiler::{ProfileImpl, LIBFUNC_PROFILE},
+                    cairo_native::metadata::profiler::{ProfilerImpl, LIBFUNC_PROFILE},
                 };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -160,7 +160,7 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    LIBFUNC_PROFILE.lock().unwrap().insert(counter, ProfileImpl::new());
+                    LIBFUNC_PROFILE.lock().unwrap().insert(counter, ProfilerImpl::new());
 
                     libfunc_profiling_trace_id = unsafe {
                         let trace_id_ptr =
@@ -191,15 +191,15 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    use super::utils::libfunc_profiler::process_profiles;
+                    use super::utils::libfunc_profiler::process_profile;
 
                     // Retreive profile for current execution
                     let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
-                    let raw_profiles = profile.get_profiles(program);
-                    let processed_progiles = process_profiles(raw_profiles, program);
+                    let raw_profile = profile.get_profile(program);
+                    let processed_profile = process_profile(raw_profile, program);
 
-                    for summary in processed_progiles {
+                    for summary in processed_profile {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
                         match profiles_map.get_mut(&(class_hash, selector)) {
