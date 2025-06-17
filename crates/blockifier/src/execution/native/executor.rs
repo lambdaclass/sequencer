@@ -4,11 +4,13 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
+use cairo_lang_sierra::ids::ConcreteLibfuncId;
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
 use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::executor::AotContractExecutor;
+use cairo_native::metadata::profiler::LibfuncProfileData;
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
@@ -16,17 +18,18 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
 use {
-    super::utils::libfunc_profiler::LibfuncProfileSummary,
     std::collections::HashMap,
     std::sync::{LazyLock, Mutex},
 };
 
 use super::syscall_handler::NativeSyscallHandler;
 
+type Profile = (ConcreteLibfuncId, LibfuncProfileData);
+
 #[cfg(feature = "with-libfunc-profiling")]
 // Map every entrypoint (class_hash, selector) to a tuple with the list of profiles and the sierra
 // program involved
-type ProfileByEntrypoint = HashMap<(Felt, Felt), (Vec<LibfuncProfileSummary>, Program)>;
+type ProfileByEntrypoint = HashMap<(Felt, Felt), (Vec<Profile>, Program)>;
 
 #[cfg(feature = "with-libfunc-profiling")]
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfileByEntrypoint>> =
@@ -193,26 +196,20 @@ impl ContractExecutor {
 
                 #[cfg(feature = "with-libfunc-profiling")]
                 {
-                    use super::utils::libfunc_profiler::process_profile;
-
                     // Retreive profile for current execution
                     let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
 
                     let raw_profile = profile.get_profile(program);
-                    let processed_profile = process_profile(raw_profile, program);
 
-                    for summary in processed_profile {
-                        let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
-
+                    let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
+                    for p in raw_profile {
                         match profiles_map.get_mut(&(class_hash, selector)) {
                             Some((profiles, _)) => {
-                                profiles.push((summary));
+                                profiles.push(p);
                             }
                             None => {
-                                profiles_map.insert(
-                                    (class_hash, selector),
-                                    (vec![summary], program.clone()),
-                                );
+                                profiles_map
+                                    .insert((class_hash, selector), (vec![p], program.clone()));
                             }
                         }
                     }
