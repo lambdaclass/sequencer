@@ -24,7 +24,9 @@ use {
 use super::syscall_handler::NativeSyscallHandler;
 
 #[cfg(feature = "with-libfunc-profiling")]
-type ProfileByEntrypoint = HashMap<(Felt, Felt), Vec<LibfuncProfileSummary>>;
+// Map every entrypoint (class_hash, selector) to a tuple with the list of profiles and the sierra
+// program involved
+type ProfileByEntrypoint = HashMap<(Felt, Felt), (Vec<LibfuncProfileSummary>, Program)>;
 
 #[cfg(feature = "with-libfunc-profiling")]
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfileByEntrypoint>> =
@@ -203,11 +205,14 @@ impl ContractExecutor {
                         let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
                         match profiles_map.get_mut(&(class_hash, selector)) {
-                            Some(profiles) => {
-                                profiles.push(summary);
+                            Some((profiles, _)) => {
+                                profiles.push((summary));
                             }
                             None => {
-                                profiles_map.insert((class_hash, selector), vec![summary]);
+                                profiles_map.insert(
+                                    (class_hash, selector),
+                                    (vec![summary], program.clone()),
+                                );
                             }
                         }
                     }
