@@ -10,7 +10,6 @@ use cairo_lang_starknet_classes::compiler_version::VersionId;
 use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::executor::AotContractExecutor;
-use cairo_native::metadata::profiler::LibfuncProfileData;
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
@@ -25,6 +24,7 @@ use {
 
 use super::syscall_handler::NativeSyscallHandler;
 
+#[cfg(feature = "with-libfunc-profiling")]
 type Profile = (ConcreteLibfuncId, LibfuncProfileData);
 
 #[cfg(feature = "with-libfunc-profiling")]
