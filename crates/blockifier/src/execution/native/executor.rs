@@ -18,6 +18,7 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
 use {
+    cairo_native::metadata::profiler::LibfuncProfileData,
     std::collections::HashMap,
     std::sync::{LazyLock, Mutex},
 };
