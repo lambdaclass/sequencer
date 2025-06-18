@@ -25,15 +25,27 @@ use {
 use super::syscall_handler::NativeSyscallHandler;
 
 #[cfg(feature = "with-libfunc-profiling")]
-type Profile = (ConcreteLibfuncId, LibfuncProfileData);
+pub struct Profile {
+    pub libfunc_id: ConcreteLibfuncId,
+    pub data: LibfuncProfileData,
+}
+
+#[cfg(feature = "with-libfunc-profiling")]
+pub struct EntrypointProfile {
+    pub tx_hash: String,
+    pub class_hash: Felt,
+    pub selector: Felt,
+    pub profile: Vec<Profile>,
+    pub program: Program,
+}
 
 #[cfg(feature = "with-libfunc-profiling")]
 // Map every entrypoint (class_hash, selector) to a tuple with the list of profiles and the sierra
 // program involved
-type ProfileByEntrypoint = HashMap<(Felt, Felt), (Vec<Profile>, Program)>;
+type ProfilesByBlockTx = HashMap<u64, Vec<EntrypointProfile>>;
 
 #[cfg(feature = "with-libfunc-profiling")]
-pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfileByEntrypoint>> =
+pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
@@ -144,6 +156,17 @@ impl ContractExecutor {
                 let libfunc_profiling_old_trace_id: u64;
                 #[cfg(feature = "with-libfunc-profiling")]
                 let class_hash = *syscall_handler.base.call.class_hash;
+                #[cfg(feature = "with-libfunc-profiling")]
+                let tx_hash = syscall_handler
+                    .base
+                    .context
+                    .tx_context
+                    .tx_info
+                    .transaction_hash()
+                    .to_hex_string();
+                #[cfg(feature = "with-libfunc-profiling")]
+                let block_number =
+                    syscall_handler.base.context.tx_context.block_context.block_info.block_number.0;
 
                 let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -203,17 +226,26 @@ impl ContractExecutor {
                     let raw_profile = profile.get_profile(program);
 
                     let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
-                    for p in raw_profile {
-                        match profiles_map.get_mut(&(class_hash, selector)) {
-                            Some((profiles, _)) => {
-                                profiles.push(p);
-                            }
-                            None => {
-                                profiles_map
-                                    .insert((class_hash, selector), (vec![p], program.clone()));
-                            }
+
+                    let profile = EntrypointProfile {
+                        tx_hash,
+                        class_hash,
+                        selector,
+                        profile: raw_profile
+                            .into_iter()
+                            .map(|(libfunc_id, data)| Profile { libfunc_id, data })
+                            .collect_vec(),
+                        program: program.clone(),
+                    };
+
+                    match profiles_map.get_mut(&block_number) {
+                        Some(p) => {
+                            p.push(profile);
                         }
-                    }
+                        None => {
+                            profiles_map.insert(block_number, vec![profile]);
+                        }
+                    };
 
                     *libfunc_profiling_trace_id = libfunc_profiling_old_trace_id;
                 }
