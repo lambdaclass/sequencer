@@ -248,10 +248,10 @@ impl ContractExecutor {
                         None => {
                             let tx_profile = TransactionProfile {
                                 block_number,
-                                tx_hash,
+                                tx_hash: tx_hash.clone(),
                                 entrypoint_profiles: vec![profile],
                             };
-                            profiles_map.insert(tx_hash.clone(), tx_profile);
+                            profiles_map.insert(tx_hash, tx_profile);
                         }
                     };
 
