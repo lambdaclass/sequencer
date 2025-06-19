@@ -29,10 +29,8 @@ pub struct Profile {
     pub libfunc_id: ConcreteLibfuncId,
     pub data: LibfuncProfileData,
 }
-
 #[cfg(feature = "with-libfunc-profiling")]
 pub struct EntrypointProfile {
-    pub tx_hash: String,
     pub class_hash: Felt,
     pub selector: Felt,
     pub profile: Vec<Profile>,
@@ -40,9 +38,15 @@ pub struct EntrypointProfile {
 }
 
 #[cfg(feature = "with-libfunc-profiling")]
-// Map every entrypoint (class_hash, selector) to a tuple with the list of profiles and the sierra
-// program involved
-type ProfilesByBlockTx = HashMap<u64, Vec<EntrypointProfile>>;
+pub struct TransactionProfile {
+    pub block_number: u64,
+    pub tx_hash: String,
+    pub entrypoint_profiles: Vec<EntrypointProfile>,
+}
+
+#[cfg(feature = "with-libfunc-profiling")]
+// Map a transaction hash to its profile
+type ProfilesByBlockTx = HashMap<String, TransactionProfile>;
 
 #[cfg(feature = "with-libfunc-profiling")]
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
@@ -228,7 +232,6 @@ impl ContractExecutor {
                     let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
 
                     let profile = EntrypointProfile {
-                        tx_hash,
                         class_hash,
                         selector,
                         profile: raw_profile
@@ -238,12 +241,17 @@ impl ContractExecutor {
                         program: program.clone(),
                     };
 
-                    match profiles_map.get_mut(&block_number) {
-                        Some(p) => {
-                            p.push(profile);
+                    match profiles_map.get_mut(&tx_hash) {
+                        Some(tx_profile) => {
+                            tx_profile.entrypoint_profiles.push(profile);
                         }
                         None => {
-                            profiles_map.insert(block_number, vec![profile]);
+                            let tx_profile = TransactionProfile {
+                                block_number,
+                                tx_hash,
+                                entrypoint_profiles: vec![profile],
+                            };
+                            profiles_map.insert(tx_hash, vec![tx_profile]);
                         }
                     };
 
