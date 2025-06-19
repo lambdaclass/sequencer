@@ -23,17 +23,12 @@ use {
 };
 
 use super::syscall_handler::NativeSyscallHandler;
-
-#[cfg(feature = "with-libfunc-profiling")]
-pub struct Profile {
-    pub libfunc_id: ConcreteLibfuncId,
-    pub data: LibfuncProfileData,
-}
 #[cfg(feature = "with-libfunc-profiling")]
 pub struct EntrypointProfile {
     pub class_hash: Felt,
     pub selector: Felt,
-    pub profile: Vec<Profile>,
+    // Map a libfunc id to its respective profile
+    pub profile: HashMap<ConcreteLibfuncId, LibfuncProfileData>,
     pub program: Program,
 }
 
@@ -234,10 +229,7 @@ impl ContractExecutor {
                     let profile = EntrypointProfile {
                         class_hash,
                         selector,
-                        profile: raw_profile
-                            .into_iter()
-                            .map(|(libfunc_id, data)| Profile { libfunc_id, data })
-                            .collect_vec(),
+                        profile: raw_profile,
                         program: program.clone(),
                     };
 
