@@ -251,7 +251,7 @@ impl ContractExecutor {
                                 tx_hash,
                                 entrypoint_profiles: vec![profile],
                             };
-                            profiles_map.insert(tx_hash, tx_profile);
+                            profiles_map.insert(tx_hash.clone(), tx_profile);
                         }
                     };
 
