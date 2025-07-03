@@ -13,6 +13,8 @@ use cairo_native::executor::AotContractExecutor;
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
+#[cfg(feature = "with-libfunc-counter")]
+use serde::Serialize;
 use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
@@ -48,13 +50,15 @@ pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(feature = "with-libfunc-counter")]
+#[derive(Serialize)]
 pub struct EntrypointCounters {
     pub class_hash: Felt,
     pub selector: Felt,
-    pub counters: HashMap<ConcreteLibfuncId, u32>,
+    pub counters: Vec<u32>,
     pub program: Program,
 }
 #[cfg(feature = "with-libfunc-counter")]
+#[derive(Serialize)]
 pub struct TransactionCounters {
     pub block_number: u64,
     pub tx_hash: String,
@@ -308,17 +312,7 @@ impl ContractExecutor {
                 let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
 
                 // Retreive the libfunc counter for current execution
-                let libfunc_counter = LIBFUNC_COUNTER.lock().unwrap().remove(&counter).unwrap();
-
-                let counters = libfunc_counter
-                    .iter()
-                    .enumerate()
-                    .map(|(i, count)| {
-                        let libfunc = &program.libfunc_declarations[i];
-
-                        (libfunc.id.clone(), *count)
-                    })
-                    .collect::<HashMap<ConcreteLibfuncId, u32>>();
+                let counters = LIBFUNC_COUNTER.lock().unwrap().remove(&counter).unwrap();
 
                 let entrypoint_counter =
                     EntrypointCounters { class_hash, selector, counters, program: program.clone() };
