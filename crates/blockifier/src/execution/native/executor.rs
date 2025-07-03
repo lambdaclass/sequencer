@@ -3,6 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+#[cfg(any(feature = "with-libfunc-profiling", feature = "with-libfunc-counter"))]
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
@@ -49,22 +50,25 @@ type ProfilesByBlockTx = HashMap<String, TransactionProfile>;
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(feature = "with-libfunc-counter")]
 pub struct EntrypointCounters {
     pub class_hash: Felt,
     pub selector: Felt,
     pub counters: Vec<u32>,
     pub program: Program,
 }
-
+#[cfg(feature = "with-libfunc-counter")]
 pub struct TransactionCounters {
     pub block_number: u64,
     pub tx_hash: String,
     pub entrypoint_counters: Vec<EntrypointCounters>,
 }
 
+#[cfg(feature = "with-libfunc-counter")]
 // Map a transaction hash to its profile
 type CountersByBlockTx = HashMap<String, TransactionCounters>;
 
+#[cfg(feature = "with-libfunc-counter")]
 pub static LIBFUNC_COUNTERS_MAP: LazyLock<Mutex<CountersByBlockTx>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -75,6 +79,7 @@ pub enum ContractExecutor {
     // must use a different variant as we need `Program` for trace feature
     #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
     AotWithProgram((AotContractExecutor, Program)),
+    #[cfg(feature = "with-libfunc-counter")]
     AotWithLibfuncCounter((AotContractExecutor, Program)),
 }
 
@@ -274,6 +279,7 @@ impl ContractExecutor {
 
                 result
             }
+            #[cfg(feature = "with-libfunc-counter")]
             ContractExecutor::AotWithLibfuncCounter((executor, program)) => {
                 use cairo_native::metadata::libfunc_counter::libfunc_counter_runtime::LIBFUNC_COUNTER;
                 use cairo_native::metadata::libfunc_counter::LibfuncCounterBinding;
