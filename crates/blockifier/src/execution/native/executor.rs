@@ -47,6 +47,28 @@ type ProfilesByBlockTx = HashMap<String, TransactionProfile>;
 pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(feature = "with-libfunc-counter")]
+pub struct EntrypointCounters {
+    pub class_hash: Felt,
+    pub selector: Felt,
+    pub counters: HashMap<ConcreteLibfuncId, u32>,
+    pub program: Program,
+}
+#[cfg(feature = "with-libfunc-counter")]
+pub struct TransactionCounters {
+    pub block_number: u64,
+    pub tx_hash: String,
+    pub entrypoint_counters: Vec<EntrypointCounters>,
+}
+
+#[cfg(feature = "with-libfunc-profiling")]
+// Map a transaction hash to its profile
+type CountersByBlockTx = HashMap<String, TransactionCounters>;
+
+#[cfg(feature = "with-libfunc-counter")]
+pub static LIBFUNC_COUNTERS_MAP: LazyLock<Mutex<CountersByBlockTx>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[derive(Debug)]
 pub enum ContractExecutor {
     Aot(AotContractExecutor),
@@ -54,6 +76,8 @@ pub enum ContractExecutor {
     // must use a different variant as we need `Program` for trace feature
     #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
     AotWithProgram((AotContractExecutor, Program)),
+    #[cfg(feature = "with-libfunc-counter")]
+    AotWithLibfuncCounter((AotContractExecutor, Program)),
 }
 
 impl From<AotContractExecutor> for ContractExecutor {
@@ -249,6 +273,73 @@ impl ContractExecutor {
 
                     *libfunc_profiling_trace_id = libfunc_profiling_old_trace_id;
                 }
+
+                result
+            }
+            #[cfg(feature = "with-libfunc-counter")]
+            ContractExecutor::AotWithLibfuncCounter((executor, program)) => {
+                use cairo_native::metadata::libfunc_counter::libfunc_counter_runtime::LIBFUNC_COUNTER;
+                use cairo_native::metadata::libfunc_counter::LibfuncCounterBinding;
+
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+                let class_hash = *syscall_handler.base.call.class_hash;
+                let tx_hash = syscall_handler
+                    .base
+                    .context
+                    .tx_context
+                    .tx_info
+                    .transaction_hash()
+                    .to_hex_string();
+                let block_number =
+                    syscall_handler.base.context.tx_context.block_context.block_info.block_number.0;
+                let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                let counter_id = unsafe {
+                    let counter_id_ptr = executor
+                        .find_symbol_ptr(LibfuncCounterBinding::CounterId.symbol())
+                        .unwrap();
+                    counter_id_ptr.cast::<u64>().as_mut().unwrap()
+                };
+                let counter_id_old = *counter_id;
+
+                *counter_id = counter;
+
+                let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
+
+                // Retreive the libfunc counter for current execution
+                let libfunc_counter = LIBFUNC_COUNTER.lock().unwrap().remove(&counter).unwrap();
+
+                let counters = libfunc_counter
+                    .iter()
+                    .enumerate()
+                    .map(|(i, count)| {
+                        let libfunc = &program.libfunc_declarations[i];
+
+                        (libfunc.id.clone(), *count)
+                    })
+                    .collect::<HashMap<ConcreteLibfuncId, u32>>();
+
+                let entrypoint_counter =
+                    EntrypointCounters { class_hash, selector, counters, program: program.clone() };
+
+                let mut libfunc_counters_map = LIBFUNC_COUNTERS_MAP.lock().unwrap();
+
+                match libfunc_counters_map.get_mut(&tx_hash) {
+                    Some(tx_counters) => {
+                        tx_counters.entrypoint_counters.push(entrypoint_counter);
+                    }
+                    None => {
+                        let tx_counter = TransactionCounters {
+                            block_number,
+                            tx_hash: tx_hash.clone(),
+                            entrypoint_counters: vec![entrypoint_counter],
+                        };
+                        libfunc_counters_map.insert(tx_hash, tx_counter);
+                    }
+                };
+
+                *counter_id = counter_id_old;
 
                 result
             }
