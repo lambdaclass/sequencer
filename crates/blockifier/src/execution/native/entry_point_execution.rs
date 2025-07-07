@@ -1,4 +1,7 @@
-use cairo_native::execution_result::ContractExecutionResult;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::utils::BuiltinCosts;
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
@@ -84,7 +87,30 @@ fn create_callinfo(
     }
 
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
-    let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
+    let vm_resources = {
+        let mut inner_calls_resources =
+            CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
+        let BuiltinStats {
+            bitwise: _,
+            ec_op: _,
+            range_check,
+            pedersen: _,
+            poseidon: _,
+            segment_arena: _,
+            range_check_96: _,
+            circuit_add: _,
+            circuit_mul: _,
+        } = call_result.builtin_stats;
+        let range_check_count = range_check
+            + inner_calls_resources
+                .builtin_instance_counter
+                .get(&cairo_vm::types::builtin_name::BuiltinName::range_check)
+                .unwrap_or(&0);
+        inner_calls_resources
+            .builtin_instance_counter
+            .insert(cairo_vm::types::builtin_name::BuiltinName::range_check, range_check_count);
+        inner_calls_resources
+    };
 
     Ok(CallInfo {
         call: syscall_handler.base.call.into(),

@@ -1,14 +1,13 @@
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
-use cairo_lang_sierra::ids::ConcreteLibfuncId;
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
 use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
-use cairo_native::execution_result::ContractExecutionResult;
+use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::executor::AotContractExecutor;
 use cairo_native::starknet::StarknetSyscallHandler;
 use cairo_native::utils::BuiltinCosts;
@@ -97,7 +96,8 @@ impl ContractExecutor {
                 let args = args.to_owned();
                 virtual_machine.call_contract(selector, gas, args, builtin_costs);
 
-                let result = if cfg!(feature = "with-trace-dump") {
+                let result = if cfg!(any(feature = "with-trace-dump", feature = "with-sierra-emu"))
+                {
                     static COUNTER: AtomicU64 = AtomicU64::new(0);
                     let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -123,6 +123,7 @@ impl ContractExecutor {
                     failure_flag: result.failure_flag,
                     return_values: result.return_values,
                     error_msg: result.error_msg,
+                    builtin_stats: BuiltinStats::default(),
                 })
             }
             #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
@@ -130,16 +131,16 @@ impl ContractExecutor {
                 #[cfg(feature = "with-trace-dump")]
                 use {
                     cairo_lang_sierra::program_registry::ProgramRegistry,
-                    cairo_native::metadata::trace_dump::trace_dump_runtime::{
-                        TraceDump,
-                        TRACE_DUMP,
-                    },
                     cairo_native::metadata::trace_dump::TraceBinding,
+                    cairo_native::metadata::trace_dump::trace_dump_runtime::{
+                        TRACE_DUMP,
+                        TraceDump,
+                    },
                 };
                 #[cfg(feature = "with-libfunc-profiling")]
                 use {
                     cairo_native::metadata::profiler::ProfilerBinding,
-                    cairo_native::metadata::profiler::{ProfilerImpl, LIBFUNC_PROFILE},
+                    cairo_native::metadata::profiler::{LIBFUNC_PROFILE, ProfilerImpl},
                 };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
