@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
-use cairo_lang_sierra::ids::ConcreteLibfuncId;
 use cairo_lang_sierra::program::Program;
 use cairo_lang_starknet_classes::compiler_version::VersionId;
 use cairo_lang_starknet_classes::contract_class::ContractEntryPoints;
@@ -17,6 +16,7 @@ use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
 #[cfg(feature = "with-libfunc-profiling")]
 use {
+    cairo_lang_sierra::ids::ConcreteLibfuncId,
     cairo_native::metadata::profiler::LibfuncProfileData,
     std::collections::HashMap,
     std::sync::{LazyLock, Mutex},
@@ -123,6 +123,7 @@ impl ContractExecutor {
                     failure_flag: result.failure_flag,
                     return_values: result.return_values,
                     error_msg: result.error_msg,
+                    builtin_stats: Default::default(),
                 })
             }
             #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
