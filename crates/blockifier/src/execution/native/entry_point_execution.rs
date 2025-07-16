@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::utils::BuiltinCosts;
+use cairo_vm::types::builtin_name::BuiltinName;
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -86,6 +89,18 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
+    let mut builtin_stats = HashMap::new();
+    builtin_stats.insert(BuiltinName::range_check, call_result.builtin_stats.range_check);
+    builtin_stats.insert(BuiltinName::pedersen, call_result.builtin_stats.pedersen);
+    builtin_stats.insert(BuiltinName::bitwise, call_result.builtin_stats.bitwise);
+    builtin_stats.insert(BuiltinName::ec_op, call_result.builtin_stats.ec_op);
+    builtin_stats.insert(BuiltinName::poseidon, call_result.builtin_stats.poseidon);
+    builtin_stats.insert(BuiltinName::segment_arena, call_result.builtin_stats.segment_arena);
+    builtin_stats.insert(BuiltinName::range_check96, call_result.builtin_stats.range_check96);
+    builtin_stats.insert(BuiltinName::add_mod, call_result.builtin_stats.add_mod);
+    builtin_stats.insert(BuiltinName::mul_mod, call_result.builtin_stats.mul_mod);
+    builtin_stats.retain(|_, &mut v| v != 0);
+
     Ok(CallInfo {
         call: syscall_handler.base.call.into(),
         execution: CallExecution {
@@ -103,6 +118,7 @@ fn create_callinfo(
         read_class_hash_values: syscall_handler.base.read_class_hash_values,
         tracked_resource: TrackedResource::SierraGas,
         time: std::time::Duration::default(),
+        builtin_stats,
         call_counter: 0,
     })
 }

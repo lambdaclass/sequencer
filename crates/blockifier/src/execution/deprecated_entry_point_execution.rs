@@ -277,7 +277,14 @@ pub fn finalize_execution(
         resources: vm_resources,
         storage_read_values: syscall_handler.read_values,
         accessed_storage_keys: syscall_handler.accessed_keys,
-        ..Default::default()
+        builtin_stats: runner
+            .get_execution_resources()?
+            .filter_unused_builtins()
+            .builtin_instance_counter,
+        time: Default::default(),
+        call_counter: Default::default(),
+        read_class_hash_values: Default::default(),
+        accessed_contract_addresses: Default::default(),
     })
 }
 
