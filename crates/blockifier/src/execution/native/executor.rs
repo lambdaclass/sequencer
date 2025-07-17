@@ -281,11 +281,18 @@ impl ContractExecutor {
             }
             #[cfg(feature = "with-libfunc-counter")]
             ContractExecutor::AotWithLibfuncCounter((executor, program)) => {
-                use cairo_native::metadata::libfunc_counter::libfunc_counter_runtime::LIBFUNC_COUNTER;
-                use cairo_native::metadata::libfunc_counter::LibfuncCounterBinding;
+                use cairo_native::metadata::libfunc_counter::libfunc_counter_runtime::{
+                    CountersArrayGuard,
+                    LIBFUNC_COUNTER,
+                };
+                use cairo_native::metadata::libfunc_counter::{
+                    libfunc_counter_runtime,
+                    LibfuncCounterBinding,
+                };
 
                 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+                let libfuncs_amount = program.libfunc_declarations.len();
                 let class_hash = *syscall_handler.base.call.class_hash;
                 let tx_hash = syscall_handler
                     .base
@@ -304,11 +311,27 @@ impl ContractExecutor {
                         .unwrap();
                     counter_id_ptr.cast::<u64>().as_mut().unwrap()
                 };
+
+                // Save the current then array of counters to restore it after the
+                // execution.
+                let array_counter_guard = CountersArrayGuard::init(libfuncs_amount);
                 let counter_id_old = *counter_id;
 
                 *counter_id = counter;
 
                 let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
+
+                let counter_id_ptr =
+                    executor.find_symbol_ptr(LibfuncCounterBinding::CounterId.symbol()).unwrap();
+
+                unsafe {
+                    libfunc_counter_runtime::store_and_free_counters_array(
+                        counter_id_ptr as *mut u64,
+                        libfuncs_amount,
+                    );
+                }
+
+                drop(array_counter_guard);
 
                 // Retreive the libfunc counter for current execution
                 let counters = LIBFUNC_COUNTER.lock().unwrap().remove(&counter).unwrap();

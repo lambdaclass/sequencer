@@ -67,6 +67,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 toml.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 assert_matches.workspace = true
