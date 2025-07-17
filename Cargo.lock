@@ -1662,7 +1662,6 @@ dependencies = [
  "indexmap 2.10.0",
  "itertools 0.12.1",
  "keccak",
- "libc",
  "log",
  "num-bigint 0.4.6",
  "num-integer",
