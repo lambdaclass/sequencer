@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 
+use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use serde::Serialize;
 use starknet_api::core::{ClassHash, ContractAddress, EthAddress};
@@ -209,6 +210,7 @@ pub struct CallInfo {
     // Additional information gathered during execution.
     pub time: std::time::Duration,
     pub call_counter: usize,
+    pub builtin_stats: HashMap<BuiltinName, usize>,
     pub storage_read_values: Vec<Felt>,
     pub accessed_storage_keys: HashSet<StorageKey>,
     pub read_class_hash_values: Vec<ClassHash>,
