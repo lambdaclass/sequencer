@@ -92,7 +92,7 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
-    // Retrive the builtin counts from the syscall handler
+    // Retrieve the builtin counts from the syscall handler
     let version_constants = syscall_handler.base.context.versioned_constants();
     let syscall_resources =
         version_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
@@ -135,10 +135,8 @@ fn builtin_stats_to_builtin_counter_map(
         builtin_stats.builtin_stats.pedersen
             + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
     );
-    map
-        .insert(BuiltinName::ecdsa, builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
-    map
-        .insert(BuiltinName::keccak, builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
+    map.insert(BuiltinName::ecdsa, builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
+    map.insert(BuiltinName::keccak, builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
     map.insert(
         BuiltinName::bitwise,
         builtin_stats.builtin_stats.bitwise
