@@ -127,50 +127,54 @@ fn builtin_stats_to_builtin_counter_map(
     let builtin_counts = syscall_counts.builtin_instance_counter;
     map.insert(
         BuiltinName::range_check,
-        builtin_stats.builtin_stats.range_check
-            + builtin_counts.get(&BuiltinName::range_check).unwrap_or_default(),
+        builtin_stats.range_check
+            + builtin_counts.get(&BuiltinName::range_check).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::pedersen,
-        builtin_stats.builtin_stats.pedersen
-            + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
+        builtin_stats.pedersen + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
     );
-    map.insert(BuiltinName::ecdsa, builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
-    map.insert(BuiltinName::keccak, builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
+    map.insert(
+        BuiltinName::ecdsa,
+        builtin_counts.get(&BuiltinName::ecdsa).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::keccak,
+        builtin_counts.get(&BuiltinName::keccak).copied().unwrap_or_default(),
+    );
     map.insert(
         BuiltinName::bitwise,
-        builtin_stats.builtin_stats.bitwise
-            + builtin_counts.get(&BuiltinName::bitwise).unwrap_or_default(),
+        builtin_stats.bitwise
+            + builtin_counts.get(&BuiltinName::bitwise).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::ec_op,
-        builtin_stats.builtin_stats.ec_op
-            + builtin_counts.get(&BuiltinName::ec_op).unwrap_or_default(),
+        builtin_stats.ec_op + builtin_counts.get(&BuiltinName::ec_op).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::poseidon,
-        builtin_stats.builtin_stats.poseidon
-            + builtin_counts.get(&BuiltinName::poseidon).unwrap_or_default(),
+        builtin_stats.poseidon
+            + builtin_counts.get(&BuiltinName::poseidon).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::segment_arena,
-        builtin_stats.builtin_stats.segment_arena
-            + builtin_counts.get(&BuiltinName::segment_arena).unwrap_or_default(),
+        builtin_stats.segment_arena
+            + builtin_counts.get(&BuiltinName::segment_arena).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::range_check96,
-        builtin_stats.builtin_stats.range_check96
-            + builtin_counts.get(&BuiltinName::range_check96).unwrap_or_default(),
+        builtin_stats.range_check96
+            + builtin_counts.get(&BuiltinName::range_check96).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::add_mod,
-        builtin_stats.builtin_stats.add_mod
-            + builtin_counts.get(&BuiltinName::add_mod).unwrap_or_default(),
+        builtin_stats.add_mod
+            + builtin_counts.get(&BuiltinName::add_mod).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::mul_mod,
-        builtin_stats.builtin_stats.mul_mod
-            + builtin_counts.get(&BuiltinName::mul_mod).unwrap_or_default(),
+        builtin_stats.mul_mod
+            + builtin_counts.get(&BuiltinName::mul_mod).copied().unwrap_or_default(),
     );
     map.retain(|_, &mut v| v != 0);
 
