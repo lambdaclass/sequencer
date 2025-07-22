@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use cairo_native::execution_result::ContractExecutionResult;
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -89,17 +90,9 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
-    let mut builtin_stats = HashMap::new();
-    builtin_stats.insert(BuiltinName::range_check, call_result.builtin_stats.range_check);
-    builtin_stats.insert(BuiltinName::pedersen, call_result.builtin_stats.pedersen);
-    builtin_stats.insert(BuiltinName::bitwise, call_result.builtin_stats.bitwise);
-    builtin_stats.insert(BuiltinName::ec_op, call_result.builtin_stats.ec_op);
-    builtin_stats.insert(BuiltinName::poseidon, call_result.builtin_stats.poseidon);
-    builtin_stats.insert(BuiltinName::segment_arena, call_result.builtin_stats.segment_arena);
-    builtin_stats.insert(BuiltinName::range_check96, call_result.builtin_stats.range_check96);
-    builtin_stats.insert(BuiltinName::add_mod, call_result.builtin_stats.add_mod);
-    builtin_stats.insert(BuiltinName::mul_mod, call_result.builtin_stats.mul_mod);
-    builtin_stats.retain(|_, &mut v| v != 0);
+    // Retrive the builtin counts from the syscall handler
+    let version_constants = syscall_handler.base.context.versioned_constants();
+    let syscall_resources = version_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
 
     Ok(CallInfo {
         call: syscall_handler.base.call.into(),
@@ -118,7 +111,28 @@ fn create_callinfo(
         read_class_hash_values: syscall_handler.base.read_class_hash_values,
         tracked_resource: TrackedResource::SierraGas,
         time: std::time::Duration::default(),
-        builtin_stats,
+        builtin_stats: builtin_stats_to_builtin_counter_map(builtin_stats, syscall_resources),
         call_counter: 0,
     })
+}
+
+fn builtin_stats_to_builtin_counter_map(builtin_stats: BuiltinStats, syscall_counts: ExecutionResources) -> BuiltinCounterMap {
+    let mut map = HashMap::new();
+    let builtin_counts = syscall_counts.builtin_instance_counter;
+    builtin_stats.insert(BuiltinName::range_check, call_result.builtin_stats.range_check + builtin_counts.get(&BuiltinName::range_check).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::pedersen, call_result.builtin_stats.pedersen + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::ecdsa,  builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::keccak,  builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::bitwise, call_result.builtin_stats.bitwise + builtin_counts.get(&BuiltinName::bitwise).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::ec_op, call_result.builtin_stats.ec_op + builtin_counts.get(&BuiltinName::ec_op).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::poseidon, call_result.builtin_stats.poseidon + builtin_counts.get(&BuiltinName::poseidon).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::segment_arena, call_result.builtin_stats.segment_arena + builtin_counts.get(&BuiltinName::segment_arena).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::range_check96, call_result.builtin_stats.range_check96 + builtin_counts.get(&BuiltinName::range_check96).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::add_mod, call_result.builtin_stats.add_mod + builtin_counts.get(&BuiltinName::add_mod).unwrap_or_default());
+    builtin_stats.insert(BuiltinName::mul_mod, call_result.builtin_stats.mul_mod + builtin_counts.get(&BuiltinName::mul_mod).unwrap_or_default());
+    builtin_stats.retain(|_, &mut v| v != 0);
+    
+    dbg!(builtin_counts);
+
+    map
 }
