@@ -354,6 +354,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
             remaining_gas,
             self.gas_costs().syscalls.replace_class.base_syscall_cost(),
         )?;
+        self.increment_syscall_count_by(&SyscallSelector::ReplaceClass, 1);
 
         self.base
             .replace_class(ClassHash(class_hash))
