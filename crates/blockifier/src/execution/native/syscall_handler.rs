@@ -560,13 +560,16 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
             remaining_gas,
             self.gas_costs().syscalls.keccak.base_syscall_cost(),
         )?;
-        self.increment_syscall_count_by(&SyscallSelector::Keccak, n_rounds);
 
         match self.base.keccak(input, remaining_gas) {
-            Ok((state, _n_rounds)) => Ok(U256 {
-                hi: u128::from(state[2]) | (u128::from(state[3]) << 64),
-                lo: u128::from(state[0]) | (u128::from(state[1]) << 64),
-            }),
+            Ok((state, n_rounds)) => {
+                self.increment_syscall_count_by(&SyscallSelector::Keccak, n_rounds);
+
+                Ok(U256 {
+                    hi: u128::from(state[2]) | (u128::from(state[3]) << 64),
+                    lo: u128::from(state[0]) | (u128::from(state[1]) << 64),
+                })
+            }
             Err(err) => Err(self.handle_error(remaining_gas, err)),
         }
     }

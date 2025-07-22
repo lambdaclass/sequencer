@@ -17,7 +17,7 @@ use crate::execution::native::contract_class::NativeCompiledClassV1;
 use crate::execution::native::syscall_handler::NativeSyscallHandler;
 use crate::state::state_api::State;
 
-type BuiltinCounterMap = HashMap<BuiltinName, &usize>;
+type BuiltinCounterMap = HashMap<BuiltinName, usize>;
 
 // todo(rodrigo): add an `entry point not found` test for Native
 pub fn execute_entry_point_call(
@@ -114,7 +114,10 @@ fn create_callinfo(
         read_class_hash_values: syscall_handler.base.read_class_hash_values,
         tracked_resource: TrackedResource::SierraGas,
         time: std::time::Duration::default(),
-        builtin_stats: builtin_stats_to_builtin_counter_map(builtin_stats, syscall_resources),
+        builtin_stats: builtin_stats_to_builtin_counter_map(
+            call_result.builtin_stats,
+            syscall_resources,
+        ),
         call_counter: 0,
     })
 }
@@ -132,7 +135,8 @@ fn builtin_stats_to_builtin_counter_map(
     );
     map.insert(
         BuiltinName::pedersen,
-        builtin_stats.pedersen + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
+        builtin_stats.pedersen
+            + builtin_counts.get(&BuiltinName::pedersen).copied().unwrap_or_default(),
     );
     map.insert(
         BuiltinName::ecdsa,
@@ -176,6 +180,8 @@ fn builtin_stats_to_builtin_counter_map(
         builtin_stats.mul_mod
             + builtin_counts.get(&BuiltinName::mul_mod).copied().unwrap_or_default(),
     );
+
+    // Remove unused builtins
     map.retain(|_, &mut v| v != 0);
 
     map
