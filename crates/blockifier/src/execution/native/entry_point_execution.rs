@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cairo_native::execution_result::ContractExecutionResult;
+use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
@@ -16,6 +16,8 @@ use crate::execution::errors::{EntryPointExecutionError, PostExecutionError, Pre
 use crate::execution::native::contract_class::NativeCompiledClassV1;
 use crate::execution::native::syscall_handler::NativeSyscallHandler;
 use crate::state::state_api::State;
+
+type BuiltinCounterMap = HashMap<BuiltinName, &usize>;
 
 // todo(rodrigo): add an `entry point not found` test for Native
 pub fn execute_entry_point_call(
@@ -123,58 +125,56 @@ fn builtin_stats_to_builtin_counter_map(
 ) -> BuiltinCounterMap {
     let mut map = HashMap::new();
     let builtin_counts = syscall_counts.builtin_instance_counter;
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::range_check,
-        call_result.builtin_stats.range_check
+        builtin_stats.builtin_stats.range_check
             + builtin_counts.get(&BuiltinName::range_check).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::pedersen,
-        call_result.builtin_stats.pedersen
+        builtin_stats.builtin_stats.pedersen
             + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
     );
-    builtin_stats
+    map
         .insert(BuiltinName::ecdsa, builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
-    builtin_stats
+    map
         .insert(BuiltinName::keccak, builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::bitwise,
-        call_result.builtin_stats.bitwise
+        builtin_stats.builtin_stats.bitwise
             + builtin_counts.get(&BuiltinName::bitwise).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::ec_op,
-        call_result.builtin_stats.ec_op
+        builtin_stats.builtin_stats.ec_op
             + builtin_counts.get(&BuiltinName::ec_op).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::poseidon,
-        call_result.builtin_stats.poseidon
+        builtin_stats.builtin_stats.poseidon
             + builtin_counts.get(&BuiltinName::poseidon).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::segment_arena,
-        call_result.builtin_stats.segment_arena
+        builtin_stats.builtin_stats.segment_arena
             + builtin_counts.get(&BuiltinName::segment_arena).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::range_check96,
-        call_result.builtin_stats.range_check96
+        builtin_stats.builtin_stats.range_check96
             + builtin_counts.get(&BuiltinName::range_check96).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::add_mod,
-        call_result.builtin_stats.add_mod
+        builtin_stats.builtin_stats.add_mod
             + builtin_counts.get(&BuiltinName::add_mod).unwrap_or_default(),
     );
-    builtin_stats.insert(
+    map.insert(
         BuiltinName::mul_mod,
-        call_result.builtin_stats.mul_mod
+        builtin_stats.builtin_stats.mul_mod
             + builtin_counts.get(&BuiltinName::mul_mod).unwrap_or_default(),
     );
-    builtin_stats.retain(|_, &mut v| v != 0);
-
-    dbg!(builtin_counts);
+    map.retain(|_, &mut v| v != 0);
 
     map
 }
