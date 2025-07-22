@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use cairo_native::execution_result::ContractExecutionResult;
+use cairo_native::execution_result::{BuiltinStats, ContractExecutionResult};
 use cairo_native::utils::BuiltinCosts;
 use cairo_vm::types::builtin_name::BuiltinName;
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
 use crate::execution::contract_class::TrackedResource;
@@ -15,6 +16,8 @@ use crate::execution::errors::{EntryPointExecutionError, PostExecutionError, Pre
 use crate::execution::native::contract_class::NativeCompiledClassV1;
 use crate::execution::native::syscall_handler::NativeSyscallHandler;
 use crate::state::state_api::State;
+
+type BuiltinCounterMap = HashMap<BuiltinName, usize>;
 
 // todo(rodrigo): add an `entry point not found` test for Native
 pub fn execute_entry_point_call(
@@ -89,17 +92,10 @@ fn create_callinfo(
     let gas_consumed = syscall_handler.base.call.initial_gas - remaining_gas;
     let vm_resources = CallInfo::summarize_vm_resources(syscall_handler.base.inner_calls.iter());
 
-    let mut builtin_stats = HashMap::new();
-    builtin_stats.insert(BuiltinName::range_check, call_result.builtin_stats.range_check);
-    builtin_stats.insert(BuiltinName::pedersen, call_result.builtin_stats.pedersen);
-    builtin_stats.insert(BuiltinName::bitwise, call_result.builtin_stats.bitwise);
-    builtin_stats.insert(BuiltinName::ec_op, call_result.builtin_stats.ec_op);
-    builtin_stats.insert(BuiltinName::poseidon, call_result.builtin_stats.poseidon);
-    builtin_stats.insert(BuiltinName::segment_arena, call_result.builtin_stats.segment_arena);
-    builtin_stats.insert(BuiltinName::range_check96, call_result.builtin_stats.range_check96);
-    builtin_stats.insert(BuiltinName::add_mod, call_result.builtin_stats.add_mod);
-    builtin_stats.insert(BuiltinName::mul_mod, call_result.builtin_stats.mul_mod);
-    builtin_stats.retain(|_, &mut v| v != 0);
+    // Retrieve the builtin counts from the syscall handler
+    let version_constants = syscall_handler.base.context.versioned_constants();
+    let syscall_resources =
+        version_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
 
     Ok(CallInfo {
         call: syscall_handler.base.call.into(),
@@ -118,7 +114,75 @@ fn create_callinfo(
         read_class_hash_values: syscall_handler.base.read_class_hash_values,
         tracked_resource: TrackedResource::SierraGas,
         time: std::time::Duration::default(),
-        builtin_stats,
+        builtin_stats: builtin_stats_to_builtin_counter_map(
+            call_result.builtin_stats,
+            syscall_resources,
+        ),
         call_counter: 0,
     })
+}
+
+fn builtin_stats_to_builtin_counter_map(
+    builtin_stats: BuiltinStats,
+    syscall_counts: ExecutionResources,
+) -> BuiltinCounterMap {
+    let mut map = HashMap::new();
+    let builtin_counts = syscall_counts.builtin_instance_counter;
+    map.insert(
+        BuiltinName::range_check,
+        builtin_stats.range_check
+            + builtin_counts.get(&BuiltinName::range_check).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::pedersen,
+        builtin_stats.pedersen
+            + builtin_counts.get(&BuiltinName::pedersen).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::ecdsa,
+        builtin_counts.get(&BuiltinName::ecdsa).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::keccak,
+        builtin_counts.get(&BuiltinName::keccak).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::bitwise,
+        builtin_stats.bitwise
+            + builtin_counts.get(&BuiltinName::bitwise).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::ec_op,
+        builtin_stats.ec_op + builtin_counts.get(&BuiltinName::ec_op).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::poseidon,
+        builtin_stats.poseidon
+            + builtin_counts.get(&BuiltinName::poseidon).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::segment_arena,
+        builtin_stats.segment_arena
+            + builtin_counts.get(&BuiltinName::segment_arena).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::range_check96,
+        builtin_stats.range_check96
+            + builtin_counts.get(&BuiltinName::range_check96).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::add_mod,
+        builtin_stats.add_mod
+            + builtin_counts.get(&BuiltinName::add_mod).copied().unwrap_or_default(),
+    );
+    map.insert(
+        BuiltinName::mul_mod,
+        builtin_stats.mul_mod
+            + builtin_counts.get(&BuiltinName::mul_mod).copied().unwrap_or_default(),
+    );
+
+    // Remove unused builtins
+    map.retain(|_, &mut v| v != 0);
+
+    map
 }
