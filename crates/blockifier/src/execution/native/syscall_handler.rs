@@ -36,7 +36,11 @@ use crate::execution::entry_point::{
 use crate::execution::errors::EntryPointExecutionError;
 use crate::execution::native::utils::{calculate_resource_bounds, default_tx_v2_info};
 use crate::execution::secp;
-use crate::execution::syscalls::hint_processor::{SyscallExecutionError, SyscallUsageMap, OUT_OF_GAS_ERROR};
+use crate::execution::syscalls::hint_processor::{
+    SyscallExecutionError,
+    SyscallUsageMap,
+    OUT_OF_GAS_ERROR,
+};
 use crate::execution::syscalls::syscall_base::SyscallHandlerBase;
 use crate::execution::syscalls::SyscallSelector;
 use crate::state::state_api::State;
@@ -327,10 +331,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         let total_gas_cost =
             self.gas_costs().syscalls.deploy.get_syscall_cost(u64_from_usize(calldata.len()));
         self.pre_execute_syscall(remaining_gas, total_gas_cost)?;
-        self.increment_syscall_count_by(
-            &SyscallSelector::Deploy,
-            calldata.len(),
-        );
+        self.increment_syscall_count_by(&SyscallSelector::Deploy, calldata.len());
 
         let (deployed_contract_address, call_info) = self
             .base
@@ -758,10 +759,7 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         signature: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
-        self.increment_syscall_count_by(
-            &SyscallSelector::MetaTxV0,
-            calldata.len(),
-        );
+        self.increment_syscall_count_by(&SyscallSelector::MetaTxV0, calldata.len());
         todo!(
             "implement meta_tx_v0 {:?}",
             (address, entry_point_selector, calldata, signature, remaining_gas)

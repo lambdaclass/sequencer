@@ -92,7 +92,8 @@ fn create_callinfo(
 
     // Retrive the builtin counts from the syscall handler
     let version_constants = syscall_handler.base.context.versioned_constants();
-    let syscall_resources = version_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
+    let syscall_resources =
+        version_constants.get_additional_os_syscall_resources(&syscall_handler.syscalls_usage);
 
     Ok(CallInfo {
         call: syscall_handler.base.call.into(),
@@ -116,22 +117,63 @@ fn create_callinfo(
     })
 }
 
-fn builtin_stats_to_builtin_counter_map(builtin_stats: BuiltinStats, syscall_counts: ExecutionResources) -> BuiltinCounterMap {
+fn builtin_stats_to_builtin_counter_map(
+    builtin_stats: BuiltinStats,
+    syscall_counts: ExecutionResources,
+) -> BuiltinCounterMap {
     let mut map = HashMap::new();
     let builtin_counts = syscall_counts.builtin_instance_counter;
-    builtin_stats.insert(BuiltinName::range_check, call_result.builtin_stats.range_check + builtin_counts.get(&BuiltinName::range_check).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::pedersen, call_result.builtin_stats.pedersen + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::ecdsa,  builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::keccak,  builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::bitwise, call_result.builtin_stats.bitwise + builtin_counts.get(&BuiltinName::bitwise).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::ec_op, call_result.builtin_stats.ec_op + builtin_counts.get(&BuiltinName::ec_op).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::poseidon, call_result.builtin_stats.poseidon + builtin_counts.get(&BuiltinName::poseidon).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::segment_arena, call_result.builtin_stats.segment_arena + builtin_counts.get(&BuiltinName::segment_arena).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::range_check96, call_result.builtin_stats.range_check96 + builtin_counts.get(&BuiltinName::range_check96).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::add_mod, call_result.builtin_stats.add_mod + builtin_counts.get(&BuiltinName::add_mod).unwrap_or_default());
-    builtin_stats.insert(BuiltinName::mul_mod, call_result.builtin_stats.mul_mod + builtin_counts.get(&BuiltinName::mul_mod).unwrap_or_default());
+    builtin_stats.insert(
+        BuiltinName::range_check,
+        call_result.builtin_stats.range_check
+            + builtin_counts.get(&BuiltinName::range_check).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::pedersen,
+        call_result.builtin_stats.pedersen
+            + builtin_counts.get(&BuiltinName::pedersen).unwrap_or_default(),
+    );
+    builtin_stats
+        .insert(BuiltinName::ecdsa, builtin_counts.get(&BuiltinName::ecdsa).unwrap_or_default());
+    builtin_stats
+        .insert(BuiltinName::keccak, builtin_counts.get(&BuiltinName::keccak).unwrap_or_default());
+    builtin_stats.insert(
+        BuiltinName::bitwise,
+        call_result.builtin_stats.bitwise
+            + builtin_counts.get(&BuiltinName::bitwise).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::ec_op,
+        call_result.builtin_stats.ec_op
+            + builtin_counts.get(&BuiltinName::ec_op).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::poseidon,
+        call_result.builtin_stats.poseidon
+            + builtin_counts.get(&BuiltinName::poseidon).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::segment_arena,
+        call_result.builtin_stats.segment_arena
+            + builtin_counts.get(&BuiltinName::segment_arena).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::range_check96,
+        call_result.builtin_stats.range_check96
+            + builtin_counts.get(&BuiltinName::range_check96).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::add_mod,
+        call_result.builtin_stats.add_mod
+            + builtin_counts.get(&BuiltinName::add_mod).unwrap_or_default(),
+    );
+    builtin_stats.insert(
+        BuiltinName::mul_mod,
+        call_result.builtin_stats.mul_mod
+            + builtin_counts.get(&BuiltinName::mul_mod).unwrap_or_default(),
+    );
     builtin_stats.retain(|_, &mut v| v != 0);
-    
+
     dbg!(builtin_counts);
 
     map
