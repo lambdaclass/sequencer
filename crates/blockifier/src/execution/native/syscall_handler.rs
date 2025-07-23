@@ -73,9 +73,16 @@ impl<'state> NativeSyscallHandler<'state> {
         }
     }
 
+    // Increment syscall usage's count relative to the given selector
     fn increment_syscall_count_by(&mut self, selector: &SyscallSelector, n: usize) {
         let syscall_usage = self.syscalls_usage.entry(*selector).or_default();
         syscall_usage.call_count += n;
+    }
+
+    // Increment syscall usage's linear factor relative to the given selector
+    fn increment_syscall_linear_factor_by(&mut self, selector: &SyscallSelector, n: usize) {
+        let syscall_usage = self.syscalls_usage.entry(*selector).or_default();
+        syscall_usage.linear_factor += n;
     }
 
     pub fn gas_costs(&self) -> &GasCosts {
@@ -331,7 +338,8 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         let total_gas_cost =
             self.gas_costs().syscalls.deploy.get_syscall_cost(u64_from_usize(calldata.len()));
         self.pre_execute_syscall(remaining_gas, total_gas_cost)?;
-        self.increment_syscall_count_by(&SyscallSelector::Deploy, calldata.len());
+        self.increment_syscall_count_by(&SyscallSelector::Deploy, 1);
+        self.increment_syscall_linear_factor_by(&SyscallSelector::Deploy, calldata.len());
 
         let (deployed_contract_address, call_info) = self
             .base
@@ -763,6 +771,11 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         signature: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
+        self.increment_syscall_count_by(&SyscallSelector::Deploy, 1);
+        self.increment_syscall_linear_factor_by(
+            &SyscallSelector::MetaTxV0,
+            calldata.len(),
+        );
         todo!(
             "implement meta_tx_v0 {:?}",
             (address, entry_point_selector, calldata, signature, remaining_gas)
