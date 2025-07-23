@@ -1,6 +1,6 @@
 use hex;
 use rstest::rstest;
-use starknet_patricia::felt::Felt;
+use starknet_api::core::{ClassHash, Nonce};
 use starknet_patricia::hash::hash_trait::HashOutput;
 use starknet_patricia::patricia_merkle_tree::node_data::inner_node::{
     BinaryData,
@@ -10,12 +10,13 @@ use starknet_patricia::patricia_merkle_tree::node_data::inner_node::{
     PathToBottom,
 };
 use starknet_patricia::patricia_merkle_tree::updated_skeleton_tree::hash_function::TreeHashFunction;
+use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::Pedersen;
 
 use crate::block_committer::input::StarknetStorageValue;
 use crate::hash_function::hash::TreeHashFunctionImpl;
 use crate::patricia_merkle_tree::leaf::leaf_impl::ContractState;
-use crate::patricia_merkle_tree::types::{ClassHash, CompiledClassHash, Nonce};
+use crate::patricia_merkle_tree::types::CompiledClassHash;
 
 #[rstest]
 // Random StateTreeTuples and the expected hash results were generated and computed elsewhere.
@@ -97,10 +98,7 @@ fn test_tree_hash_function_impl_binary_node(
         TreeHashFunctionImpl::compute_node_hash(&NodeData::<StarknetStorageValue>::Binary(
             BinaryData { left_hash: HashOutput(left_hash), right_hash: HashOutput(right_hash) },
         ));
-    assert_eq!(
-        hash_output,
-        HashOutput(Pedersen::hash(&left_hash.into(), &right_hash.into()).into())
-    );
+    assert_eq!(hash_output, HashOutput(Pedersen::hash(&left_hash, &right_hash)));
     assert_eq!(hash_output, HashOutput(expected_hash));
 }
 
@@ -126,9 +124,8 @@ fn test_tree_hash_function_impl_edge_node(
             .unwrap(),
         }),
     );
-    let direct_hash_computation = HashOutput(
-        Felt::from(Pedersen::hash(&bottom_hash.into(), &edge_path.into())) + length.into(),
-    );
+    let direct_hash_computation =
+        HashOutput(Pedersen::hash(&bottom_hash, &edge_path.into()) + Felt::from(length));
     assert_eq!(hash_output, HashOutput(expected_hash));
     assert_eq!(hash_output, direct_hash_computation);
 }

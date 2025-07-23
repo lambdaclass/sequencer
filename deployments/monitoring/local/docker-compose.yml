@@ -1,0 +1,152 @@
+services:
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ${monitoring_dir}/local/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - sequencer-network
+
+  grafana:
+    image: grafana/grafana:10.4.16-ubuntu
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${monitoring_dir}/local/config/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - sequencer-network
+
+  # TODO(Tsabary): pass all relevant constants to the .env file.
+  sequencer_node_setup:
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/node_setup.Dockerfile
+    environment:
+      - RUST_LOG=${RUST_LOG}
+      - RUST_BACKTRACE=${RUST_BACKTRACE}
+    entrypoint: "/bin/bash -c"
+    command: >
+      "./target/debug/sequencer_node_setup --output-base-dir ./output --data-prefix-path /data --n-distributed 0 --n-consolidated 1;
+      cp -r ./output/data/* /data; cp -r ./output/configs/* /config"
+    volumes:
+      - data:/data
+      - config:/config
+    networks:
+      - sequencer-network
+
+  dummy_recorder:
+    depends_on:
+      - sequencer_node_setup
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/dummy_recorder.Dockerfile
+    environment:
+      - RUST_LOG=${RUST_LOG}
+      - RUST_BACKTRACE=${RUST_BACKTRACE}
+    ports:
+      - "8080:8080"
+    networks:
+      - sequencer-network
+
+  dummy_eth_to_strk_oracle:
+    depends_on:
+      - sequencer_node_setup
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/dummy_eth_to_strk_oracle.Dockerfile
+    ports:
+      - "9000:9000"
+    networks:
+      - sequencer-network
+
+  config_injector:
+    depends_on:
+      sequencer_node_setup:
+        condition: service_completed_successfully
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/config_injector.Dockerfile
+    # TODO(Tsabary): change the setup binary to output the file to a specific path, and use it in the following command.
+    # TODO(Tsabary): the config changes need to be more robust, probably managed through a suitable rust binary.
+    command: |
+      "cp /config/node_0/executable_0/node_integration_test_config_changes.json ${SEQUENCER_CONFIG_PATH} \
+      echo 'Injecting config changes...' && \
+      jq '.\"recorder_url\" = \"http://dummy_recorder:8080\"' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"consensus_manager_config.eth_to_strk_oracle_config.base_url\" = \"http://dummy_eth_to_strk_oracle:9000/eth_to_strk_oracle\"' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"http_server_config.ip\" = \"0.0.0.0\"' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"http_server_config.port\" = ${SEQUENCER_HTTP_PORT}' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"monitoring_endpoint_config.port\" = ${SEQUENCER_MONITORING_PORT}' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      # These are here to avoid using an L1 baselayer. This is because anvil was deliberately disabled in the docker test. 
+      jq '.\"components.l1_scraper.execution_mode\" = \"Disabled\"' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"l1_provider_config.provider_startup_height_override.#is_none\" = true' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      jq '.\"components.l1_gas_price_scraper.execution_mode\" = \"Disabled\"' ${SEQUENCER_CONFIG_PATH} | sponge ${SEQUENCER_CONFIG_PATH} && \
+      echo 'Printing final config:' && \
+      echo '----------------------------------------' && \
+      cat ${SEQUENCER_CONFIG_PATH} && \
+      echo '----------------------------------------' && \
+      echo 'Done'"
+    volumes:
+      - config:/config
+    networks:
+      - sequencer-network
+
+  sequencer_node:
+    depends_on:
+      config_injector:
+        condition: service_completed_successfully
+      dummy_recorder:
+        condition: service_started
+      sequencer_node_setup:
+        condition: service_completed_successfully
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/Dockerfile
+      args:
+        BUILD_MODE: debug
+    environment:
+      - RUST_LOG=${RUST_LOG}
+      - RUST_BACKTRACE=${RUST_BACKTRACE}
+    ports:
+      - ${SEQUENCER_HTTP_PORT}:${SEQUENCER_HTTP_PORT}
+      - ${SEQUENCER_MONITORING_PORT}:${SEQUENCER_MONITORING_PORT}
+    command:
+      - "--config_file"
+      - "${SEQUENCER_CONFIG_PATH}"
+    volumes:
+      - data:/data
+      - config:/config
+    networks:
+      - sequencer-network
+
+  sequencer_simulator:
+    depends_on:
+      - sequencer_node
+    build:
+      context: ${SEQUENCER_ROOT_DIR}
+      dockerfile: ${SEQUENCER_ROOT_DIR}/deployments/images/sequencer/simulator.Dockerfile
+    environment:
+      - RUST_LOG=${RUST_LOG}
+      - RUST_BACKTRACE=${RUST_BACKTRACE}
+    entrypoint: "/bin/bash -c"
+    command: >
+      "./target/debug/sequencer_simulator \
+      --http-url http://sequencer_node \
+      --http-port ${SEQUENCER_HTTP_PORT} \
+      --monitoring-url http://sequencer_node \
+      --monitoring-port ${SEQUENCER_MONITORING_PORT} \
+      $(if [ \"$SIMULATOR_RUN_FOREVER\" = \"true\" ]; then echo '--run-forever'; fi)"
+    networks:
+      - sequencer-network
+
+volumes:
+  data:
+  config:
+
+networks:
+  sequencer-network:
+    driver: bridge

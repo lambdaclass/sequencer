@@ -1,9 +1,14 @@
 use std::collections::HashMap;
 
 use ethnum::U256;
+use num_bigint::{BigUint, RandBigInt};
 use rand::Rng;
 use serde_json::json;
+use starknet_patricia_storage::map_storage::MapStorage;
+use starknet_patricia_storage::storage_trait::{create_db_key, DbKey, DbValue};
+use starknet_types_core::felt::Felt;
 
+use super::filled_tree::node_serde::PatriciaPrefix;
 use super::filled_tree::tree::{FilledTree, FilledTreeImpl};
 use super::node_data::inner_node::{EdgePathLength, PathToBottom};
 use super::node_data::leaf::{Leaf, LeafModifications, SkeletonLeaf};
@@ -13,55 +18,31 @@ use super::original_skeleton_tree::tree::{OriginalSkeletonTree, OriginalSkeleton
 use super::types::{NodeIndex, SortedLeafIndices, SubTreeHeight};
 use super::updated_skeleton_tree::hash_function::TreeHashFunction;
 use super::updated_skeleton_tree::tree::{UpdatedSkeletonTree, UpdatedSkeletonTreeImpl};
-use crate::felt::Felt;
+use crate::felt::u256_from_felt;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::errors::TypesError;
-use crate::storage::map_storage::MapStorage;
-use crate::storage::storage_trait::{create_db_key, StarknetPrefix, StorageKey, StorageValue};
 
-impl TryFrom<&U256> for Felt {
-    type Error = TypesError<U256>;
-    fn try_from(value: &U256) -> Result<Self, Self::Error> {
-        if *value > U256::from(&Felt::MAX) {
-            return Err(TypesError::ConversionError {
-                from: *value,
-                to: "Felt",
-                reason: "value is bigger than felt::max",
-            });
-        }
-        Ok(Self::from_bytes_be(&value.to_be_bytes()))
+pub fn u256_try_into_felt(value: &U256) -> Result<Felt, TypesError<U256>> {
+    if *value > u256_from_felt(&Felt::MAX) {
+        return Err(TypesError::ConversionError {
+            from: *value,
+            to: "Felt",
+            reason: "value is bigger than felt::max",
+        });
     }
+    Ok(Felt::from_bytes_be(&value.to_be_bytes()))
 }
 
-/// Generates a random U256 number between low and high (exclusive).
-/// Panics if low > high
+/// Generates a random U256 number between low (inclusive) and high (exclusive).
+/// Panics if low >= high
 pub fn get_random_u256<R: Rng>(rng: &mut R, low: U256, high: U256) -> U256 {
-    assert!(low < high);
-    let high_of_low = low.high();
-    let high_of_high = high.high();
+    assert!(low < high, "low must be less than or equal to high. actual: {low} > {high}");
 
-    let delta = high - low;
-    if delta <= u128::MAX {
-        let delta = u128::try_from(delta).expect("Failed to convert delta to u128");
-        return low + rng.gen_range(0..delta);
-    }
-
-    // Randomize the high 128 bits in the extracted range, and the low 128 bits in their entire
-    // domain until the result is in range.
-    // As high-low>u128::MAX, the expected number of samples until the loops breaks is bound from
-    // above by 3 (as either:
-    //  1. high_of_high > high_of_low + 1, and there is a 1/3 chance to get a valid result for high
-    //  bits in (high_of_low, high_of_high).
-    //  2. high_of_high == high_of_low + 1, and every possible low 128 bits value is valid either
-    // when the high bits equal high_of_high, or when they equal high_of_low).
-    let mut randomize = || {
-        U256::from_words(rng.gen_range(*high_of_low..=*high_of_high), rng.gen_range(0..=u128::MAX))
-    };
-    let mut result = randomize();
-    while result < low || result >= high {
-        result = randomize();
-    }
-    result
+    let delta = BigUint::from_bytes_be(&(high - low).to_be_bytes());
+    let rand = rng.gen_biguint_below(&(delta)).to_bytes_be();
+    let mut padded_rand = [0u8; 32];
+    padded_rand[32 - rand.len()..].copy_from_slice(&rand);
+    low + U256::from_be_bytes(padded_rand)
 }
 
 pub async fn tree_computation_flow<L, TH>(
@@ -126,7 +107,7 @@ pub async fn single_tree_flow_test<L: Leaf + 'static, TH: TreeHashFunction<L> + 
 
     let mut result_map = HashMap::new();
     // Serialize the hash result.
-    let json_hash = &json!(hash_result.0.to_hex());
+    let json_hash = &json!(hash_result.0.to_hex_string());
     result_map.insert("root_hash", json_hash);
     // Serlialize the storage modifications.
     let json_storage = &json!(filled_tree.serialize());
@@ -138,18 +119,16 @@ pub fn create_32_bytes_entry(simple_val: u128) -> [u8; 32] {
     U256::from(simple_val).to_be_bytes()
 }
 
-fn create_patricia_key(val: u128) -> StorageKey {
-    create_db_key(StarknetPrefix::InnerNode.to_storage_prefix(), &U256::from(val).to_be_bytes())
+fn create_patricia_key(val: u128) -> DbKey {
+    create_db_key(PatriciaPrefix::InnerNode.into(), &U256::from(val).to_be_bytes())
 }
 
-fn create_binary_val(left: u128, right: u128) -> StorageValue {
-    StorageValue(
-        (create_32_bytes_entry(left).into_iter().chain(create_32_bytes_entry(right))).collect(),
-    )
+fn create_binary_val(left: u128, right: u128) -> DbValue {
+    DbValue((create_32_bytes_entry(left).into_iter().chain(create_32_bytes_entry(right))).collect())
 }
 
-fn create_edge_val(hash: u128, path: u128, length: u8) -> StorageValue {
-    StorageValue(
+fn create_edge_val(hash: u128, path: u128, length: u8) -> DbValue {
+    DbValue(
         create_32_bytes_entry(hash)
             .into_iter()
             .chain(create_32_bytes_entry(path))
@@ -158,11 +137,11 @@ fn create_edge_val(hash: u128, path: u128, length: u8) -> StorageValue {
     )
 }
 
-pub fn create_binary_entry(left: u128, right: u128) -> (StorageKey, StorageValue) {
+pub fn create_binary_entry(left: u128, right: u128) -> (DbKey, DbValue) {
     (create_patricia_key(left + right), create_binary_val(left, right))
 }
 
-pub fn create_edge_entry(hash: u128, path: u128, length: u8) -> (StorageKey, StorageValue) {
+pub fn create_edge_entry(hash: u128, path: u128, length: u8) -> (DbKey, DbValue) {
     (create_patricia_key(hash + path + u128::from(length)), create_edge_val(hash, path, length))
 }
 
@@ -193,18 +172,12 @@ pub fn create_unmodified_subtree_skeleton_node(
     )
 }
 
-pub fn create_root_edge_entry(
-    old_root: u128,
-    subtree_height: SubTreeHeight,
-) -> (StorageKey, StorageValue) {
+pub fn create_root_edge_entry(old_root: u128, subtree_height: SubTreeHeight) -> (DbKey, DbValue) {
     // Assumes path is 0.
     let length = SubTreeHeight::ACTUAL_HEIGHT.0 - subtree_height.0;
     let new_root = old_root + u128::from(length);
-    let key = create_db_key(
-        StarknetPrefix::InnerNode.to_storage_prefix(),
-        &Felt::from(new_root).to_bytes_be(),
-    );
-    let value = StorageValue(
+    let key = create_db_key(PatriciaPrefix::InnerNode.into(), &Felt::from(new_root).to_bytes_be());
+    let value = DbValue(
         Felt::from(old_root)
             .to_bytes_be()
             .into_iter()

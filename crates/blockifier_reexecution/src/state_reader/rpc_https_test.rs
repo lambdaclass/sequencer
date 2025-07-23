@@ -12,10 +12,12 @@
 use std::env;
 use std::sync::{Arc, Mutex};
 
+use apollo_gateway::config::RpcStateReaderConfig;
+use apollo_gateway::rpc_objects::BlockId;
+use apollo_gateway::rpc_state_reader::RpcStateReader;
 use assert_matches::assert_matches;
-use blockifier::blockifier::block::BlockInfo;
 use rstest::{fixture, rstest};
-use starknet_api::block::BlockNumber;
+use starknet_api::block::{BlockInfo, BlockNumber};
 use starknet_api::class_hash;
 use starknet_api::core::ChainId;
 use starknet_api::transaction::{
@@ -25,9 +27,6 @@ use starknet_api::transaction::{
     TransactionVersion,
 };
 use starknet_core::types::ContractClass::{Legacy, Sierra};
-use starknet_gateway::config::RpcStateReaderConfig;
-use starknet_gateway::rpc_objects::BlockId;
-use starknet_gateway::rpc_state_reader::RpcStateReader;
 
 use super::test_state_reader::RetryConfig;
 use super::utils::RPC_NODE_URL;
@@ -78,7 +77,7 @@ fn get_test_url() -> String {
     url
 }
 
-/// Retrieves the test block_number from the `TEST_URL` environment variable,
+/// Retrieves the test block_number from the `BLOCK_NUMBER` environment variable,
 /// falling back to the latest block if not provided.
 pub fn get_test_block_id() -> BlockId {
     match env::var("BLOCK_NUMBER") {
@@ -90,7 +89,7 @@ pub fn get_test_block_id() -> BlockId {
 }
 
 pub fn get_test_rpc_config() -> RpcStateReaderConfig {
-    RpcStateReaderConfig { url: get_test_url(), json_rpc_version: "2.0".to_string() }
+    RpcStateReaderConfig::from_url(get_test_url())
 }
 
 #[fixture]
@@ -143,9 +142,9 @@ pub fn test_get_contract_class(test_state_reader: TestStateReader, test_block_nu
     let deprecated_contract_class =
         test_state_reader.get_contract_class(&class_hash).unwrap_or_else(|err| {
             panic!(
-                "Error retrieving deprecated contract class for class hash {}: {}
-            This class hash exist in Mainnet Block Number: {}",
-                class_hash, test_block_number, err
+                "Error retrieving deprecated contract class for class hash {class_hash}: \
+                 {test_block_number}
+            This class hash exist in Mainnet Block Number: {err}"
             );
         });
 
@@ -163,7 +162,7 @@ pub fn test_get_contract_class(test_state_reader: TestStateReader, test_block_nu
 #[rstest]
 pub fn test_get_tx_hashes(test_state_reader: TestStateReader) {
     test_state_reader.get_tx_hashes().unwrap_or_else(|err| {
-        panic!("Error retrieving txs hash: {}", err);
+        panic!("Error retrieving txs hash: {err}");
     });
 }
 

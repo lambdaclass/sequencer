@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
@@ -7,7 +6,7 @@ use starknet_types_core::felt::Felt;
 
 use crate::concurrency::versioned_storage::VersionedStorage;
 use crate::concurrency::TxIndex;
-use crate::execution::contract_class::RunnableContractClass;
+use crate::execution::contract_class::RunnableCompiledClass;
 use crate::state::cached_state::{ContractClassMapping, StateMaps};
 use crate::state::errors::StateError;
 use crate::state::state_api::{StateReader, StateResult, UpdatableState};
@@ -34,7 +33,7 @@ pub struct VersionedState<S: StateReader> {
     // the compiled contract classes mapping. Each key with value false, sohuld not apprear
     // in the compiled contract classes mapping.
     declared_contracts: VersionedStorage<ClassHash, bool>,
-    compiled_contract_classes: VersionedStorage<ClassHash, RunnableContractClass>,
+    compiled_contract_classes: VersionedStorage<ClassHash, RunnableCompiledClass>,
 }
 
 impl<S: StateReader> VersionedState<S> {
@@ -50,6 +49,7 @@ impl<S: StateReader> VersionedState<S> {
         }
     }
 
+    /// Returns the writes performed up to the given transaction index (excluding).
     fn get_writes_up_to_index(&mut self, tx_index: TxIndex) -> StateMaps {
         StateMaps {
             storage: self.storage.get_writes_up_to_index(tx_index),
@@ -74,8 +74,8 @@ impl<S: StateReader> VersionedState<S> {
     // TODO(Mohammad, 01/04/2024): Store the read set (and write set) within a shared
     // object (probabily `VersionedState`). As RefCell operations are not thread-safe. Therefore,
     // accessing this function should be protected by a mutex to ensure thread safety.
-    // TODO: Consider coupling the tx index with the read set to ensure any mismatch between them
-    // will cause the validation to fail.
+    // TODO(Mohammad): Consider coupling the tx index with the read set to ensure any mismatch
+    // between them will cause the validation to fail.
     fn validate_reads(&mut self, tx_index: TxIndex, reads: &StateMaps) -> bool {
         // If is the first transaction in the chunk, then the read set is valid. Since it has no
         // predecessors, there's nothing to compare it to.
@@ -199,21 +199,77 @@ impl<S: StateReader> VersionedState<S> {
 }
 
 impl<U: UpdatableState> VersionedState<U> {
-    pub fn commit_chunk_and_recover_block_state(
-        mut self,
-        n_committed_txs: usize,
-        visited_pcs: HashMap<ClassHash, HashSet<usize>>,
-    ) -> U {
-        if n_committed_txs == 0 {
-            return self.into_initial_state();
-        }
-        let commit_index = n_committed_txs - 1;
-        let writes = self.get_writes_up_to_index(commit_index);
+    pub fn commit_chunk_and_recover_block_state(mut self, n_committed_txs: usize) -> U {
+        let writes = self.get_writes_up_to_index(n_committed_txs);
         let class_hash_to_class =
-            self.compiled_contract_classes.get_writes_up_to_index(commit_index);
+            self.compiled_contract_classes.get_writes_up_to_index(n_committed_txs);
         let mut state = self.into_initial_state();
-        state.apply_writes(&writes, &class_hash_to_class, &visited_pcs);
+        state.apply_writes(&writes, &class_hash_to_class);
         state
+    }
+}
+
+#[derive(Debug)]
+pub enum VersionedStateError {
+    ExecutionHalted,
+}
+
+pub struct OptionalVersionedState<S: StateReader>(Option<VersionedState<S>>);
+
+impl<S: StateReader> OptionalVersionedState<S> {
+    #[cfg(any(feature = "testing", test))]
+    pub fn new(state: S) -> Self {
+        OptionalVersionedState(Some(VersionedState::new(state)))
+    }
+
+    #[cfg(any(feature = "testing", test))]
+    pub fn inner_unwrap(&self) -> &VersionedState<S> {
+        self.0.as_ref().unwrap()
+    }
+
+    fn inner_mut(&mut self) -> StateResult<&mut VersionedState<S>> {
+        self.0
+            .as_mut()
+            .ok_or(StateError::StateReadError("Versioned state was already consumed.".into()))
+    }
+
+    fn inner_mut_or_versioned_state_error(
+        &mut self,
+    ) -> Result<&mut VersionedState<S>, VersionedStateError> {
+        self.0.as_mut().ok_or(VersionedStateError::ExecutionHalted)
+    }
+
+    fn validate_reads(
+        &mut self,
+        tx_index: TxIndex,
+        reads: &StateMaps,
+    ) -> Result<bool, VersionedStateError> {
+        Ok(self.inner_mut_or_versioned_state_error()?.validate_reads(tx_index, reads))
+    }
+
+    fn delete_writes(
+        &mut self,
+        tx_index: TxIndex,
+        writes: &StateMaps,
+        class_hash_to_class: &ContractClassMapping,
+    ) -> Result<(), VersionedStateError> {
+        self.inner_mut_or_versioned_state_error()?.delete_writes(
+            tx_index,
+            writes,
+            class_hash_to_class,
+        );
+        Ok(())
+    }
+
+    fn apply_writes(
+        &mut self,
+        tx_index: TxIndex,
+        writes: &StateMaps,
+        class_hash_to_class: &ContractClassMapping,
+    ) {
+        if let Some(state) = self.0.as_mut() {
+            state.apply_writes(tx_index, writes, class_hash_to_class)
+        }
     }
 }
 
@@ -221,28 +277,22 @@ impl<U: UpdatableState> VersionedState<U> {
 // ThreadSafeVersionedState and VersionedStateProxy.
 // TODO(barak, 01/07/2024): Re-consider the necessity ot ThreadSafeVersionedState once the worker
 // logic is completed.
-pub struct ThreadSafeVersionedState<S: StateReader>(Arc<Mutex<VersionedState<S>>>);
-pub type LockedVersionedState<'a, S> = MutexGuard<'a, VersionedState<S>>;
+pub struct ThreadSafeVersionedState<S: StateReader>(Arc<Mutex<OptionalVersionedState<S>>>);
+pub type LockedVersionedState<'a, S> = MutexGuard<'a, OptionalVersionedState<S>>;
 
 impl<S: StateReader> ThreadSafeVersionedState<S> {
     pub fn new(versioned_state: VersionedState<S>) -> Self {
-        ThreadSafeVersionedState(Arc::new(Mutex::new(versioned_state)))
+        ThreadSafeVersionedState(Mutex::new(OptionalVersionedState(Some(versioned_state))).into())
     }
 
     pub fn pin_version(&self, tx_index: TxIndex) -> VersionedStateProxy<S> {
         VersionedStateProxy { tx_index, state: self.0.clone() }
     }
 
-    pub fn into_inner_state(self) -> VersionedState<S> {
-        Arc::try_unwrap(self.0)
-            .unwrap_or_else(|_| {
-                panic!(
-                    "To consume the versioned state, you must have only one strong reference to \
-                     self. Consider dropping objects that hold a reference to it."
-                )
-            })
-            .into_inner()
-            .expect("No other mutex should hold the versioned state while calling this method.")
+    /// Replaces the inner versioned state with None and returns the existing state.
+    pub fn into_inner_state(&self) -> VersionedState<S> {
+        let mut opt_version_state = self.0.lock().expect("Failed to acquire state lock.");
+        opt_version_state.0.take().expect("Versioned state was already consumed.")
     }
 }
 
@@ -254,7 +304,7 @@ impl<S: StateReader> Clone for ThreadSafeVersionedState<S> {
 
 pub struct VersionedStateProxy<S: StateReader> {
     pub tx_index: TxIndex,
-    pub state: Arc<Mutex<VersionedState<S>>>,
+    pub state: Arc<Mutex<OptionalVersionedState<S>>>,
 }
 
 impl<S: StateReader> VersionedStateProxy<S> {
@@ -262,23 +312,21 @@ impl<S: StateReader> VersionedStateProxy<S> {
         self.state.lock().expect("Failed to acquire state lock.")
     }
 
-    pub fn validate_reads(&self, reads: &StateMaps) -> bool {
+    pub fn validate_reads(&self, reads: &StateMaps) -> Result<bool, VersionedStateError> {
         self.state().validate_reads(self.tx_index, reads)
     }
 
-    pub fn delete_writes(&self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping) {
-        self.state().delete_writes(self.tx_index, writes, class_hash_to_class);
+    pub fn delete_writes(
+        &self,
+        writes: &StateMaps,
+        class_hash_to_class: &ContractClassMapping,
+    ) -> Result<(), VersionedStateError> {
+        self.state().delete_writes(self.tx_index, writes, class_hash_to_class)
     }
 }
 
-// TODO(Noa, 15/5/24): Consider using visited_pcs.
 impl<S: StateReader> UpdatableState for VersionedStateProxy<S> {
-    fn apply_writes(
-        &mut self,
-        writes: &StateMaps,
-        class_hash_to_class: &ContractClassMapping,
-        _visited_pcs: &HashMap<ClassHash, HashSet<usize>>,
-    ) {
+    fn apply_writes(&mut self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping) {
         self.state().apply_writes(self.tx_index, writes, class_hash_to_class)
     }
 }
@@ -289,7 +337,8 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
-        let mut state = self.state();
+        let mut state_opt = self.state();
+        let state = state_opt.inner_mut()?;
         match state.storage.read(self.tx_index, (contract_address, key)) {
             Some(value) => Ok(value),
             None => {
@@ -301,7 +350,8 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
     }
 
     fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
-        let mut state = self.state();
+        let mut state_opt = self.state();
+        let state = state_opt.inner_mut()?;
         match state.nonces.read(self.tx_index, contract_address) {
             Some(value) => Ok(value),
             None => {
@@ -313,7 +363,8 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
     }
 
     fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
-        let mut state = self.state();
+        let mut state_opt = self.state();
+        let state = state_opt.inner_mut()?;
         match state.class_hashes.read(self.tx_index, contract_address) {
             Some(value) => Ok(value),
             None => {
@@ -325,7 +376,8 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
     }
 
     fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
-        let mut state = self.state();
+        let mut state_opt = self.state();
+        let state = state_opt.inner_mut()?;
         match state.compiled_class_hashes.read(self.tx_index, class_hash) {
             Some(value) => Ok(value),
             None => {
@@ -336,14 +388,12 @@ impl<S: StateReader> StateReader for VersionedStateProxy<S> {
         }
     }
 
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<RunnableContractClass> {
-        let mut state = self.state();
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass> {
+        let mut state_opt = self.state();
+        let state = state_opt.inner_mut()?;
         match state.compiled_contract_classes.read(self.tx_index, class_hash) {
             Some(value) => Ok(value),
-            None => match state.initial_state.get_compiled_contract_class(class_hash) {
+            None => match state.initial_state.get_compiled_class(class_hash) {
                 Ok(initial_value) => {
                     state.declared_contracts.set_initial_value(class_hash, true);
                     state

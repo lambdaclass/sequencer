@@ -1,52 +1,52 @@
 use std::collections::{HashMap, HashSet};
 
+use blockifier_test_utils::cairo_versions::CairoVersion;
+use blockifier_test_utils::contracts::FeatureContract;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use starknet_api::abi::abi_utils::selector_from_name;
-use starknet_api::core::{calculate_contract_address, ChainId};
+use starknet_api::core::calculate_contract_address;
 use starknet_api::state::StorageKey;
-use starknet_api::transaction::fields::{Calldata, ContractAddressSalt, Fee};
-use starknet_api::transaction::{
-    EventContent,
-    EventData,
-    EventKey,
-    TransactionHash,
-    TransactionVersion,
-    QUERY_VERSION_BASE,
-};
-use starknet_api::{calldata, felt, nonce, storage_key};
-use starknet_types_core::felt::Felt;
-use test_case::test_case;
-
-use crate::context::ChainInfo;
-use crate::execution::call_info::{CallExecution, CallInfo, ChargedResources, OrderedEvent};
-use crate::execution::common_hints::ExecutionMode;
-use crate::execution::deprecated_syscalls::DeprecatedSyscallSelector;
-use crate::execution::entry_point::{CallEntryPoint, CallType};
-use crate::execution::errors::EntryPointExecutionError;
-use crate::execution::syscalls::hint_processor::EmitEventError;
-use crate::state::state_api::StateReader;
-use crate::test_utils::contracts::FeatureContract;
-use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{
-    calldata_for_deploy_test,
-    get_syscall_resources,
-    trivial_external_entry_point_new,
-    CairoVersion,
+use starknet_api::test_utils::{
+    CHAIN_ID_FOR_TESTS,
     CURRENT_BLOCK_NUMBER,
     CURRENT_BLOCK_NUMBER_FOR_VALIDATE,
     CURRENT_BLOCK_TIMESTAMP,
     CURRENT_BLOCK_TIMESTAMP_FOR_VALIDATE,
     TEST_SEQUENCER_ADDRESS,
 };
-use crate::transaction::objects::{
-    CommonAccountFields,
-    DeprecatedTransactionInfo,
-    TransactionInfo,
+use starknet_api::transaction::fields::{Calldata, ContractAddressSalt, Fee, Tip};
+use starknet_api::transaction::{
+    EventContent,
+    EventData,
+    EventKey,
+    TransactionVersion,
+    QUERY_VERSION_BASE,
 };
-use crate::versioned_constants::VersionedConstants;
+use starknet_api::{calldata, felt, nonce, storage_key, tx_hash};
+use starknet_types_core::felt::Felt;
+use test_case::test_case;
+
+use crate::blockifier_versioned_constants::VersionedConstants;
+use crate::context::{BlockContext, ChainInfo};
+use crate::execution::call_info::{CallExecution, CallInfo, OrderedEvent, StorageAccessTracker};
+use crate::execution::common_hints::ExecutionMode;
+use crate::execution::deprecated_syscalls::hint_processor::DeprecatedSyscallExecutionError;
+use crate::execution::deprecated_syscalls::DeprecatedSyscallSelector;
+use crate::execution::entry_point::{CallEntryPoint, CallType};
+use crate::execution::errors::EntryPointExecutionError;
+use crate::execution::syscalls::hint_processor::EmitEventError;
+use crate::state::state_api::StateReader;
+use crate::test_utils::contracts::FeatureContractData;
+use crate::test_utils::initial_test_state::{test_state, test_state_ex};
+use crate::test_utils::{
+    calldata_for_deploy_test,
+    get_const_syscall_resources,
+    trivial_external_entry_point_new,
+};
+use crate::transaction::objects::{CommonAccountFields, CurrentTransactionInfo, TransactionInfo};
 use crate::{check_entry_point_execution_error_for_custom_hint, retdata};
 
 #[test]
@@ -147,64 +147,117 @@ fn test_nested_library_call() {
         ..nested_storage_entry_point
     };
     let storage_entry_point_resources = ExecutionResources {
-        n_steps: 222,
+        n_steps: 228,
         n_memory_holes: 0,
         builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 2)]),
     };
     let nested_storage_call_info = CallInfo {
         call: nested_storage_entry_point,
         execution: CallExecution::from_retdata(retdata![felt!(value + 1)]),
-        charged_resources: ChargedResources::from_execution_resources(
-            storage_entry_point_resources.clone(),
-        ),
-        storage_read_values: vec![felt!(value + 1)],
-        accessed_storage_keys: HashSet::from([storage_key!(key + 1)]),
+        resources: storage_entry_point_resources.clone(),
+        storage_access_tracker: StorageAccessTracker {
+            storage_read_values: vec![felt!(value + 1)],
+            accessed_storage_keys: HashSet::from([storage_key!(key + 1)]),
+            ..Default::default()
+        },
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 2)]),
         ..Default::default()
     };
-    let mut library_call_resources = &get_syscall_resources(DeprecatedSyscallSelector::LibraryCall)
-        + &ExecutionResources {
-            n_steps: 39,
-            n_memory_holes: 0,
-            builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 1)]),
-        };
+    let mut library_call_resources =
+        &get_const_syscall_resources(DeprecatedSyscallSelector::LibraryCall)
+            + &ExecutionResources {
+                n_steps: 39,
+                n_memory_holes: 0,
+                builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 1)]),
+            };
     library_call_resources += &storage_entry_point_resources;
     let library_call_info = CallInfo {
         call: library_entry_point,
         execution: CallExecution::from_retdata(retdata![felt!(value + 1)]),
-        charged_resources: ChargedResources::from_execution_resources(
-            library_call_resources.clone(),
-        ),
+        resources: library_call_resources.clone(),
         inner_calls: vec![nested_storage_call_info],
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 19)]),
         ..Default::default()
     };
     let storage_call_info = CallInfo {
         call: storage_entry_point,
         execution: CallExecution::from_retdata(retdata![felt!(value)]),
-        charged_resources: ChargedResources::from_execution_resources(
-            storage_entry_point_resources.clone(),
-        ),
-        storage_read_values: vec![felt!(value)],
-        accessed_storage_keys: HashSet::from([storage_key!(key)]),
+        resources: storage_entry_point_resources.clone(),
+        storage_access_tracker: StorageAccessTracker {
+            storage_read_values: vec![felt!(value)],
+            accessed_storage_keys: HashSet::from([storage_key!(key)]),
+            ..Default::default()
+        },
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 2)]),
         ..Default::default()
     };
 
     // Nested library call cost: library_call(inner) + library_call(library_call(inner)).
-    let mut main_call_resources = &get_syscall_resources(DeprecatedSyscallSelector::LibraryCall)
-        + &ExecutionResources {
-            n_steps: 45,
-            n_memory_holes: 0,
-            builtin_instance_counter: HashMap::new(),
-        };
+    let mut main_call_resources =
+        &get_const_syscall_resources(DeprecatedSyscallSelector::LibraryCall)
+            + &ExecutionResources {
+                n_steps: 45,
+                n_memory_holes: 0,
+                builtin_instance_counter: HashMap::new(),
+            };
     main_call_resources += &(&library_call_resources * 2);
     let expected_call_info = CallInfo {
         call: main_entry_point.clone(),
         execution: CallExecution::from_retdata(retdata![felt!(0_u8)]),
-        charged_resources: ChargedResources::from_execution_resources(main_call_resources),
+        resources: main_call_resources,
         inner_calls: vec![library_call_info, storage_call_info],
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 37)]),
         ..Default::default()
     };
 
     assert_eq!(main_entry_point.execute_directly(&mut state).unwrap(), expected_call_info);
+}
+
+#[rstest]
+#[case::block_direct_execute_call_is_on(true)]
+#[case::block_direct_execute_call_is_off(false)]
+fn test_call_execute_directly(#[case] block_direct_execute_call: bool) {
+    let chain_info = &ChainInfo::create_for_testing();
+    let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
+    let account = FeatureContract::AccountWithoutValidations(CairoVersion::Cairo0);
+    let mut state = test_state(chain_info, Fee(0), &[(test_contract, 1), (account, 1)]);
+
+    let account_address = account.get_instance_address(0);
+    let test_contract_address = test_contract.get_instance_address(0);
+    let call_execute_directly_selector = selector_from_name("call_execute_directly");
+    let return_result_selector = selector_from_name("return_result");
+    let calldata = calldata![
+        *account_address.0.key(),
+        felt!(4_u8), // Outer calldata length.
+        // Outer calldata.
+        *test_contract_address.0.key(),
+        return_result_selector.0,
+        felt!(1_u8), // Inner calldata length.
+        felt!(0_u8)  // Inner calldata: value.
+    ];
+
+    let entry_point_call = CallEntryPoint {
+        entry_point_selector: call_execute_directly_selector,
+        calldata: calldata.clone(),
+        ..trivial_external_entry_point_new(test_contract)
+    };
+
+    let mut block_context = BlockContext::create_for_testing();
+    block_context.versioned_constants.block_direct_execute_call = block_direct_execute_call;
+    let wrapped_result =
+        entry_point_call.execute_directly_given_block_context(&mut state, block_context);
+    if block_direct_execute_call {
+        let error = wrapped_result.expect_err("Expected direct execute call to fail.").to_string();
+        assert!(
+            error.contains(&DeprecatedSyscallExecutionError::DirectExecuteCall.to_string()),
+            "Expected error to contain: {:?}, but got: {:?}",
+            DeprecatedSyscallExecutionError::DirectExecuteCall,
+            error
+        );
+    } else {
+        wrapped_result
+            .expect("Expected direct execute call to succeed, because flag is set to false.");
+    }
 }
 
 #[test]
@@ -244,13 +297,17 @@ fn test_call_contract() {
             ..trivial_external_entry_point
         },
         execution: expected_execution.clone(),
-        charged_resources: ChargedResources::from_execution_resources(ExecutionResources {
-            n_steps: 222,
+        resources: ExecutionResources {
+            n_steps: 228,
             n_memory_holes: 0,
             builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 2)]),
-        }),
-        storage_read_values: vec![value],
-        accessed_storage_keys: HashSet::from([storage_key!(key_int)]),
+        },
+        storage_access_tracker: StorageAccessTracker {
+            storage_read_values: vec![value],
+            accessed_storage_keys: HashSet::from([storage_key!(key_int)]),
+            ..Default::default()
+        },
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 2)]),
         ..Default::default()
     };
     let expected_call_info = CallInfo {
@@ -262,14 +319,13 @@ fn test_call_contract() {
             ..trivial_external_entry_point
         },
         execution: expected_execution,
-        charged_resources: ChargedResources::from_execution_resources(
-            &get_syscall_resources(DeprecatedSyscallSelector::CallContract)
-                + &ExecutionResources {
-                    n_steps: 261,
-                    n_memory_holes: 0,
-                    builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 3)]),
-                },
-        ),
+        resources: &get_const_syscall_resources(DeprecatedSyscallSelector::CallContract)
+            + &ExecutionResources {
+                n_steps: 267,
+                n_memory_holes: 0,
+                builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 3)]),
+            },
+        builtin_counters: HashMap::from([(BuiltinName::range_check, 19)]),
         ..Default::default()
     };
 
@@ -427,7 +483,7 @@ fn test_block_info_syscalls(
 ) {
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
     let mut state = test_state(&ChainInfo::create_for_testing(), Fee(0), &[(test_contract, 1)]);
-    let entry_point_selector = selector_from_name(&format!("test_get_{}", block_info_member_name));
+    let entry_point_selector = selector_from_name(&format!("test_get_{block_info_member_name}"));
     let entry_point_call = CallEntryPoint {
         entry_point_selector,
         calldata,
@@ -440,8 +496,7 @@ fn test_block_info_syscalls(
             check_entry_point_execution_error_for_custom_hint!(
                 &error,
                 &format!(
-                    "Unauthorized syscall get_{} in execution mode Validate.",
-                    block_info_member_name
+                    "Unauthorized syscall get_{block_info_member_name} in execution mode Validate."
                 ),
             );
         } else {
@@ -459,25 +514,41 @@ fn test_block_info_syscalls(
 }
 
 #[rstest]
-fn test_tx_info(#[values(false, true)] only_query: bool) {
+fn test_tx_info(
+    #[values(false, true)] only_query: bool,
+    #[values(false, true)] v1_bound_account: bool,
+    // Whether the tip is larger than `v1_bound_accounts_max_tip`.
+    #[values(false, true)] high_tip: bool,
+) {
     let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
-    let mut state = test_state(&ChainInfo::create_for_testing(), Fee(0), &[(test_contract, 1)]);
-    let mut version = felt!(1_u8);
+    let mut test_contract_data: FeatureContractData = test_contract.into();
+    if v1_bound_account {
+        let optional_class_hash =
+            VersionedConstants::latest_constants().os_constants.v1_bound_accounts_cairo0.first();
+        test_contract_data.class_hash =
+            *optional_class_hash.expect("No v1 bound accounts found in versioned constants.");
+    }
+
+    let mut state =
+        test_state_ex(&ChainInfo::create_for_testing(), Fee(0), &[(test_contract_data, 1)]);
+    let mut version = felt!(3_u8);
+    let mut expected_version = if v1_bound_account && !high_tip { felt!(1_u8) } else { version };
     if only_query {
         let simulate_version_base = *QUERY_VERSION_BASE;
         version += simulate_version_base;
+        expected_version += simulate_version_base;
     }
-    let tx_hash = TransactionHash(felt!(1991_u16));
+    let tx_hash = tx_hash!(1991);
     let max_fee = Fee(0);
     let nonce = nonce!(3_u16);
     let sender_address = test_contract.get_instance_address(0);
     let expected_tx_info = calldata![
-        version,                                         // Transaction version.
-        *sender_address.0.key(),                         // Account address.
-        felt!(max_fee.0),                                // Max fee.
-        tx_hash.0,                                       // Transaction hash.
-        felt!(&*ChainId::create_for_testing().as_hex()), // Chain ID.
-        nonce.0                                          // Nonce.
+        expected_version,                     // Transaction version.
+        *sender_address.0.key(),              // Account address.
+        felt!(max_fee.0),                     // Max fee.
+        tx_hash.0,                            // Transaction hash.
+        felt!(&*CHAIN_ID_FOR_TESTS.as_hex()), // Chain ID.
+        nonce.0                               // Nonce.
     ];
     let entry_point_selector = selector_from_name("test_get_tx_info");
     let entry_point_call = CallEntryPoint {
@@ -485,22 +556,29 @@ fn test_tx_info(#[values(false, true)] only_query: bool) {
         calldata: expected_tx_info,
         ..trivial_external_entry_point_new(test_contract)
     };
-    let tx_info = TransactionInfo::Deprecated(DeprecatedTransactionInfo {
+
+    // Transaction tip.
+    let tip = Tip(VersionedConstants::latest_constants().os_constants.v1_bound_accounts_max_tip.0
+        + if high_tip { 1 } else { 0 });
+
+    let tx_info = TransactionInfo::Current(CurrentTransactionInfo {
         common_fields: CommonAccountFields {
             transaction_hash: tx_hash,
-            version: TransactionVersion::ONE,
+            version: TransactionVersion::THREE,
             nonce,
             sender_address,
             only_query,
             ..Default::default()
         },
-        max_fee,
+        tip,
+        ..CurrentTransactionInfo::create_for_testing()
     });
     let limit_steps_by_resources = false; // Do not limit steps by resources as we use default reasources.
     let result = entry_point_call
         .execute_directly_given_tx_info(
             &mut state,
             tx_info,
+            None,
             limit_steps_by_resources,
             ExecutionMode::Execute,
         )
@@ -525,7 +603,7 @@ fn test_emit_event() {
         call_info.execution,
         CallExecution {
             events: vec![OrderedEvent { order: 0, event }],
-            gas_consumed: 0, // TODO why?
+            gas_consumed: 0, // TODO(Yael): why?
             ..Default::default()
         }
     );
@@ -538,7 +616,7 @@ fn test_emit_event() {
         data_length: max_event_data_length + 1,
         max_data_length: max_event_data_length,
     };
-    assert!(error.to_string().contains(format!("{}", expected_error).as_str()));
+    assert!(error.to_string().contains(format!("{expected_error}").as_str()));
 
     // Negative flow, the keys length exceeds the limit.
     let max_event_keys_length = versioned_constants.tx_event_limits.max_keys_length;
@@ -548,7 +626,7 @@ fn test_emit_event() {
         keys_length: max_event_keys_length + 1,
         max_keys_length: max_event_keys_length,
     };
-    assert!(error.to_string().contains(format!("{}", expected_error).as_str()));
+    assert!(error.to_string().contains(format!("{expected_error}").as_str()));
 
     // Negative flow, the number of events exceeds the limit.
     let max_n_emitted_events = versioned_constants.tx_event_limits.max_n_emitted_events;
@@ -560,7 +638,7 @@ fn test_emit_event() {
         n_emitted_events: max_n_emitted_events + 1,
         max_n_emitted_events,
     };
-    assert!(error.to_string().contains(format!("{}", expected_error).as_str()));
+    assert!(error.to_string().contains(format!("{expected_error}").as_str()));
 }
 
 fn emit_events(
@@ -589,4 +667,37 @@ fn emit_events(
     };
 
     entry_point_call.execute_directly(&mut state)
+}
+
+#[rstest]
+fn test_send_message_to_l1_invalid_address(#[values(true, false)] is_l3: bool) {
+    let test_contract = FeatureContract::TestContract(CairoVersion::Cairo0);
+    let mut chain_info = ChainInfo::create_for_testing();
+    chain_info.is_l3 = is_l3;
+    let mut state = test_state(&chain_info, Fee(0), &[(test_contract, 1)]);
+
+    let invalid_to_address = felt!("0x10000000000000000000000000000000000000000");
+
+    let calldata = calldata![invalid_to_address];
+    let entry_point_call = CallEntryPoint {
+        entry_point_selector: selector_from_name("send_message"),
+        calldata,
+        ..trivial_external_entry_point_new(test_contract)
+    };
+
+    let block_context =
+        BlockContext { chain_info: chain_info.clone(), ..BlockContext::create_for_testing() };
+    let result = entry_point_call.execute_directly_given_block_context(&mut state, block_context);
+
+    if is_l3 {
+        assert!(result.is_ok(), "Expected execution to succeed on L3 chain");
+    } else {
+        assert!(result.is_err(), "Expected execution to fail with invalid address");
+        let error = result.unwrap_err();
+        let error_string = error.to_string();
+        assert!(
+            error_string.contains("Out of range"),
+            "Expected error containing 'Out of range', got: {error_string}"
+        );
+    }
 }

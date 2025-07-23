@@ -19,8 +19,6 @@ pub mod test;
 /// a transaction to a batch. Note that constant cells - such as the one that holds the number of
 /// modified contracts - are not counted.
 pub fn get_onchain_data_segment_length(state_changes_count: &StateChangesCount) -> usize {
-    // TODO(Nimrod, 1/5/2024): Remove this function.
-
     // For each newly modified contract:
     // contract address (1 word).
     // + 1 word with the following info: A flag indicating whether the class hash was updated, the
@@ -65,12 +63,8 @@ pub fn get_da_gas_cost(state_changes_count: &StateChangesCount, use_kzg_da: bool
         let fee_balance_value_cost = eth_gas_constants::get_calldata_word_cost(12);
         discount += eth_gas_constants::GAS_PER_MEMORY_WORD - fee_balance_value_cost;
 
-        let gas = if naive_cost < discount {
-            // Cost must be non-negative after discount.
-            0
-        } else {
-            naive_cost - discount
-        };
+        // Cost must be non-negative after discount.
+        let gas = naive_cost.saturating_sub(discount);
 
         (u64_from_usize(gas).into(), 0_u8.into())
     };
@@ -168,6 +162,7 @@ pub fn estimate_minimal_gas_vector(
         Transaction::Declare(_) => StateChangesCount {
             n_storage_updates: 1,
             n_class_hash_updates: 0,
+            // TODO(Yoni): BLOCKIFIER-RESET: should be 1.
             n_compiled_class_hash_updates: 0,
             n_modified_contracts: 1,
         },
@@ -186,6 +181,7 @@ pub fn estimate_minimal_gas_vector(
         },
     };
 
+    // TODO(Yoni): BLOCKIFIER-RESET: reuse TransactionReceipt code.
     let data_segment_length = get_onchain_data_segment_length(&state_changes_by_account_tx);
     let os_steps_for_type =
         versioned_constants.os_resources_for_tx_type(&tx.tx_type(), tx.calldata_length()).n_steps

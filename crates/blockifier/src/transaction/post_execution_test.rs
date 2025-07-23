@@ -1,8 +1,13 @@
 use assert_matches::assert_matches;
+use blockifier_test_utils::cairo_versions::CairoVersion;
+use blockifier_test_utils::calldata::create_calldata;
+use blockifier_test_utils::contracts::FeatureContract;
 use rstest::rstest;
+use starknet_api::block::FeeType;
 use starknet_api::core::ContractAddress;
-use starknet_api::execution_resources::GasAmount;
+use starknet_api::execution_resources::{GasAmount, GasVector};
 use starknet_api::state::StorageKey;
+use starknet_api::test_utils::DEFAULT_STRK_L1_GAS_PRICE;
 use starknet_api::transaction::fields::{
     AllResourceBounds,
     Calldata,
@@ -16,28 +21,22 @@ use starknet_api::transaction::TransactionVersion;
 use starknet_api::{contract_address, felt, invoke_tx_args};
 use starknet_types_core::felt::Felt;
 
+use crate::blockifier_versioned_constants::AllocationCost;
 use crate::context::{BlockContext, ChainInfo};
 use crate::fee::fee_checks::FeeCheckError;
+use crate::fee::fee_utils::GasVectorToL1GasForFee;
 use crate::state::state_api::StateReader;
-use crate::test_utils::contracts::FeatureContract;
 use crate::test_utils::initial_test_state::test_state;
-use crate::test_utils::{
-    create_calldata,
-    CairoVersion,
-    BALANCE,
-    DEFAULT_STRK_L1_DATA_GAS_PRICE,
-    DEFAULT_STRK_L1_GAS_PRICE,
-    DEFAULT_STRK_L2_GAS_PRICE,
-};
+use crate::test_utils::BALANCE;
 use crate::transaction::account_transaction::AccountTransaction;
 use crate::transaction::errors::TransactionExecutionError;
-use crate::transaction::objects::{FeeType, HasRelatedFeeType, TransactionInfoCreator};
+use crate::transaction::objects::{HasRelatedFeeType, TransactionInfoCreator};
 use crate::transaction::test_utils::{
-    account_invoke_tx,
     block_context,
-    create_all_resource_bounds,
+    create_gas_amount_bounds_with_default_price,
     default_all_resource_bounds,
     default_l1_resource_bounds,
+    invoke_tx_with_default_flags,
     l1_resource_bounds,
     max_fee,
     run_invoke_tx,
@@ -86,11 +85,12 @@ fn calldata_for_write_and_transfer(
 fn test_revert_on_overdraft(
     max_fee: Fee,
     default_all_resource_bounds: ValidResourceBounds,
-    block_context: BlockContext,
+    mut block_context: BlockContext,
     #[case] version: TransactionVersion,
     #[case] fee_type: FeeType,
     #[values(CairoVersion::Cairo0)] cairo_version: CairoVersion,
 ) {
+    block_context.versioned_constants.allocation_cost = AllocationCost::ZERO;
     let chain_info = &block_context.chain_info;
     let fee_token_address = chain_info.fee_token_addresses.get_by_fee_type(&fee_type);
     // An address to be written into to observe state changes.
@@ -122,7 +122,7 @@ fn test_revert_on_overdraft(
         ],
     );
 
-    let approve_tx: AccountTransaction = account_invoke_tx(invoke_tx_args! {
+    let approve_tx: AccountTransaction = invoke_tx_with_default_flags(invoke_tx_args! {
         max_fee,
         sender_address: account_address,
         calldata: approve_calldata,
@@ -131,8 +131,7 @@ fn test_revert_on_overdraft(
         nonce: nonce_manager.next(account_address),
     });
     let tx_info = approve_tx.create_tx_info();
-    let approval_execution_info =
-        approve_tx.execute(&mut state, &block_context, true, true).unwrap();
+    let approval_execution_info = approve_tx.execute(&mut state, &block_context).unwrap();
     assert!(!approval_execution_info.is_reverted());
 
     // Transfer a valid amount of funds to compute the cost of a successful
@@ -229,7 +228,7 @@ fn test_revert_on_overdraft(
 
 /// Tests that when a transaction requires more resources than what the sender bounds allow, the
 /// execution is reverted; in the non-revertible case, checks for the correct error.
-// TODO(Aner, 21/01/24) modify for 4844 (taking blob_gas into account).
+// TODO(Aner): modify for 4844 (taking blob_gas into account).
 #[rstest]
 #[case::v0_no_revert(TransactionVersion::ZERO, false, default_all_resource_bounds(), None)]
 #[case::v1_insufficient_max_fee(TransactionVersion::ONE, true, default_all_resource_bounds(), None)]
@@ -267,9 +266,10 @@ fn test_revert_on_resource_overuse(
     #[values(CairoVersion::Cairo0)] cairo_version: CairoVersion,
 ) {
     block_context.block_info.use_kzg_da = true;
+    block_context.versioned_constants.allocation_cost = AllocationCost::ZERO;
     let gas_mode = resource_bounds.get_gas_vector_computation_mode();
     let fee_type = if version == TransactionVersion::THREE { FeeType::Strk } else { FeeType::Eth };
-    let gas_prices = block_context.block_info.gas_prices.get_gas_prices_by_fee_type(&fee_type);
+    let gas_prices = block_context.block_info.gas_prices.gas_price_vector(&fee_type);
     let TestInitData { mut state, account_address, contract_address, mut nonce_manager } =
         init_data_by_version(&block_context.chain_info, cairo_version);
 
@@ -313,7 +313,7 @@ fn test_revert_on_resource_overuse(
     // units for bounds check in post-execution.
     let tight_resource_bounds = match gas_mode {
         GasVectorComputationMode::NoL2Gas => l1_resource_bounds(
-            actual_gas_usage.to_discounted_l1_gas(gas_prices),
+            actual_gas_usage.to_l1_gas_for_fee(gas_prices, &block_context.versioned_constants),
             DEFAULT_STRK_L1_GAS_PRICE.into(),
         ),
         GasVectorComputationMode::All => {
@@ -371,14 +371,11 @@ fn test_revert_on_resource_overuse(
                     Resource::L2Gas => l2_gas.0 -= 1,
                     Resource::L1DataGas => l1_data_gas.0 -= 1,
                 }
-                create_all_resource_bounds(
+                create_gas_amount_bounds_with_default_price(GasVector {
                     l1_gas,
-                    DEFAULT_STRK_L1_GAS_PRICE.into(),
                     l2_gas,
-                    DEFAULT_STRK_L2_GAS_PRICE.into(),
                     l1_data_gas,
-                    DEFAULT_STRK_L1_DATA_GAS_PRICE.into(),
-                )
+                })
             }
         }
     };

@@ -1,24 +1,20 @@
 import dataclasses
 import typing
 
-
-from services import (
-    objects,
-    topology_helpers
-)
+from services.config import SequencerConfig
 
 
 @dataclasses.dataclass
 class ServiceTopology:
-    deployment: typing.Optional[objects.Deployment] = dataclasses.field(default_factory=topology_helpers.get_deployment)
-    config: typing.Optional[objects.Config] = dataclasses.field(default_factory=topology_helpers.get_config)
-    service: typing.Optional[objects.Service] = dataclasses.field(default_factory=topology_helpers.get_service)
-    pvc: typing.Optional[objects.PersistentVolumeClaim] = dataclasses.field(default_factory=topology_helpers.get_pvc)
-    ingress: typing.Optional[objects.Ingress] = dataclasses.field(default_factory=topology_helpers.get_ingress)
-
-
-class SequencerDev(ServiceTopology):
-    pass
-
-class SequencerProd(SequencerDev):
-    pass
+    config: SequencerConfig
+    image: str
+    controller: str
+    replicas: int
+    autoscale: bool
+    anti_affinity: bool
+    k8s_service_config: dict[str, typing.Union[str, bool]]
+    ingress: typing.Optional[dict[any, any]]
+    toleration: typing.Optional[str]
+    storage: typing.Optional[int]
+    resources: typing.Optional[dict[str, dict[str, int]]]
+    external_secret: typing.Optional[dict[str, str]]

@@ -21,7 +21,7 @@ pub struct ContractClass {
     pub abi: Option<Vec<ContractClassAbiEntry>>,
     pub program: Program,
     /// The selector of each entry point is a unique identifier in the program.
-    // TODO: Consider changing to IndexMap, since this is used for computing the
+    // TODO(Yair): Consider changing to IndexMap, since this is used for computing the
     // class hash.
     pub entry_points_by_type: HashMap<EntryPointType, Vec<EntryPointV0>>,
 }
@@ -230,5 +230,5 @@ fn usize_to_hex<S>(value: &usize, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    s.serialize_str(format!("{:#x}", value).as_str())
+    s.serialize_str(format!("{value:#x}").as_str())
 }

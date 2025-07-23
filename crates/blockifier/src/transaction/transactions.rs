@@ -4,25 +4,16 @@ use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress};
 use starknet_api::executable_transaction::{
+    AccountTransaction,
     DeclareTransaction,
     DeployAccountTransaction,
     InvokeTransaction,
     L1HandlerTransaction,
 };
-use starknet_api::transaction::fields::{
-    AccountDeploymentData,
-    Calldata,
-    Fee,
-    TransactionSignature,
-};
-use starknet_api::transaction::{
-    constants,
-    DeclareTransactionV2,
-    DeclareTransactionV3,
-    TransactionVersion,
-};
+use starknet_api::transaction::fields::{AccountDeploymentData, Calldata};
+use starknet_api::transaction::{constants, DeclareTransactionV2, DeclareTransactionV3};
 
-use crate::context::{BlockContext, TransactionContext};
+use crate::context::{BlockContext, GasCounter, TransactionContext};
 use crate::execution::call_info::CallInfo;
 use crate::execution::entry_point::{
     CallEntryPoint,
@@ -39,11 +30,9 @@ use crate::transaction::objects::{
     CommonAccountFields,
     CurrentTransactionInfo,
     DeprecatedTransactionInfo,
-    HasRelatedFeeType,
     TransactionExecutionInfo,
     TransactionExecutionResult,
     TransactionInfo,
-    TransactionInfoCreator,
     TransactionInfoCreatorInner,
 };
 #[cfg(test)]
@@ -52,8 +41,6 @@ mod test;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ExecutionFlags {
-    pub charge_fee: bool,
-    pub validate: bool,
     pub concurrency_mode: bool,
 }
 
@@ -64,14 +51,12 @@ pub trait ExecutableTransaction<U: UpdatableState>: Sized {
         &self,
         state: &mut U,
         block_context: &BlockContext,
-        charge_fee: bool,
-        validate: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo> {
         log::debug!("Executing Transaction...");
         let mut transactional_state = TransactionalState::create_transactional(state);
-        let execution_flags = ExecutionFlags { charge_fee, validate, concurrency_mode: false };
+        let concurrency_mode = false;
         let execution_result =
-            self.execute_raw(&mut transactional_state, block_context, execution_flags);
+            self.execute_raw(&mut transactional_state, block_context, concurrency_mode);
 
         match execution_result {
             Ok(value) => {
@@ -95,7 +80,7 @@ pub trait ExecutableTransaction<U: UpdatableState>: Sized {
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
-        execution_flags: ExecutionFlags,
+        concurrency_mode: bool,
     ) -> TransactionExecutionResult<TransactionExecutionInfo>;
 }
 
@@ -114,19 +99,8 @@ pub trait ValidatableTransaction {
         &self,
         state: &mut dyn State,
         tx_context: Arc<TransactionContext>,
-        remaining_gas: &mut u64,
-        limit_steps_by_resources: bool,
+        remaining_gas: &mut GasCounter,
     ) -> TransactionExecutionResult<Option<CallInfo>>;
-}
-
-impl HasRelatedFeeType for L1HandlerTransaction {
-    fn version(&self) -> TransactionVersion {
-        self.tx.version
-    }
-
-    fn is_l1_handler(&self) -> bool {
-        true
-    }
 }
 
 impl<S: State> Executable<S> for L1HandlerTransaction {
@@ -154,7 +128,7 @@ impl<S: State> Executable<S> for L1HandlerTransaction {
 
         execute_call.non_reverting_execute(state, context, remaining_gas).map(Some).map_err(
             |error| TransactionExecutionError::ExecutionError {
-                error,
+                error: Box::new(error),
                 class_hash,
                 storage_address,
                 selector,
@@ -163,19 +137,13 @@ impl<S: State> Executable<S> for L1HandlerTransaction {
     }
 }
 
-impl TransactionInfoCreator for L1HandlerTransaction {
-    fn create_tx_info(&self) -> TransactionInfo {
-        TransactionInfo::Deprecated(DeprecatedTransactionInfo {
-            common_fields: CommonAccountFields {
-                transaction_hash: self.tx_hash,
-                version: self.tx.version,
-                signature: TransactionSignature::default(),
-                nonce: self.tx.nonce,
-                sender_address: self.tx.contract_address,
-                only_query: false,
-            },
-            max_fee: Fee::default(),
-        })
+impl TransactionInfoCreatorInner for AccountTransaction {
+    fn create_tx_info(&self, only_query: bool) -> TransactionInfo {
+        match self {
+            Self::Declare(tx) => tx.create_tx_info(only_query),
+            Self::DeployAccount(tx) => tx.create_tx_info(only_query),
+            Self::Invoke(tx) => tx.create_tx_info(only_query),
+        }
     }
 }
 
@@ -344,7 +312,7 @@ impl<S: State> Executable<S> for InvokeTransaction {
         let call_info =
             execute_call.non_reverting_execute(state, context, remaining_gas).map_err(|error| {
                 TransactionExecutionError::ExecutionError {
-                    error,
+                    error: Box::new(error),
                     class_hash,
                     storage_address,
                     selector: entry_point_selector,
@@ -393,6 +361,12 @@ impl TransactionInfoCreatorInner for InvokeTransaction {
     }
 }
 
+/// Determines whether the fee should be enforced for the given transaction.
+pub fn enforce_fee(tx: &AccountTransaction, only_query: bool) -> bool {
+    // TODO(AvivG): Consider implemetation without 'create_tx_info'.
+    tx.create_tx_info(only_query).enforce_fee()
+}
+
 /// Attempts to declare a contract class by setting the contract class in the state with the
 /// specified class hash.
 fn try_declare<S: State>(
@@ -401,7 +375,7 @@ fn try_declare<S: State>(
     class_hash: ClassHash,
     compiled_class_hash: Option<CompiledClassHash>,
 ) -> TransactionExecutionResult<()> {
-    match state.get_compiled_contract_class(class_hash) {
+    match state.get_compiled_class(class_hash) {
         Err(StateError::UndeclaredClassHash(_)) => {
             // Class is undeclared; declare it.
             state.set_contract_class(class_hash, tx.contract_class().try_into()?)?;

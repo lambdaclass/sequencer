@@ -1,0 +1,34 @@
+[package]
+name = "apollo_starknet_os_program"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license-file.workspace = true
+description = "The source (Cairo) code of the Starknet OS."
+build = "build/main.rs"
+
+[features]
+dump_source_files = []
+test_programs = []
+
+[lints]
+workspace = true
+
+[dependencies]
+apollo_infra_utils.workspace = true
+cairo-vm.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+starknet-types-core.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+apollo_infra_utils.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+apollo_infra_utils = { workspace = true, features = ["testing"] }
+blockifier.workspace = true
+starknet-types-core.workspace = true
+starknet_api.workspace = true

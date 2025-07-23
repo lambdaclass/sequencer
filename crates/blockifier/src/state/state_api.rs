@@ -1,12 +1,10 @@
-use std::collections::{HashMap, HashSet};
-
 use starknet_api::abi::abi_utils::get_fee_token_var_address;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
 use starknet_types_core::felt::Felt;
 
 use super::cached_state::{ContractClassMapping, StateMaps};
-use crate::execution::contract_class::RunnableContractClass;
+use crate::execution::contract_class::RunnableCompiledClass;
 use crate::state::errors::StateError;
 
 pub type StateResult<T> = Result<T, StateError>;
@@ -21,6 +19,7 @@ pub enum DataAvailabilityMode {
 ///
 /// The `self` argument is mutable for flexibility during reads (for example, caching reads),
 /// and to allow for the `State` trait below to also be considered a `StateReader`.
+#[cfg_attr(any(test, feature = "testing"), mockall::automock)]
 pub trait StateReader {
     /// Returns the storage value under the given key in the given contract instance (represented by
     /// its address).
@@ -39,11 +38,8 @@ pub trait StateReader {
     /// Default: 0 (uninitialized class hash) for an uninitialized contract address.
     fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash>;
 
-    /// Returns the contract class of the given class hash.
-    fn get_compiled_contract_class(
-        &self,
-        class_hash: ClassHash,
-    ) -> StateResult<RunnableContractClass>;
+    /// Returns the compiled class of the given class hash.
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass>;
 
     /// Returns the compiled class hash of the given class hash.
     fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash>;
@@ -96,7 +92,7 @@ pub trait State: StateReader {
     fn set_contract_class(
         &mut self,
         class_hash: ClassHash,
-        contract_class: RunnableContractClass,
+        contract_class: RunnableCompiledClass,
     ) -> StateResult<()>;
 
     /// Sets the given compiled class hash under the given class hash.
@@ -105,19 +101,9 @@ pub trait State: StateReader {
         class_hash: ClassHash,
         compiled_class_hash: CompiledClassHash,
     ) -> StateResult<()>;
-
-    /// Marks the given set of PC values as visited for the given class hash.
-    // TODO(lior): Once we have a BlockResources object, move this logic there. Make sure reverted
-    //   entry points do not affect the final set of PCs.
-    fn add_visited_pcs(&mut self, _class_hash: ClassHash, _pcs: &HashSet<usize>) {}
 }
 
 /// A class defining the API for updating a state with transactions writes.
 pub trait UpdatableState: StateReader {
-    fn apply_writes(
-        &mut self,
-        writes: &StateMaps,
-        class_hash_to_class: &ContractClassMapping,
-        visited_pcs: &HashMap<ClassHash, HashSet<usize>>,
-    );
+    fn apply_writes(&mut self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping);
 }

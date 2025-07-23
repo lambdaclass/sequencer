@@ -1,15 +1,23 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use size_of::SizeOf;
 use starknet_types_core::felt::Felt;
 use strum_macros::EnumIter;
 
 use crate::block::{GasPrice, GasPriceVector, NonzeroGasPrice};
-use crate::transaction::fields::{Fee, Resource};
+use crate::transaction::fields::{Fee, Resource, Tip};
 
 #[cfg_attr(
     any(test, feature = "testing"),
-    derive(derive_more::Add, derive_more::Sum, derive_more::AddAssign, derive_more::Div)
+    derive(
+        derive_more::Sum,
+        derive_more::Div,
+        derive_more::SubAssign,
+        derive_more::Sub,
+        derive_more::Add,
+        derive_more::AddAssign,
+    )
 )]
 #[derive(
     derive_more::Display,
@@ -24,6 +32,7 @@ use crate::transaction::fields::{Fee, Resource};
     Serialize,
     Deserialize,
     Hash,
+    SizeOf,
 )]
 pub struct GasAmount(pub u64);
 
@@ -55,6 +64,19 @@ impl GasAmount {
         self.0.checked_add(rhs.0).map(Self)
     }
 
+    pub fn checked_add_panic_on_overflow(self, added_gas: GasAmount) -> GasAmount {
+        self.checked_add(added_gas).unwrap_or_else(|| {
+            panic!(
+                "Addition overflow while adding gas. current gas: {self}, try to add
+                 gas: {added_gas}.",
+            )
+        })
+    }
+
+    pub fn checked_sub(self, rhs: Self) -> Option<Self> {
+        self.0.checked_sub(rhs.0).map(Self)
+    }
+
     pub const fn nonzero_saturating_mul(self, rhs: NonzeroGasPrice) -> Fee {
         rhs.saturating_mul(self)
     }
@@ -65,6 +87,14 @@ impl GasAmount {
 
     pub fn checked_mul(self, rhs: GasPrice) -> Option<Fee> {
         rhs.checked_mul(self)
+    }
+
+    pub fn checked_factor_mul(self, factor: u64) -> Option<Self> {
+        self.0.checked_mul(factor).map(Self)
+    }
+
+    pub fn checked_factor_div(self, factor: u64) -> Option<Self> {
+        self.0.checked_div(factor).map(Self)
     }
 }
 
@@ -109,69 +139,91 @@ impl GasVector {
         }
     }
 
+    pub fn checked_scalar_mul(self, factor: u64) -> Option<Self> {
+        match (
+            self.l1_gas.checked_factor_mul(factor),
+            self.l1_data_gas.checked_factor_mul(factor),
+            self.l2_gas.checked_factor_mul(factor),
+        ) {
+            (Some(l1_gas), Some(l1_data_gas), Some(l2_gas)) => {
+                Some(Self { l1_gas, l1_data_gas, l2_gas })
+            }
+            _ => None,
+        }
+    }
+
     /// Computes the cost (in fee token units) of the gas vector (panicking on overflow).
-    pub fn cost(&self, gas_prices: &GasPriceVector) -> Fee {
+    pub fn cost(&self, gas_prices: &GasPriceVector, tip: Tip) -> Fee {
+        let tipped_l2_gas_price =
+            gas_prices.l2_gas_price.checked_add(tip.into()).unwrap_or_else(|| {
+                panic!(
+                    "Tip overflowed: addition of L2 gas price ({}) and tip ({}) resulted in \
+                     overflow.",
+                    gas_prices.l2_gas_price, tip
+                )
+            });
+
         let mut sum = Fee(0);
         for (gas, price, resource) in [
             (self.l1_gas, gas_prices.l1_gas_price, Resource::L1Gas),
             (self.l1_data_gas, gas_prices.l1_data_gas_price, Resource::L1DataGas),
-            (self.l2_gas, gas_prices.l2_gas_price, Resource::L2Gas),
+            (self.l2_gas, tipped_l2_gas_price, Resource::L2Gas),
         ] {
             let cost = gas.checked_mul(price.get()).unwrap_or_else(|| {
                 panic!(
-                    "{} cost overflowed: multiplication of gas amount ({}) by price per unit ({}) \
-                     resulted in overflow.",
-                    resource, gas, price
+                    "{resource} cost overflowed: multiplication of gas amount ({gas}) by price \
+                     per unit ({price}) resulted in overflow."
                 )
             });
             sum = sum.checked_add(cost).unwrap_or_else(|| {
                 panic!(
-                    "Total cost overflowed: addition of current sum ({}) and cost of {} ({}) \
-                     resulted in overflow.",
-                    sum, resource, cost
+                    "Total cost overflowed: addition of current sum ({sum}) and cost of \
+                     {resource} ({cost}) resulted in overflow."
                 )
             });
         }
         sum
     }
+}
 
-    /// Compute l1_gas estimation from gas_vector using the following formula:
-    /// One byte of data costs either 1 data gas (in blob mode) or 16 gas (in calldata
-    /// mode). For gas price GP and data gas price DGP, the discount for using blobs
-    /// would be DGP / (16 * GP).
-    /// X non-data-related gas consumption and Y bytes of data, in non-blob mode, would
-    /// cost (X + 16*Y) units of gas. Applying the discount ratio to the data-related
-    /// summand, we get total_gas = (X + Y * DGP / GP).
-    /// If this function is called with kzg_flag==false, then l1_data_gas==0, and this discount
-    /// function does nothing.
-    /// Panics on overflow.
-    pub fn to_discounted_l1_gas(&self, gas_prices: &GasPriceVector) -> GasAmount {
-        let l1_data_gas_fee = self
-            .l1_data_gas
-            .checked_mul(gas_prices.l1_data_gas_price.into())
-            .unwrap_or_else(|| {
-                panic!(
-                    "Discounted L1 gas cost overflowed: multiplication of L1 data gas ({}) by L1 \
-                     data gas price ({}) resulted in overflow.",
-                    self.l1_data_gas, gas_prices.l1_data_gas_price
-                );
-            });
-        let l1_data_gas_in_l1_gas_units =
-            l1_data_gas_fee.checked_div_ceil(gas_prices.l1_gas_price).unwrap_or_else(|| {
-                panic!(
-                    "Discounted L1 gas cost overflowed: division of L1 data fee ({}) by regular \
-                     L1 gas price ({}) resulted in overflow.",
-                    l1_data_gas_fee, gas_prices.l1_gas_price
-                );
-            });
-        self.l1_gas.checked_add(l1_data_gas_in_l1_gas_units).unwrap_or_else(|| {
+/// Computes the total L1 gas amount estimation from the different given L1 gas arguments using the
+/// following formula:
+/// One byte of data costs either 1 data gas (in blob mode) or 16 gas (in calldata
+/// mode). For gas price GP and data gas price DGP, the discount for using blobs
+/// would be DGP / (16 * GP).
+/// X non-data-related gas consumption and Y bytes of data, in non-blob mode, would
+/// cost (X + 16*Y) units of gas. Applying the discount ratio to the data-related
+/// summand, we get total_gas = (X + Y * DGP / GP).
+/// If this function is called with kzg_flag==false, then l1_data_gas==0, and this discount
+/// function does nothing.
+/// Panics on overflow.
+/// Does not take L2 gas into account - more context is required to convert L2 gas units to L1 gas
+/// units (context defined outside of the current crate).
+pub fn to_discounted_l1_gas(
+    l1_gas_price: NonzeroGasPrice,
+    l1_data_gas_price: GasPrice,
+    l1_gas: GasAmount,
+    l1_data_gas: GasAmount,
+) -> GasAmount {
+    let l1_data_gas_fee = l1_data_gas.checked_mul(l1_data_gas_price).unwrap_or_else(|| {
+        panic!(
+            "Discounted L1 gas cost overflowed: multiplication of L1 data gas ({l1_data_gas}) by \
+             L1 data gas price ({l1_data_gas_price}) resulted in overflow."
+        );
+    });
+    let l1_data_gas_in_l1_gas_units =
+        l1_data_gas_fee.checked_div_ceil(l1_gas_price).unwrap_or_else(|| {
             panic!(
-                "Overflow while computing discounted L1 gas: L1 gas ({}) + L1 data gas in L1 gas \
-                 units ({}) resulted in overflow.",
-                self.l1_gas, l1_data_gas_in_l1_gas_units
-            )
-        })
-    }
+                "Discounted L1 gas cost overflowed: division of L1 data fee ({l1_data_gas_fee}) \
+                 by regular L1 gas price ({l1_gas_price}) resulted in overflow."
+            );
+        });
+    l1_gas.checked_add(l1_data_gas_in_l1_gas_units).unwrap_or_else(|| {
+        panic!(
+            "Overflow while computing discounted L1 gas: L1 gas ({l1_gas}) + L1 data gas in L1 \
+             gas units ({l1_data_gas_in_l1_gas_units}) resulted in overflow."
+        )
+    })
 }
 
 /// The execution resources used by a transaction.

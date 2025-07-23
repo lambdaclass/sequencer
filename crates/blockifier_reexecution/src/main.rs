@@ -1,16 +1,15 @@
 use std::fs;
 use std::path::Path;
 
-use blockifier_reexecution::state_reader::test_state_reader::{
-    ConsecutiveTestStateReaders,
-    OfflineConsecutiveStateReaders,
-};
+use apollo_gateway::config::RpcStateReaderConfig;
+use blockifier_reexecution::state_reader::offline_state_reader::OfflineConsecutiveStateReaders;
+use blockifier_reexecution::state_reader::test_state_reader::ConsecutiveTestStateReaders;
 use blockifier_reexecution::state_reader::utils::{
     get_block_numbers_for_reexecution,
     guess_chain_id_from_node_url,
     reexecute_and_verify_correctness,
     write_block_reexecution_data_to_file,
-    JSON_RPC_VERSION,
+    FULL_RESOURCES_DIR,
 };
 use clap::{Args, Parser, Subcommand};
 use google_cloud_storage::client::{Client, ClientConfig};
@@ -19,11 +18,9 @@ use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
 use starknet_api::block::BlockNumber;
 use starknet_api::core::ChainId;
-use starknet_gateway::config::RpcStateReaderConfig;
 
 const BUCKET: &str = "reexecution_artifacts";
 const RESOURCES_DIR: &str = "/resources";
-const FULL_RESOURCES_DIR: &str = "./crates/blockifier_reexecution/resources";
 const FILE_NAME: &str = "/reexecution_data.json";
 const OFFLINE_PREFIX_FILE: &str = "/offline_reexecution_files_prefix";
 
@@ -148,7 +145,7 @@ enum Command {
 fn parse_block_numbers_args(block_numbers: Option<Vec<u64>>) -> Vec<BlockNumber> {
     block_numbers
         .map(|block_numbers| block_numbers.into_iter().map(BlockNumber).collect())
-        .unwrap_or(get_block_numbers_for_reexecution())
+        .unwrap_or_else(|| get_block_numbers_for_reexecution(None))
 }
 
 #[derive(Debug, Args)]
@@ -183,10 +180,7 @@ async fn main() {
                 rpc_args.node_url
             );
 
-            let config = RpcStateReaderConfig {
-                url: rpc_args.node_url.clone(),
-                json_rpc_version: JSON_RPC_VERSION.to_string(),
-            };
+            let config = RpcStateReaderConfig::from_url(rpc_args.node_url.clone());
 
             // RPC calls are "synchronous IO" (see, e.g., https://stackoverflow.com/questions/74547541/when-should-you-use-tokios-spawn-blocking)
             // for details), so should be executed in a blocking thread.
@@ -213,26 +207,28 @@ async fn main() {
             let block_numbers = parse_block_numbers_args(block_numbers);
             println!("Computing reexecution data for blocks {block_numbers:?}.");
 
-            // TODO(Aner): Execute in parallel. Requires making the function async, and only the RPC
-            // calls blocking.
+            let mut task_set = tokio::task::JoinSet::new();
             for block_number in block_numbers {
                 let full_file_path = block_full_file_path(directory_path.clone(), block_number);
                 let (node_url, chain_id) = (rpc_args.node_url.clone(), rpc_args.parse_chain_id());
                 // RPC calls are "synchronous IO" (see, e.g., https://stackoverflow.com/questions/74547541/when-should-you-use-tokios-spawn-blocking
                 // for details), so should be executed in a blocking thread.
-                // TODO(Aner): make only the RPC calls blocking, not the whole function.
-                tokio::task::spawn_blocking(move || {
+                // TODO(Aner): make only the RPC calls blocking, not the entire function.
+                task_set.spawn(async move {
                     println!("Computing reexecution data for block {block_number}.");
-                    write_block_reexecution_data_to_file(
-                        block_number,
-                        full_file_path,
-                        node_url,
-                        chain_id,
-                    )
-                })
-                .await
-                .unwrap();
+                    tokio::task::spawn_blocking(move || {
+                        write_block_reexecution_data_to_file(
+                            block_number,
+                            full_file_path,
+                            node_url,
+                            chain_id,
+                        )
+                    })
+                    .await
+                });
             }
+            println!("Waiting for all blocks to be processed.");
+            task_set.join_all().await;
         }
 
         Command::Reexecute { block_numbers, directory_path } => {
@@ -241,19 +237,18 @@ async fn main() {
             let block_numbers = parse_block_numbers_args(block_numbers);
             println!("Reexecuting blocks {block_numbers:?}.");
 
-            let mut threads = vec![];
+            let mut task_set = tokio::task::JoinSet::new();
             for block in block_numbers {
                 let full_file_path = block_full_file_path(directory_path.clone(), block);
-                threads.push(tokio::task::spawn(async move {
+                task_set.spawn(async move {
                     reexecute_and_verify_correctness(
                         OfflineConsecutiveStateReaders::new_from_file(&full_file_path).unwrap(),
                     );
                     println!("Reexecution test for block {block} passed successfully.");
-                }));
+                });
             }
-            for thread in threads {
-                thread.await.unwrap();
-            }
+            println!("Waiting for all blocks to be processed.");
+            task_set.join_all().await;
         }
 
         // Uploading the files requires authentication; please run
@@ -291,7 +286,7 @@ async fn main() {
                             ..Default::default()
                         })
                         .await
-                        // TODO: check that the error is not found error.
+                        // TODO(Aner): check that the error is not found error.
                         .is_err(),
                     "Block {block_number} reexecution data file already exists in bucket."
                 )
@@ -312,7 +307,9 @@ async fn main() {
                     .unwrap();
             }
 
-            println!("All blocks uploaded successfully to https://console.cloud.google.com/storage/browser/{BUCKET}/{files_prefix}.");
+            println!(
+                "All blocks uploaded successfully to https://console.cloud.google.com/storage/browser/{BUCKET}/{files_prefix}."
+            );
         }
 
         Command::DownloadFiles { block_numbers, directory_path } => {

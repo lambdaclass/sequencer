@@ -10,20 +10,33 @@ description = "The transaction-executing component in the Starknet sequencer."
 workspace = true
 
 [features]
-cairo_native = ["dep:cairo-native"]
-jemalloc = ["dep:tikv-jemallocator"]
+cairo_native = [
+  "apollo_compilation_utils/cairo_native",
+  "apollo_compile_to_native/cairo_native",
+  "blockifier_test_utils/cairo_native",
+  "dep:cairo-native",
+]
+native_blockifier = []
+node_api = []
 reexecution = ["transaction_serde"]
-testing = ["rand", "rstest", "starknet_api/testing"]
+testing = ["blockifier_test_utils", "rand", "rstest", "rstest_reuse", "starknet_api/testing"]
+tracing = []
 transaction_serde = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow.workspace = true
+apollo_compilation_utils = { workspace = true, optional = true }
+apollo_compile_to_native.workspace = true
+apollo_config.workspace = true
+apollo_infra_utils.workspace = true
+apollo_metrics.workspace = true
 ark-ec.workspace = true
 ark-ff.workspace = true
 ark-secp256k1.workspace = true
 ark-secp256r1.workspace = true
+blockifier_test_utils = { workspace = true, optional = true }
 cached.workspace = true
 cairo-lang-casm = { workspace = true, features = ["parity-scale-codec"] }
 cairo-lang-runner.workspace = true
@@ -35,15 +48,16 @@ indexmap.workspace = true
 itertools.workspace = true
 keccak.workspace = true
 log.workspace = true
+mockall.workspace = true
 num-bigint.workspace = true
 num-integer.workspace = true
 num-rational = { workspace = true, features = ["serde"] }
 num-traits.workspace = true
-papyrus_config.workspace = true
 paste.workspace = true
 phf = { workspace = true, features = ["macros"] }
 rand = { workspace = true, optional = true }
 rstest = { workspace = true, optional = true }
+rstest_reuse = { workspace = true, optional = true }
 semver.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
@@ -52,29 +66,36 @@ starknet-types-core.workspace = true
 starknet_api.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
-tikv-jemallocator = { workspace = true, optional = true }
-toml.workspace = true
+dashmap.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
+blake2s.workspace = true
+blockifier_test_utils.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
+expect-test.workspace = true
 glob.workspace = true
+hex.workspace = true
 itertools.workspace = true
 pretty_assertions.workspace = true
 rand.workspace = true
 regex.workspace = true
 rstest.workspace = true
+rstest_reuse.workspace = true
 starknet_api = { workspace = true, features = ["testing"] }
 test-case.workspace = true
+tikv-jemallocator.workspace = true
+
+[build-dependencies]
+apollo_infra_utils.workspace = true
 
 [[bench]]
 harness = false
-name = "blockifier_bench"
-path = "bench/blockifier_bench.rs"
-
-[[test]]
-name = "feature_contracts_compatibility_test"
-path = "tests/feature_contracts_compatibility_test.rs"
+name = "blockifier"
+path = "benches/main.rs"
 required-features = ["testing"]
+
+[package.metadata.cargo-machete]
+# `paste` is used in the `define_versioned_constants!` macro but may be falsely detected as unused.
+ignored = ["paste"]

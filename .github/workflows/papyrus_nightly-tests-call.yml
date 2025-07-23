@@ -16,12 +16,17 @@ on:
       SLACK_ALERT_CHANNEL:
         required: true
 
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
 jobs:
   GW-integration-test-call:
     runs-on: ${{ inputs.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
       - run: sudo apt update; sudo apt -y install libclang-dev
         # Install libclang-dev that is not a part of the ubuntu vm in github actions.
         if: runner.os == 'Linux'
@@ -35,7 +40,7 @@ jobs:
           retVal=0;
           INTEGRATION_TESTNET_NODE_URL=${{ secrets.INTEGRATION_TESTNET_NODE_URL }}
           SENDER_PRIVATE_KEY=${{ secrets.INTEGRATION_TESTNET_SENDER_PRIVATE_KEY }}
-          cargo test --test gateway_integration_test -p papyrus_rpc test_gw_integration_testnet
+          cargo test --test gateway_integration_test -p apollo_rpc test_gw_integration_testnet
           -- --ignored || retVal=$?;
           echo "retVal=$retVal" >> $GITHUB_OUTPUT;
           if [ $retVal -ne 0 ]; then

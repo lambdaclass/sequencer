@@ -13,11 +13,12 @@ import os
 import subprocess
 import time
 from typing import Dict, List, Optional
+
 from utils import run_command
 
 FINAL_BRANCH = "main"
 MERGE_PATHS_FILE = "scripts/merge_paths.json"
-FILES_TO_PRESERVE = {"rust-toolchain.toml"}
+FILES_TO_PRESERVE = {"scripts/parent_branch.txt"}
 
 
 def load_merge_paths() -> Dict[str, str]:
@@ -84,7 +85,7 @@ def current_git_conflictstyle() -> Optional[str]:
         return None
 
 
-def merge_branches(src_branch: str, dst_branch: Optional[str]):
+def merge_branches(src_branch: str, dst_branch: Optional[str], auto_delete_from_dst: bool):
     """
     Merge source branch into destination branch.
     If no destination branch is passed, the destination branch is taken from state on repo.
@@ -112,9 +113,16 @@ def merge_branches(src_branch: str, dst_branch: Optional[str]):
 
     run_command(f"git checkout origin/{dst_branch} {' '.join(FILES_TO_PRESERVE) }")
 
-    run_command("git status -s | grep \"^UU\" | awk '{ print $2 }' | tee /tmp/conflicts")
+    included_types_as_conflicts = ["UU", "AA"]
+    if auto_delete_from_dst:
+        included_types_as_conflicts.append("UD")
 
+    grep_re_expression = "|".join(f"^{t}" for t in included_types_as_conflicts)
     conflicts_file = "/tmp/conflicts"
+    find_conflicts_cmd = f"git status -s | grep -E \"{grep_re_expression}\" | awk '{{ print $2 }}' | tee {conflicts_file}"
+
+    run_command(find_conflicts_cmd)
+
     conflicts = [line.strip() for line in open(conflicts_file).readlines() if line.strip() != ""]
     conflict_line = " ".join(conflicts)
     run_command(f"git add {conflict_line}", allow_error=True)
@@ -140,7 +148,7 @@ def merge_branches(src_branch: str, dst_branch: Optional[str]):
     )
 
     if len(conflicts) != 0:
-        compare = "https://github.com/starkware-libs/blockifier/compare"
+        compare = "https://github.com/starkware-libs/sequencer/compare"
         comment_file_path = "/tmp/comment.XXXXXX"
         with open(comment_file_path, "w") as comment_file:
             for conflict in conflicts:
@@ -158,7 +166,7 @@ def merge_branches(src_branch: str, dst_branch: Optional[str]):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge a branch into another branch.")
-    parser.add_argument("--src", type=str, help="The source branch to merge.")
+    parser.add_argument("--src", type=str, help="The source branch to merge.", required=True)
     parser.add_argument(
         "--dst",
         type=str,
@@ -168,6 +176,14 @@ if __name__ == "__main__":
             f"destination branch registered for the source branch in {MERGE_PATHS_FILE}."
         ),
     )
+    parser.add_argument(
+        "--auto-delete-from-dst",
+        default=False,
+        action="store_true",
+        help="If files were updated on source but deleted on destination, delete the files.",
+    )
     args = parser.parse_args()
 
-    merge_branches(src_branch=args.src, dst_branch=args.dst)
+    merge_branches(
+        src_branch=args.src, dst_branch=args.dst, auto_delete_from_dst=args.auto_delete_from_dst
+    )

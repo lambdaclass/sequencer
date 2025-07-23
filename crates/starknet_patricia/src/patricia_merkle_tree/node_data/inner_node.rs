@@ -1,6 +1,6 @@
 use ethnum::U256;
+use starknet_types_core::felt::Felt;
 
-use crate::felt::Felt;
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::node_data::errors::{EdgePathError, PathToBottomError};
 use crate::patricia_merkle_tree::node_data::leaf::Leaf;
@@ -37,6 +37,12 @@ impl EdgePath {
     #[allow(clippy::as_conversions)]
     pub const MAX: Self =
         Self(U256::from_words(u128::MAX >> (U256::BITS - Self::BITS as u32), u128::MAX));
+
+    #[cfg(any(test, feature = "testing"))]
+    pub fn new_u128(value: u128) -> Self {
+        let path = U256::from(value);
+        Self(path)
+    }
 }
 
 impl From<U256> for EdgePath {
@@ -49,6 +55,12 @@ impl From<U256> for EdgePath {
 impl From<u128> for EdgePath {
     fn from(value: u128) -> Self {
         Self(value.into())
+    }
+}
+
+impl From<Felt> for EdgePath {
+    fn from(value: Felt) -> Self {
+        U256::from_be_bytes(value.to_bytes_be()).into()
     }
 }
 
@@ -134,7 +146,7 @@ impl PathToBottom {
     }
 
     /// Returns true iff the first step on the path is to the left.
-    pub(crate) fn is_left_descendant(&self) -> bool {
+    pub fn is_left_descendant(&self) -> bool {
         self.path.0 >> (self.length.0 - 1) == 0
     }
 
@@ -149,7 +161,7 @@ impl PathToBottom {
     }
 
     /// Returns the path after removing the first steps (the edges from the path's origin node).
-    pub(crate) fn remove_first_edges(&self, n_edges: EdgePathLength) -> PathToBottomResult {
+    pub fn remove_first_edges(&self, n_edges: EdgePathLength) -> PathToBottomResult {
         if self.length < n_edges {
             return Err(PathToBottomError::RemoveEdgesError { length: self.length, n_edges });
         }
@@ -157,5 +169,11 @@ impl PathToBottom {
             EdgePath(self.path.0 & ((U256::ONE << (self.length.0 - n_edges.0)) - 1)),
             self.length - n_edges,
         )
+    }
+
+    /// Returns a path of length 0.
+    pub fn new_zero() -> Self {
+        Self::new(EdgePath(U256::new(0)), EdgePathLength(0))
+            .expect("Creating a zero path unexpectedly failed.")
     }
 }

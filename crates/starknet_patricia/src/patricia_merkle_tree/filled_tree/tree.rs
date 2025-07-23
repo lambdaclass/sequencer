@@ -4,6 +4,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use async_recursion::async_recursion;
+use starknet_patricia_storage::db_object::DBObject;
+use starknet_patricia_storage::storage_trait::{DbKey, DbValue};
 
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::filled_tree::errors::FilledTreeError;
@@ -14,8 +16,6 @@ use crate::patricia_merkle_tree::types::NodeIndex;
 use crate::patricia_merkle_tree::updated_skeleton_tree::hash_function::TreeHashFunction;
 use crate::patricia_merkle_tree::updated_skeleton_tree::node::UpdatedSkeletonNode;
 use crate::patricia_merkle_tree::updated_skeleton_tree::tree::UpdatedSkeletonTree;
-use crate::storage::db_object::DBObject;
-use crate::storage::storage_trait::{StorageKey, StorageValue};
 
 #[cfg(test)]
 #[path = "tree_test.rs"]
@@ -42,7 +42,7 @@ pub trait FilledTree<L: Leaf>: Sized + Send {
     /// Serializes the current state of the tree into a hashmap,
     /// where each key-value pair corresponds
     /// to a storage key and its serialized storage value.
-    fn serialize(&self) -> HashMap<StorageKey, StorageValue>;
+    fn serialize(&self) -> HashMap<DbKey, DbValue>;
 
     fn get_root_hash(&self) -> HashOutput;
 }
@@ -91,7 +91,7 @@ impl<L: Leaf + 'static> FilledTreeImpl<L> {
                 match node.take() {
                     Some(existing_node) => Err(FilledTreeError::DoubleUpdate {
                         index,
-                        existing_value_as_string: format!("{:?}", existing_node),
+                        existing_value_as_string: format!("{existing_node:?}"),
                     }),
                     None => {
                         *node = Some(output);
@@ -122,7 +122,7 @@ impl<L: Leaf + 'static> FilledTreeImpl<L> {
                 }
                 None => {
                     if panic_if_empty_placeholder {
-                        panic!("Empty placeholder in an output map for index {0:?}.", key);
+                        panic!("Empty placeholder in an output map for index {key:?}.");
                     }
                 }
             }
@@ -161,7 +161,7 @@ impl<L: Leaf + 'static> FilledTreeImpl<L> {
                     .lock()
                     .map_err(|_| FilledTreeError::PoisonedLock("Cannot lock node.".to_owned()))?
                     .take()
-                    .unwrap_or_else(|| panic!("Leaf input is None for index {0:?}.", index));
+                    .unwrap_or_else(|| panic!("Leaf input is None for index {index:?}."));
                 let (leaf_data, leaf_output) = L::create(leaf_input).await.map_err(|leaf_err| {
                     FilledTreeError::Leaf { leaf_error: leaf_err, leaf_index: index }
                 })?;
@@ -363,10 +363,10 @@ impl<L: Leaf + 'static> FilledTree<L> for FilledTreeImpl<L> {
         })
     }
 
-    fn serialize(&self) -> HashMap<StorageKey, StorageValue> {
+    fn serialize(&self) -> HashMap<DbKey, DbValue> {
         // This function iterates over each node in the tree, using the node's `db_key` as the
         // hashmap key and the result of the node's `serialize` method as the value.
-        self.get_all_nodes().iter().map(|(_, node)| (node.db_key(), node.serialize())).collect()
+        self.get_all_nodes().values().map(|node| (node.db_key(), node.serialize())).collect()
     }
 
     fn get_root_hash(&self) -> HashOutput {

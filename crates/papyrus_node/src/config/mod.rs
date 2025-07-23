@@ -12,33 +12,34 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{env, fs, io};
 
-use clap::{arg, value_parser, Arg, ArgMatches, Command};
-use itertools::{chain, Itertools};
-use lazy_static::lazy_static;
-use papyrus_base_layer::ethereum_base_layer_contract::EthereumBaseLayerConfig;
-use papyrus_config::dumping::{
-    append_sub_config_name,
+use apollo_central_sync::sources::central::CentralSourceConfig;
+use apollo_central_sync::SyncConfig;
+use apollo_config::dumping::{
+    prepend_sub_config_name,
     ser_optional_sub_config,
     ser_param,
     ser_pointer_target_param,
     SerializeConfig,
 };
-use papyrus_config::loading::load_and_process_config;
-use papyrus_config::{ConfigError, ParamPath, ParamPrivacyInput, SerializedParam};
-use papyrus_consensus::config::ConsensusConfig;
-use papyrus_monitoring_gateway::MonitoringGatewayConfig;
-use papyrus_network::NetworkConfig;
-use papyrus_p2p_sync::client::{P2PSyncClient, P2PSyncClientConfig};
+use apollo_config::loading::load_and_process_config;
+use apollo_config::{ConfigError, ParamPath, ParamPrivacyInput, SerializedParam};
+use apollo_consensus::config::ConsensusConfig;
+use apollo_consensus_orchestrator::config::ContextConfig;
+use apollo_network::NetworkConfig;
+use apollo_p2p_sync::client::{P2pSyncClient, P2pSyncClientConfig};
 #[cfg(feature = "rpc")]
-use papyrus_rpc::RpcConfig;
-use papyrus_storage::db::DbConfig;
-use papyrus_storage::StorageConfig;
-use papyrus_sync::sources::central::CentralSourceConfig;
-use papyrus_sync::SyncConfig;
+use apollo_rpc::RpcConfig;
+use apollo_starknet_client::RetryConfig;
+use apollo_storage::db::DbConfig;
+use apollo_storage::StorageConfig;
+use clap::{arg, value_parser, Arg, ArgMatches, Command};
+use itertools::{chain, Itertools};
+use lazy_static::lazy_static;
+use papyrus_base_layer::ethereum_base_layer_contract::EthereumBaseLayerConfig;
+use papyrus_monitoring_gateway::MonitoringGatewayConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use starknet_api::core::ChainId;
-use starknet_client::RetryConfig;
 use validator::Validate;
 
 use crate::version::VERSION_FULL;
@@ -60,10 +61,11 @@ pub struct NodeConfig {
     /// None if the syncing should be disabled.
     pub sync: Option<SyncConfig>,
     /// One of p2p_sync or sync must be None.
-    /// If P2P sync is active, then network must be active too.
-    // TODO(yair): Change NodeConfig to have an option of enum of SyncConfig or P2PSyncConfig.
-    pub p2p_sync: Option<P2PSyncClientConfig>,
+    /// If p2p sync is active, then network must be active too.
+    // TODO(yair): Change NodeConfig to have an option of enum of SyncConfig or P2pSyncConfig.
+    pub p2p_sync: Option<P2pSyncClientConfig>,
     pub consensus: Option<ConsensusConfig>,
+    pub context: Option<ContextConfig>,
     // TODO(shahak): Make network non-optional once it's developed enough.
     pub network: Option<NetworkConfig>,
     pub collect_profiling_metrics: bool,
@@ -79,9 +81,10 @@ impl Default for NodeConfig {
             rpc: RpcConfig::default(),
             monitoring_gateway: MonitoringGatewayConfig::default(),
             storage: StorageConfig::default(),
-            sync: Some(SyncConfig::default()),
+            sync: Some(SyncConfig { store_sierras_and_casms: true, ..Default::default() }),
             p2p_sync: None,
             consensus: None,
+            context: None,
             network: None,
             collect_profiling_metrics: false,
         }
@@ -92,13 +95,14 @@ impl SerializeConfig for NodeConfig {
     fn dump(&self) -> BTreeMap<ParamPath, SerializedParam> {
         #[allow(unused_mut)]
         let mut sub_configs = vec![
-            append_sub_config_name(self.central.dump(), "central"),
-            append_sub_config_name(self.base_layer.dump(), "base_layer"),
-            append_sub_config_name(self.monitoring_gateway.dump(), "monitoring_gateway"),
-            append_sub_config_name(self.storage.dump(), "storage"),
+            prepend_sub_config_name(self.central.dump(), "central"),
+            prepend_sub_config_name(self.base_layer.dump(), "base_layer"),
+            prepend_sub_config_name(self.monitoring_gateway.dump(), "monitoring_gateway"),
+            prepend_sub_config_name(self.storage.dump(), "storage"),
             ser_optional_sub_config(&self.sync, "sync"),
             ser_optional_sub_config(&self.p2p_sync, "p2p_sync"),
             ser_optional_sub_config(&self.consensus, "consensus"),
+            ser_optional_sub_config(&self.context, "context"),
             ser_optional_sub_config(&self.network, "network"),
             BTreeMap::from_iter([ser_param(
                 "collect_profiling_metrics",
@@ -108,7 +112,7 @@ impl SerializeConfig for NodeConfig {
             )]),
         ];
         #[cfg(feature = "rpc")]
-        sub_configs.push(append_sub_config_name(self.rpc.dump(), "rpc"));
+        sub_configs.push(prepend_sub_config_name(self.rpc.dump(), "rpc"));
 
         sub_configs.into_iter().flatten().collect()
     }
@@ -119,7 +123,7 @@ impl NodeConfig {
     /// higher priority.
     pub fn load_and_process(args: Vec<String>) -> Result<Self, ConfigError> {
         let default_config_file = std::fs::File::open(Path::new(DEFAULT_CONFIG_PATH))?;
-        load_and_process_config(default_config_file, node_command(), args)
+        load_and_process_config(default_config_file, node_command(), args, false)
     }
 }
 

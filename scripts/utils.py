@@ -2,7 +2,22 @@ import os
 import subprocess
 from typing import List
 
-def run_command(command: str, allow_error: bool = False) -> List[str]:
+from git import Repo
+
+
+def git_files(extension: str) -> List[str]:
+    """
+    Returns a list of files in the current git repository with the specified extension.
+    """
+    repo = Repo(".")
+    return [
+        item.path for item in repo.commit().tree.traverse() if item.path.endswith(f".{extension}")
+    ]
+
+
+def run_command(
+    command: str, allow_error: bool = False, print_output_on_error: bool = False
+) -> List[str]:
     """
     Runs a bash command and returns the output as a list of lines.
     """
@@ -16,6 +31,9 @@ def run_command(command: str, allow_error: bool = False) -> List[str]:
         print(f"Command '{command}' output:\n{output_lines}")
         return command_output
     except subprocess.CalledProcessError as error:
+        if print_output_on_error:
+            print(f"Command '{command}' output:\n{error.output.decode()}")
+
         if not allow_error:
             raise
         print(f"Command '{command}' hit error: {error=}.")

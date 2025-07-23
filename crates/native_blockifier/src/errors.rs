@@ -1,18 +1,14 @@
 use blockifier::blockifier::stateful_validator::StatefulValidatorError;
 use blockifier::blockifier::transaction_executor::TransactionExecutorError;
-use blockifier::bouncer::BuiltinCount;
+use blockifier::execution::call_info::BuiltinCounterMap;
 use blockifier::state::errors::StateError;
-use blockifier::transaction::errors::{
-    ParseError,
-    TransactionExecutionError,
-    TransactionPreValidationError,
-};
-use blockifier::transaction::transaction_types::TransactionType;
+use blockifier::transaction::errors::{TransactionExecutionError, TransactionPreValidationError};
 use cairo_vm::types::errors::program_errors::ProgramError;
 use num_bigint::BigUint;
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use starknet_api::executable_transaction::TransactionType;
 use starknet_api::StarknetApiError;
 use starknet_types_core::felt::FromStrError;
 use thiserror::Error;
@@ -72,8 +68,8 @@ native_blockifier_errors!(
     (SerdeError, serde_json::Error, PySerdeError),
     (StarknetApiError, StarknetApiError, PyStarknetApiError),
     (StateError, StateError, PyStateError),
-    (StatefulValidatorError, StatefulValidatorError, PyStatefulValidatorError),
-    (StorageError, papyrus_storage::StorageError, PyStorageError),
+    (StatefulValidatorError, Box<StatefulValidatorError>, PyStatefulValidatorError),
+    (StorageError, apollo_storage::StorageError, PyStorageError),
     (TransactionExecutionError, TransactionExecutionError, PyTransactionExecutionError),
     (TransactionExecutorError, TransactionExecutorError, PyTransactionExecutorError),
     (TransactionPreValidationError, TransactionPreValidationError, PyTransactionPreValidationError)
@@ -84,11 +80,11 @@ pub enum NativeBlockifierInputError {
     #[error(transparent)]
     InvalidNativeBlockifierInputError(#[from] InvalidNativeBlockifierInputError),
     #[error(transparent)]
-    ParseError(#[from] ParseError),
-    #[error(transparent)]
     ProgramError(#[from] ProgramError),
     #[error(transparent)]
     PyFeltParseError(#[from] FromStrError),
+    #[error("Sierra version is missing.")]
+    MissingSierraVersion,
     #[error(transparent)]
     StarknetApiError(#[from] StarknetApiError),
     #[error("Unknown builtin: {0}.")]
@@ -102,7 +98,7 @@ pub enum NativeBlockifierInputError {
 #[derive(Debug, Error)]
 pub enum InvalidNativeBlockifierInputError {
     #[error("Invalid builtin count: {0:?}.")]
-    InvalidBuiltinCounts(BuiltinCount),
+    InvalidBuiltinCounts(BuiltinCounterMap),
     #[error("Invalid Wei gas price: {0}.")]
     InvalidL1GasPriceWei(u128),
     #[error("Invalid Fri gas price: {0}.")]

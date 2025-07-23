@@ -18,10 +18,9 @@ use cairo_vm::types::program::Program;
 use cairo_vm::types::relocatable::MaybeRelocatable;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
 use itertools::Itertools;
-use semver::Version;
 use serde::de::Error as DeserializationError;
 use serde::{Deserialize, Deserializer, Serialize};
-use starknet_api::contract_class::{ContractClass, EntryPointType};
+use starknet_api::contract_class::{ContractClass, EntryPointType, SierraVersion, VersionedCasm};
 use starknet_api::core::EntryPointSelector;
 use starknet_api::deprecated_contract_class::{
     ContractClass as DeprecatedContractClass,
@@ -29,17 +28,20 @@ use starknet_api::deprecated_contract_class::{
     EntryPointV0,
     Program as DeprecatedProgram,
 };
-use starknet_api::transaction::fields::GasVectorComputationMode;
+use starknet_api::execution_resources::GasAmount;
 use starknet_types_core::felt::Felt;
 
 use crate::abi::constants::{self};
-use crate::execution::entry_point::CallEntryPoint;
+use crate::execution::entry_point::{EntryPointExecutionContext, EntryPointTypeAndSelector};
 use crate::execution::errors::PreExecutionError;
-use crate::execution::execution_utils::{poseidon_hash_many_cost, sn_api_to_cairo_vm_program};
+use crate::execution::execution_utils::{
+    cost_of_encode_felt252_data_and_calc_blake_hash,
+    poseidon_hash_many_cost,
+    sn_api_to_cairo_vm_program,
+};
 #[cfg(feature = "cairo_native")]
-use crate::execution::native::contract_class::NativeContractClassV1;
+use crate::execution::native::contract_class::NativeCompiledClassV1;
 use crate::transaction::errors::TransactionExecutionError;
-use crate::versioned_constants::CompilerVersion;
 
 #[cfg(test)]
 #[path = "contract_class_test.rs"]
@@ -58,29 +60,30 @@ pub enum TrackedResource {
     SierraGas, // AKA Sierra mode.
 }
 
-/// Represents a runnable Starknet contract class (meaning, the program is runnable by the VM).
+/// Represents a runnable Starknet compiled class.
+/// Meaning, the program is runnable by the VM (or natively).
 #[derive(Clone, Debug, Eq, PartialEq, derive_more::From)]
-pub enum RunnableContractClass {
-    V0(ContractClassV0),
-    V1(ContractClassV1),
+pub enum RunnableCompiledClass {
+    V0(CompiledClassV0),
+    V1(CompiledClassV1),
     #[cfg(feature = "cairo_native")]
-    V1Native(NativeContractClassV1),
+    V1Native(NativeCompiledClassV1),
 }
 
-impl TryFrom<ContractClass> for RunnableContractClass {
+impl TryFrom<ContractClass> for RunnableCompiledClass {
     type Error = ProgramError;
 
     fn try_from(raw_contract_class: ContractClass) -> Result<Self, Self::Error> {
         let contract_class: Self = match raw_contract_class {
             ContractClass::V0(raw_contract_class) => Self::V0(raw_contract_class.try_into()?),
-            ContractClass::V1(raw_contract_class) => Self::V1(raw_contract_class.try_into()?),
+            ContractClass::V1(versioned_casm) => Self::V1(versioned_casm.try_into()?),
         };
 
         Ok(contract_class)
     }
 }
 
-impl RunnableContractClass {
+impl RunnableCompiledClass {
     pub fn constructor_selector(&self) -> Option<EntryPointSelector> {
         match self {
             Self::V0(class) => class.constructor_selector(),
@@ -95,8 +98,21 @@ impl RunnableContractClass {
             Self::V0(class) => class.estimate_casm_hash_computation_resources(),
             Self::V1(class) => class.estimate_casm_hash_computation_resources(),
             #[cfg(feature = "cairo_native")]
-            Self::V1Native(_) => {
-                todo!("Use casm to estimate casm hash computation resources")
+            Self::V1Native(class) => class.casm().estimate_casm_hash_computation_resources(),
+        }
+    }
+
+    /// Estimate the VM gas required to migrate a CompiledClassHash from Poseidon hashing to Blake.
+    pub fn estimate_compiled_class_hash_migration_resources(&self) -> GasAmount {
+        match self {
+            Self::V0(_) => panic!(
+                "v0 contracts do not have a Compiled Class Hash and therefore shouldn't be \
+                 counted for migration."
+            ),
+            Self::V1(class) => class.estimate_compiled_class_hash_migration_resources(),
+            #[cfg(feature = "cairo_native")]
+            Self::V1Native(class) => {
+                class.casm().estimate_compiled_class_hash_migration_resources()
             }
         }
     }
@@ -117,34 +133,36 @@ impl RunnableContractClass {
         }
     }
 
-    pub fn bytecode_length(&self) -> usize {
-        match self {
-            Self::V0(class) => class.bytecode_length(),
-            Self::V1(class) => class.bytecode_length(),
-            #[cfg(feature = "cairo_native")]
-            Self::V1Native(_) => {
-                todo!("implement bytecode_length for native contracts.")
-            }
-        }
-    }
-
     /// Returns whether this contract should run using Cairo steps or Sierra gas.
     pub fn tracked_resource(
         &self,
-        min_sierra_version: &CompilerVersion,
-        gas_mode: GasVectorComputationMode,
+        min_sierra_version: &SierraVersion,
+        last_tracked_resource: Option<&TrackedResource>,
     ) -> TrackedResource {
-        match gas_mode {
-            GasVectorComputationMode::All => match self {
-                Self::V0(_) => TrackedResource::CairoSteps,
-                Self::V1(contract_class) => contract_class.tracked_resource(min_sierra_version),
-                #[cfg(feature = "cairo_native")]
-                Self::V1Native(contract_class) => {
-                    contract_class.casm().tracked_resource(min_sierra_version)
-                }
-            },
-            GasVectorComputationMode::NoL2Gas => TrackedResource::CairoSteps,
+        let contract_tracked_resource = match self {
+            Self::V0(_) => TrackedResource::CairoSteps,
+            Self::V1(contract_class) => contract_class.tracked_resource(min_sierra_version),
+            #[cfg(feature = "cairo_native")]
+            Self::V1Native(contract_class) => {
+                contract_class.casm().tracked_resource(min_sierra_version)
+            }
+        };
+        match last_tracked_resource {
+            // Once we ran with CairoSteps, we will continue to run using it for all nested calls.
+            Some(TrackedResource::CairoSteps) => TrackedResource::CairoSteps,
+            Some(TrackedResource::SierraGas) | None => contract_tracked_resource,
         }
+    }
+
+    /// Returns the tracked resource for calling this contract from within a context.
+    pub fn get_current_tracked_resource(
+        &self,
+        context: &EntryPointExecutionContext,
+    ) -> TrackedResource {
+        self.tracked_resource(
+            &context.versioned_constants().min_sierra_version_for_sierra_gas,
+            context.tracked_resource_stack.last(),
+        )
     }
 }
 
@@ -156,16 +174,16 @@ impl RunnableContractClass {
 // Note: when deserializing from a SN API class JSON string, the ABI field is ignored
 // by serde, since it is not required for execution.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct ContractClassV0(pub Arc<ContractClassV0Inner>);
-impl Deref for ContractClassV0 {
-    type Target = ContractClassV0Inner;
+pub struct CompiledClassV0(pub Arc<CompiledClassV0Inner>);
+impl Deref for CompiledClassV0 {
+    type Target = CompiledClassV0Inner;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl ContractClassV0 {
+impl CompiledClassV0 {
     fn constructor_selector(&self) -> Option<EntryPointSelector> {
         Some(self.entry_points_by_type[&EntryPointType::Constructor].first()?.selector)
     }
@@ -201,24 +219,24 @@ impl ContractClassV0 {
         TrackedResource::CairoSteps
     }
 
-    pub fn try_from_json_string(raw_contract_class: &str) -> Result<ContractClassV0, ProgramError> {
-        let contract_class: ContractClassV0Inner = serde_json::from_str(raw_contract_class)?;
-        Ok(ContractClassV0(Arc::new(contract_class)))
+    pub fn try_from_json_string(raw_contract_class: &str) -> Result<CompiledClassV0, ProgramError> {
+        let contract_class: CompiledClassV0Inner = serde_json::from_str(raw_contract_class)?;
+        Ok(CompiledClassV0(Arc::new(contract_class)))
     }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
-pub struct ContractClassV0Inner {
+pub struct CompiledClassV0Inner {
     #[serde(deserialize_with = "deserialize_program")]
     pub program: Program,
     pub entry_points_by_type: HashMap<EntryPointType, Vec<EntryPointV0>>,
 }
 
-impl TryFrom<DeprecatedContractClass> for ContractClassV0 {
+impl TryFrom<DeprecatedContractClass> for CompiledClassV0 {
     type Error = ProgramError;
 
     fn try_from(class: DeprecatedContractClass) -> Result<Self, Self::Error> {
-        Ok(Self(Arc::new(ContractClassV0Inner {
+        Ok(Self(Arc::new(CompiledClassV0Inner {
             program: sn_api_to_cairo_vm_program(class.program)?,
             entry_points_by_type: class.entry_points_by_type,
         })))
@@ -227,12 +245,12 @@ impl TryFrom<DeprecatedContractClass> for ContractClassV0 {
 
 // V1.
 
-/// Represents a runnable Cario (Cairo 1) Starknet contract class (meaning, the program is runnable
+/// Represents a runnable Cario (Cairo 1) Starknet compiled class (meaning, the program is runnable
 /// by the VM). We wrap the actual class in an Arc to avoid cloning the program when cloning the
 /// class.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractClassV1(pub Arc<ContractClassV1Inner>);
-impl Deref for ContractClassV1 {
+pub struct CompiledClassV1(pub Arc<ContractClassV1Inner>);
+impl Deref for CompiledClassV1 {
     type Target = ContractClassV1Inner;
 
     fn deref(&self) -> &Self::Target {
@@ -240,7 +258,7 @@ impl Deref for ContractClassV1 {
     }
 }
 
-impl ContractClassV1 {
+impl CompiledClassV1 {
     pub fn constructor_selector(&self) -> Option<EntryPointSelector> {
         self.0.entry_points_by_type.constructor.first().map(|ep| ep.selector)
     }
@@ -255,14 +273,14 @@ impl ContractClassV1 {
 
     pub fn get_entry_point(
         &self,
-        call: &CallEntryPoint,
+        entry_point: &EntryPointTypeAndSelector,
     ) -> Result<EntryPointV1, PreExecutionError> {
-        self.entry_points_by_type.get_entry_point(call)
+        self.entry_points_by_type.get_entry_point(entry_point)
     }
 
     /// Returns whether this contract should run using Cairo steps or Sierra gas.
-    pub fn tracked_resource(&self, min_sierra_version: &CompilerVersion) -> TrackedResource {
-        if *min_sierra_version <= self.compiler_version {
+    pub fn tracked_resource(&self, min_sierra_version: &SierraVersion) -> TrackedResource {
+        if *min_sierra_version <= self.sierra_version {
             TrackedResource::SierraGas
         } else {
             TrackedResource::CairoSteps
@@ -273,7 +291,14 @@ impl ContractClassV1 {
     /// This is an empiric measurement of several bytecode lengths, which constitutes as the
     /// dominant factor in it.
     fn estimate_casm_hash_computation_resources(&self) -> ExecutionResources {
-        estimate_casm_hash_computation_resources(&self.bytecode_segment_lengths)
+        estimate_casm_poseidon_hash_computation_resources(&self.bytecode_segment_lengths)
+    }
+
+    /// Estimate the VM gas required to perform a CompiledClassHash migration,
+    /// including both the Blake2s and Poseidon hash computations.
+    fn estimate_compiled_class_hash_migration_resources(&self) -> GasAmount {
+        // TODO(AvivG): implement after blake hash estimation exists.
+        GasAmount::ZERO
     }
 
     // Returns the set of segments that were visited according to the given visited PCs.
@@ -286,10 +311,12 @@ impl ContractClassV1 {
         get_visited_segments(&self.bytecode_segment_lengths, &mut reversed_visited_pcs, &mut 0)
     }
 
-    pub fn try_from_json_string(raw_contract_class: &str) -> Result<ContractClassV1, ProgramError> {
+    pub fn try_from_json_string(
+        raw_contract_class: &str,
+        sierra_version: SierraVersion,
+    ) -> Result<CompiledClassV1, ProgramError> {
         let casm_contract_class: CasmContractClass = serde_json::from_str(raw_contract_class)?;
-        let contract_class = ContractClassV1::try_from(casm_contract_class)?;
-
+        let contract_class = CompiledClassV1::try_from((casm_contract_class, sierra_version))?;
         Ok(contract_class)
     }
 }
@@ -298,7 +325,7 @@ impl ContractClassV1 {
 ///
 /// Note: the function focuses on the bytecode size, and currently ignores the cost handling the
 /// class entry points.
-pub fn estimate_casm_hash_computation_resources(
+pub fn estimate_casm_poseidon_hash_computation_resources(
     bytecode_segment_lengths: &NestedIntList,
 ) -> ExecutionResources {
     // The constants in this function were computed by running the Casm code on a few values
@@ -336,6 +363,80 @@ pub fn estimate_casm_hash_computation_resources(
             execution_resources
         }
     }
+}
+
+/// Cost to hash a single flat segment of `len` felts.
+fn leaf_cost<F>(len: usize, resources_to_gas_fn: F) -> GasAmount
+where
+    F: Fn(&ExecutionResources) -> GasAmount,
+{
+    // All `len` inputs treated as “big” felts; no small-felt optimization here.
+    cost_of_encode_felt252_data_and_calc_blake_hash(len, 0, resources_to_gas_fn)
+}
+
+/// Cost to hash a multi-segment contract:
+fn node_cost<F>(segs: &[NestedIntList], resources_to_gas_fn: F) -> GasAmount
+where
+    F: Fn(&ExecutionResources) -> GasAmount,
+{
+    // TODO(AvivG): Add base estimation for node.
+    let mut gas = GasAmount::ZERO;
+
+    // TODO(AvivG): Add base estimation of each segment. Could this be part of 'leaf_cost'?
+    let segment_overhead = GasAmount::ZERO;
+
+    // For each segment, hash its felts.
+    for seg in segs {
+        match seg {
+            NestedIntList::Leaf(len) => {
+                gas = gas.checked_add_panic_on_overflow(segment_overhead);
+                gas = gas.checked_add_panic_on_overflow(leaf_cost(*len, &resources_to_gas_fn));
+            }
+            _ => panic!("Estimating hash cost only supports at most one level of segmentation."),
+        }
+    }
+
+    // Node‐level hash over (hash1, len1, hash2, len2, …): one segment hash (“big” felt))
+    // and one segment length (“small” felt) per segment.
+    let node_hash_cost = cost_of_encode_felt252_data_and_calc_blake_hash(
+        segs.len(),
+        segs.len(),
+        resources_to_gas_fn,
+    );
+
+    gas.checked_add_panic_on_overflow(node_hash_cost)
+}
+
+/// Estimates the VM resources to compute the CASM Blake hash for a Cairo-1 contract:
+/// - Uses only bytecode size (treats all felts as “big”, ignores the small-felt optimization).
+pub fn estimate_casm_blake_hash_computation_resources<F>(
+    bytecode_segment_lengths: &NestedIntList,
+    resources_to_gas_fn: F,
+) -> GasAmount
+where
+    F: Fn(&ExecutionResources) -> GasAmount,
+{
+    // TODO(AvivG): Currently ignores entry-point hashing costs.
+    // TODO(AvivG): Missing base overhead estimation for compiled_class_hash.
+
+    // Basic frame overhead.
+    // TODO(AvivG): Once compiled_class_hash estimation is complete,
+    // revisit whether this should be moved into cost_of_encode_felt252_data_and_calc_blake_hash.
+    let resources = ExecutionResources {
+        n_steps: 0,
+        n_memory_holes: 0,
+        builtin_instance_counter: HashMap::from([(BuiltinName::range_check, 3)]),
+    };
+    let gas = resources_to_gas_fn(&resources);
+
+    // Add leaf vs node cost
+    let added_gas = match bytecode_segment_lengths {
+        // Single-segment contract (e.g., older Sierra contracts).
+        NestedIntList::Leaf(len) => leaf_cost(*len, &resources_to_gas_fn),
+        NestedIntList::Node(segs) => node_cost(segs, resources_to_gas_fn),
+    };
+
+    gas.checked_add_panic_on_overflow(added_gas)
 }
 
 // Returns the set of segments that were visited according to the given visited PCs and segment
@@ -390,7 +491,7 @@ pub struct ContractClassV1Inner {
     pub program: Program,
     pub entry_points_by_type: EntryPointsByType<EntryPointV1>,
     pub hints: HashMap<String, Hint>,
-    pub compiler_version: CompilerVersion,
+    pub sierra_version: SierraVersion,
     bytecode_segment_lengths: NestedIntList,
 }
 
@@ -413,10 +514,10 @@ impl HasSelector for EntryPointV1 {
     }
 }
 
-impl TryFrom<CasmContractClass> for ContractClassV1 {
+impl TryFrom<VersionedCasm> for CompiledClassV1 {
     type Error = ProgramError;
 
-    fn try_from(class: CasmContractClass) -> Result<Self, Self::Error> {
+    fn try_from((class, sierra_version): VersionedCasm) -> Result<Self, Self::Error> {
         let data: Vec<MaybeRelocatable> =
             class.bytecode.iter().map(|x| MaybeRelocatable::from(Felt::from(&x.value))).collect();
 
@@ -462,15 +563,11 @@ impl TryFrom<CasmContractClass> for ContractClassV1 {
         let bytecode_segment_lengths = class
             .bytecode_segment_lengths
             .unwrap_or_else(|| NestedIntList::Leaf(program.data_len()));
-        let compiler_version = CompilerVersion(
-            Version::parse(&class.compiler_version)
-                .unwrap_or_else(|_| panic!("Invalid version: '{}'", class.compiler_version)),
-        );
-        Ok(ContractClassV1(Arc::new(ContractClassV1Inner {
+        Ok(CompiledClassV1(Arc::new(ContractClassV1Inner {
             program,
             entry_points_by_type,
             hints: string_to_hint,
-            compiler_version,
+            sierra_version,
             bytecode_segment_lengths,
         })))
     }
@@ -526,21 +623,24 @@ pub struct EntryPointsByType<EP: HasSelector> {
 }
 
 impl<EP: Clone + HasSelector> EntryPointsByType<EP> {
-    pub fn get_entry_point(&self, call: &CallEntryPoint) -> Result<EP, PreExecutionError> {
-        call.verify_constructor()?;
+    pub fn get_entry_point(
+        &self,
+        entry_point: &EntryPointTypeAndSelector,
+    ) -> Result<EP, PreExecutionError> {
+        entry_point.verify_constructor()?;
 
-        let entry_points_of_same_type = &self[call.entry_point_type];
+        let entry_points_of_same_type = &self[entry_point.entry_point_type];
         let filtered_entry_points: Vec<_> = entry_points_of_same_type
             .iter()
-            .filter(|ep| *ep.selector() == call.entry_point_selector)
+            .filter(|ep| *ep.selector() == entry_point.entry_point_selector)
             .collect();
 
         match filtered_entry_points[..] {
-            [] => Err(PreExecutionError::EntryPointNotFound(call.entry_point_selector)),
+            [] => Err(PreExecutionError::EntryPointNotFound(entry_point.entry_point_selector)),
             [entry_point] => Ok(entry_point.clone()),
             _ => Err(PreExecutionError::DuplicatedEntryPointSelector {
-                selector: call.entry_point_selector,
-                typ: call.entry_point_type,
+                selector: entry_point.entry_point_selector,
+                typ: entry_point.entry_point_type,
             }),
         }
     }

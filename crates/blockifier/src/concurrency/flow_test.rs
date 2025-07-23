@@ -9,12 +9,31 @@ use crate::abi::sierra_types::{SierraType, SierraU128};
 use crate::concurrency::scheduler::{Scheduler, Task, TransactionStatus};
 use crate::concurrency::test_utils::{safe_versioned_state_for_testing, DEFAULT_CHUNK_SIZE};
 use crate::concurrency::versioned_state::ThreadSafeVersionedState;
+use crate::concurrency::TxIndex;
 use crate::state::cached_state::{CachedState, ContractClassMapping, StateMaps};
 use crate::state::state_api::UpdatableState;
 use crate::test_utils::dict_state_reader::DictStateReader;
 
 const CONTRACT_ADDRESS: &str = "0x18031991";
 const STORAGE_KEY: u8 = 27;
+
+fn validate(
+    scheduler: &Scheduler,
+    versioned_state: &ThreadSafeVersionedState<CachedState<DictStateReader>>,
+    tx_index: TxIndex,
+    commit_phase: bool,
+) -> bool {
+    let state_proxy = versioned_state.pin_version(tx_index);
+    let (reads, writes) = get_reads_writes_for(Task::ValidationTask(tx_index), versioned_state);
+    let read_set_valid = state_proxy.validate_reads(&reads).unwrap();
+    let aborted = !read_set_valid && scheduler.try_validation_abort(tx_index, commit_phase);
+    if aborted {
+        state_proxy.delete_writes(&writes, &ContractClassMapping::default()).unwrap();
+        scheduler.finish_abort(tx_index);
+    }
+
+    read_set_valid
+}
 
 #[rstest]
 fn scheduler_flow_test(
@@ -38,22 +57,13 @@ fn scheduler_flow_test(
             loop {
                 if let Some(mut transaction_committer) = scheduler.try_enter_commit_phase() {
                     while let Some(tx_index) = transaction_committer.try_commit() {
-                        let mut state_proxy = versioned_state.pin_version(tx_index);
-                        let (reads, writes) =
-                            get_reads_writes_for(Task::ValidationTask(tx_index), &versioned_state);
-                        let reads_valid = state_proxy.validate_reads(&reads);
-                        if !reads_valid {
-                            state_proxy.delete_writes(&writes, &ContractClassMapping::default());
-                            let (_, new_writes) = get_reads_writes_for(
-                                Task::ExecutionTask(tx_index),
-                                &versioned_state,
-                            );
-                            state_proxy.apply_writes(
-                                &new_writes,
-                                &ContractClassMapping::default(),
-                                &HashMap::default(),
-                            );
-                            scheduler.finish_execution_during_commit(tx_index);
+                        if !validate(&scheduler, &versioned_state, tx_index, true) {
+                            transaction_committer.uncommit();
+                            break;
+                        }
+                        if tx_index == DEFAULT_CHUNK_SIZE - 1 {
+                            scheduler.halt();
+                            break;
                         }
                     }
                 }
@@ -61,26 +71,15 @@ fn scheduler_flow_test(
                     Task::ExecutionTask(tx_index) => {
                         let (_, writes) =
                             get_reads_writes_for(Task::ExecutionTask(tx_index), &versioned_state);
-                        versioned_state.pin_version(tx_index).apply_writes(
-                            &writes,
-                            &ContractClassMapping::default(),
-                            &HashMap::default(),
-                        );
+                        versioned_state
+                            .pin_version(tx_index)
+                            .apply_writes(&writes, &ContractClassMapping::default());
                         scheduler.finish_execution(tx_index);
                         Task::AskForTask
                     }
                     Task::ValidationTask(tx_index) => {
-                        let state_proxy = versioned_state.pin_version(tx_index);
-                        let (reads, writes) =
-                            get_reads_writes_for(Task::ValidationTask(tx_index), &versioned_state);
-                        let read_set_valid = state_proxy.validate_reads(&reads);
-                        let aborted = !read_set_valid && scheduler.try_validation_abort(tx_index);
-                        if aborted {
-                            state_proxy.delete_writes(&writes, &ContractClassMapping::default());
-                            scheduler.finish_abort(tx_index)
-                        } else {
-                            Task::AskForTask
-                        }
+                        validate(&scheduler, &versioned_state, tx_index, false);
+                        Task::AskForTask
                     }
                     Task::NoTaskAvailable => Task::AskForTask,
                     Task::AskForTask => scheduler.next_task(),
@@ -105,7 +104,7 @@ fn scheduler_flow_test(
     assert!(scheduler.done_marker.load(Ordering::Acquire));
     let inner_versioned_state = versioned_state.into_inner_state();
     for tx_index in 0..DEFAULT_CHUNK_SIZE {
-        assert_eq!(*scheduler.tx_statuses[tx_index].lock().unwrap(), TransactionStatus::Committed);
+        assert_eq!(scheduler.get_tx_status(tx_index), TransactionStatus::Committed);
         let storage_writes = inner_versioned_state.get_writes_of_index(tx_index).storage;
         assert_eq!(
             *storage_writes

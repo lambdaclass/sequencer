@@ -32,7 +32,7 @@ pub struct ReplacedClass {
     pub class_hash: ClassHash,
 }
 
-// TODO: move to used crate
+// TODO(Shahak): move to used crate
 pub fn create_random_state_diff(rng: &mut impl RngCore) -> ThinStateDiff {
     let contract0 = ContractAddress::from(rng.next_u64());
     let contract1 = ContractAddress::from(rng.next_u64());
@@ -57,6 +57,5 @@ pub fn create_random_state_diff(rng: &mut impl RngCore) -> ThinStateDiff {
         nonces: indexmap! {
             contract0 => Nonce(Felt::ONE), contract2 => Nonce(Felt::TWO)
         },
-        replaced_classes: Default::default(),
     }
 }

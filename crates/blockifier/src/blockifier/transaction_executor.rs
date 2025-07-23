@@ -1,31 +1,38 @@
-use std::collections::{HashMap, HashSet};
-use std::panic::{self, catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, Mutex};
+use std::mem;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
+use apollo_infra_utils::tracing::LogCompatibleToStringExt;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use starknet_api::block::BlockHashAndNumber;
-use starknet_api::core::ClassHash;
+use starknet_api::core::CompiledClassHash;
 use thiserror::Error;
 
 use crate::blockifier::block::pre_process_block;
 use crate::blockifier::config::TransactionExecutorConfig;
-use crate::bouncer::{Bouncer, BouncerWeights};
+use crate::bouncer::{Bouncer, BouncerWeights, CasmHashComputationData};
 use crate::concurrency::worker_logic::WorkerExecutor;
+use crate::concurrency::worker_pool::WorkerPool;
 use crate::context::BlockContext;
-use crate::state::cached_state::{CachedState, CommitmentStateDiff, TransactionalState};
+use crate::state::cached_state::{CachedState, CommitmentStateDiff, StateMaps, TransactionalState};
 use crate::state::errors::StateError;
-use crate::state::state_api::{StateReader, StateResult};
+use crate::state::state_api::{State, StateReader, StateResult};
+use crate::state::stateful_compression::{allocate_aliases_in_storage, compress, CompressionError};
 use crate::transaction::errors::TransactionExecutionError;
-use crate::transaction::objects::{TransactionExecutionInfo, TransactionInfoCreator};
+use crate::transaction::objects::TransactionExecutionInfo;
 use crate::transaction::transaction_execution::Transaction;
-use crate::transaction::transactions::{ExecutableTransaction, ExecutionFlags};
+use crate::transaction::transactions::ExecutableTransaction;
+use crate::utils::get_compiled_class_hash_v2;
 
 #[cfg(test)]
 #[path = "transaction_executor_test.rs"]
 pub mod transaction_executor_test;
 
 pub const BLOCK_STATE_ACCESS_ERR: &str = "Error: The block state should be `Some`.";
+pub const DEFAULT_STACK_SIZE: usize = 60 * 1024 * 1024;
+
+pub type TransactionExecutionOutput = (TransactionExecutionInfo, StateMaps);
 
 #[derive(Debug, Error)]
 pub enum TransactionExecutorError {
@@ -35,15 +42,31 @@ pub enum TransactionExecutorError {
     StateError(#[from] StateError),
     #[error(transparent)]
     TransactionExecutionError(#[from] TransactionExecutionError),
+    #[error(transparent)]
+    CompressionError(#[from] CompressionError),
 }
 
+impl LogCompatibleToStringExt for TransactionExecutorError {}
+
 pub type TransactionExecutorResult<T> = Result<T, TransactionExecutorError>;
-pub type VisitedSegmentsMapping = Vec<(ClassHash, Vec<usize>)>;
+pub type CompiledClassHashV2ToV1 = (CompiledClassHash, CompiledClassHash);
+pub type CompiledClassHashesForMigration = Vec<CompiledClassHashV2ToV1>;
+
+#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug)]
+pub struct BlockExecutionSummary {
+    pub state_diff: CommitmentStateDiff,
+    pub compressed_state_diff: Option<CommitmentStateDiff>,
+    pub bouncer_weights: BouncerWeights,
+    pub casm_hash_computation_data_sierra_gas: CasmHashComputationData,
+    pub casm_hash_computation_data_proving_gas: CasmHashComputationData,
+    pub compiled_class_hashes_for_migration: CompiledClassHashesForMigration,
+}
 
 /// A transaction executor, used for building a single block.
 pub struct TransactionExecutor<S: StateReader> {
-    pub block_context: BlockContext,
-    pub bouncer: Bouncer,
+    pub block_context: Arc<BlockContext>,
+    pub bouncer: Arc<Mutex<Bouncer>>,
     // Note: this config must not affect the execution result (e.g. state diff and traces).
     pub config: TransactionExecutorConfig,
 
@@ -53,6 +76,8 @@ pub struct TransactionExecutor<S: StateReader> {
     // committing the chunk. The block state is wrapped with an Option<_> to allow setting it to
     // `None` while it is moved to the worker executor.
     pub block_state: Option<CachedState<S>>,
+
+    pub worker_pool: Option<Arc<WorkerPool<CachedState<S>>>>,
 }
 
 impl<S: StateReader> TransactionExecutor<S> {
@@ -63,13 +88,31 @@ impl<S: StateReader> TransactionExecutor<S> {
         old_block_number_and_hash: Option<BlockHashAndNumber>,
         config: TransactionExecutorConfig,
     ) -> StateResult<Self> {
+        Self::pre_process_and_create_with_pool(
+            initial_state_reader,
+            block_context,
+            old_block_number_and_hash,
+            config,
+            None,
+        )
+    }
+
+    /// Performs pre-processing required for block building before creating the executor.
+    pub fn pre_process_and_create_with_pool(
+        initial_state_reader: S,
+        block_context: BlockContext,
+        old_block_number_and_hash: Option<BlockHashAndNumber>,
+        config: TransactionExecutorConfig,
+        worker_pool: Option<Arc<WorkerPool<CachedState<S>>>>,
+    ) -> StateResult<Self> {
         let mut block_state = CachedState::new(initial_state_reader);
         pre_process_block(
             &mut block_state,
             old_block_number_and_hash,
             block_context.block_info().block_number,
+            &block_context.versioned_constants.os_constants,
         )?;
-        Ok(Self::new(block_state, block_context, config))
+        Ok(Self::new_with_pool(block_state, block_context, config, worker_pool))
     }
 
     // TODO(Yoni): consider making this c-tor private.
@@ -78,14 +121,24 @@ impl<S: StateReader> TransactionExecutor<S> {
         block_context: BlockContext,
         config: TransactionExecutorConfig,
     ) -> Self {
+        Self::new_with_pool(block_state, block_context, config, None)
+    }
+
+    fn new_with_pool(
+        block_state: CachedState<S>,
+        block_context: BlockContext,
+        config: TransactionExecutorConfig,
+        worker_pool: Option<Arc<WorkerPool<CachedState<S>>>>,
+    ) -> Self {
         let bouncer_config = block_context.bouncer_config.clone();
         // Note: the state might not be empty even at this point; it is the creator's
         // responsibility to tune the bouncer according to pre and post block process.
         Self {
-            block_context,
-            bouncer: Bouncer::new(bouncer_config),
+            block_context: block_context.into(),
+            bouncer: Mutex::new(Bouncer::new(bouncer_config)).into(),
             config,
             block_state: Some(block_state),
+            worker_pool,
         }
     }
 
@@ -95,29 +148,30 @@ impl<S: StateReader> TransactionExecutor<S> {
     pub fn execute(
         &mut self,
         tx: &Transaction,
-    ) -> TransactionExecutorResult<TransactionExecutionInfo> {
+    ) -> TransactionExecutorResult<TransactionExecutionOutput> {
         let mut transactional_state = TransactionalState::create_transactional(
             self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
         );
-        let tx_charge_fee = tx.create_tx_info().enforce_fee();
 
         // Executing a single transaction cannot be done in a concurrent mode.
-        let execution_flags =
-            ExecutionFlags { charge_fee: tx_charge_fee, validate: true, concurrency_mode: false };
+        let concurrency_mode = false;
         let tx_execution_result =
-            tx.execute_raw(&mut transactional_state, &self.block_context, execution_flags);
+            tx.execute_raw(&mut transactional_state, &self.block_context, concurrency_mode);
         match tx_execution_result {
             Ok(tx_execution_info) => {
-                let tx_state_changes_keys =
-                    transactional_state.get_actual_state_changes()?.state_maps.into_keys();
-                self.bouncer.try_update(
+                let state_diff = transactional_state.to_state_diff()?.state_maps;
+                let tx_state_changes_keys = state_diff.keys();
+                lock_bouncer(&self.bouncer).try_update(
                     &transactional_state,
                     &tx_state_changes_keys,
                     &tx_execution_info.summarize(&self.block_context.versioned_constants),
+                    &tx_execution_info.summarize_builtins(),
                     &tx_execution_info.receipt.resources,
+                    &self.block_context.versioned_constants,
                 )?;
                 transactional_state.commit();
-                Ok(tx_execution_info)
+
+                Ok((tx_execution_info, state_diff))
             }
             Err(error) => {
                 transactional_state.abort();
@@ -126,14 +180,23 @@ impl<S: StateReader> TransactionExecutor<S> {
         }
     }
 
-    pub fn execute_txs_sequentially(
+    fn execute_txs_sequentially_inner(
         &mut self,
         txs: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
+        execution_deadline: Option<Instant>,
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
         let mut results = Vec::new();
         for tx in txs {
+            if let Some(deadline) = execution_deadline {
+                if Instant::now() > deadline {
+                    log::debug!("Execution timed out.");
+                    break;
+                }
+            }
             match self.execute(tx) {
-                Ok(tx_execution_info) => results.push(Ok(tx_execution_info)),
+                Ok((tx_execution_info, state_diff)) => {
+                    results.push(Ok((tx_execution_info, state_diff)))
+                }
                 Err(TransactionExecutorError::BlockFull) => break,
                 Err(error) => results.push(Err(error)),
             }
@@ -141,56 +204,134 @@ impl<S: StateReader> TransactionExecutor<S> {
         results
     }
 
-    /// Returns the state diff, a list of contract class hash with the corresponding list of
-    /// visited segment values and the block weights.
-    pub fn finalize(
-        &mut self,
-    ) -> TransactionExecutorResult<(CommitmentStateDiff, VisitedSegmentsMapping, BouncerWeights)>
-    {
-        // Get the visited segments of each contract class.
-        // This is done by taking all the visited PCs of each contract, and compress them to one
-        // representative for each visited segment.
-        let visited_segments = self
-            .block_state
-            .as_ref()
-            .expect(BLOCK_STATE_ACCESS_ERR)
-            .visited_pcs
-            .iter()
-            .map(|(class_hash, class_visited_pcs)| -> TransactionExecutorResult<_> {
-                let contract_class = self
-                    .block_state
-                    .as_ref()
-                    .expect(BLOCK_STATE_ACCESS_ERR)
-                    .get_compiled_contract_class(*class_hash)?;
-                Ok((*class_hash, contract_class.get_visited_segments(class_visited_pcs)?))
-            })
-            .collect::<TransactionExecutorResult<_>>()?;
-
-        log::debug!("Final block weights: {:?}.", self.bouncer.get_accumulated_weights());
-        Ok((
-            self.block_state
-                .as_mut()
-                .expect(BLOCK_STATE_ACCESS_ERR)
-                .to_state_diff()?
-                .state_maps
-                .into(),
-            visited_segments,
-            *self.bouncer.get_accumulated_weights(),
-        ))
+    /// Returns the state diff and the block weights.
+    // TODO(Aner): Consume "self", i.e., remove the reference, after removing the native blockifier.
+    pub fn finalize(&mut self) -> TransactionExecutorResult<BlockExecutionSummary> {
+        finalize_block(
+            &self.bouncer,
+            self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
+            &self.block_context,
+        )
     }
+
+    #[cfg(feature = "reexecution")]
+    pub fn non_consuming_finalize(&mut self) -> TransactionExecutorResult<BlockExecutionSummary> {
+        finalize_block(
+            &self.bouncer,
+            self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR),
+            &self.block_context,
+        )
+    }
+}
+
+fn lock_bouncer(bouncer: &Arc<Mutex<Bouncer>>) -> MutexGuard<'_, Bouncer> {
+    bouncer.lock().expect("Bouncer lock failed.")
+}
+
+/// Finalizes the creation of a block.
+/// Returns the state diff and the block weights.
+pub(crate) fn finalize_block<S: StateReader>(
+    bouncer: &Arc<Mutex<Bouncer>>,
+    block_state: &mut CachedState<S>,
+    block_context: &BlockContext,
+) -> TransactionExecutorResult<BlockExecutionSummary> {
+    log::debug!("Final block weights: {:?}.", lock_bouncer(bouncer).get_bouncer_weights());
+    let alias_contract_address = block_context
+        .versioned_constants
+        .os_constants
+        .os_contract_addresses
+        .alias_contract_address();
+    if block_context.versioned_constants.enable_stateful_compression {
+        allocate_aliases_in_storage(block_state, alias_contract_address)?;
+    }
+
+    let compiled_class_hashes_for_migration =
+        update_compiled_class_hash_migration_in_state(&lock_bouncer(bouncer), block_state)?;
+    let state_diff = block_state.to_state_diff()?.state_maps;
+
+    let compressed_state_diff = if block_context.versioned_constants.enable_stateful_compression {
+        Some(compress(&state_diff, block_state, alias_contract_address)?.into())
+    } else {
+        None
+    };
+
+    // Take CasmHashComputationData from bouncer,
+    // and verify that class hashes are the same.
+    let mut bouncer = lock_bouncer(bouncer);
+    let casm_hash_computation_data_sierra_gas =
+        mem::take(bouncer.get_mut_casm_hash_computation_data_sierra_gas());
+    let casm_hash_computation_data_proving_gas =
+        mem::take(bouncer.get_mut_casm_hash_computation_data_proving_gas());
+    assert_eq!(
+        casm_hash_computation_data_sierra_gas
+            .class_hash_to_casm_hash_computation_gas
+            .keys()
+            .collect::<std::collections::HashSet<_>>(),
+        casm_hash_computation_data_proving_gas
+            .class_hash_to_casm_hash_computation_gas
+            .keys()
+            .collect::<std::collections::HashSet<_>>()
+    );
+
+    Ok(BlockExecutionSummary {
+        state_diff: state_diff.into(),
+        compressed_state_diff,
+        bouncer_weights: *bouncer.get_bouncer_weights(),
+        casm_hash_computation_data_sierra_gas,
+        casm_hash_computation_data_proving_gas,
+        compiled_class_hashes_for_migration,
+    })
+}
+
+// Gathers the new compiled class hashes for the class hashes that need to be migrated,
+// and adds the corresponding mappings to the block state's write set.
+fn update_compiled_class_hash_migration_in_state<S: StateReader>(
+    bouncer: &Bouncer,
+    block_state: &mut CachedState<S>,
+) -> StateResult<CompiledClassHashesForMigration> {
+    let mut compiled_class_hashes_v2_to_v1: CompiledClassHashesForMigration = Vec::new();
+    for &class_hash in bouncer.class_hashes_to_migrate() {
+        let compiled_class_hash_v1 = block_state
+            .get_compiled_class_hash(class_hash)
+            .expect("Failed to get current compiled class hash for migration");
+
+        let compiled_class_hash_v2 = get_compiled_class_hash_v2(block_state, class_hash)
+            .expect("Failed to get compiled class hash v2 for migration");
+
+        // Sanity check: the compiled class hashes should not be equal.
+        assert_ne!(
+            compiled_class_hash_v1, compiled_class_hash_v2,
+            "Classes for migration should hold v1 (Poseidon) hash in the state."
+        );
+
+        // TODO(Meshi): Consider panic here instead of returning an error.
+        block_state.set_compiled_class_hash(class_hash, compiled_class_hash_v2)?;
+        compiled_class_hashes_v2_to_v1.push((compiled_class_hash_v2, compiled_class_hash_v1));
+    }
+    Ok(compiled_class_hashes_v2_to_v1)
 }
 
 impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
     /// Executes the given transactions on the state maintained by the executor.
-    /// Stops if and when there is no more room in the block, and returns the executed transactions'
-    /// results.
+    ///
+    /// # Arguments:
+    /// * `txs` - A slice of transactions to be executed.
+    /// * `execution_deadline` - An optional deadline for the execution.
+    ///
+    /// Returns a vector of `TransactionExecutorResult<TransactionExecutionOutput>`, containing the
+    /// execution results for each transaction. The execution may stop early if the block becomes
+    /// full.
     pub fn execute_txs(
         &mut self,
         txs: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
+        execution_deadline: Option<Instant>,
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>>
+    where
+        S: 'static,
+    {
         if !self.config.concurrency_config.enabled {
             log::debug!("Executing transactions sequentially.");
-            self.execute_txs_sequentially(txs)
+            self.execute_txs_sequentially(txs, execution_deadline)
         } else {
             log::debug!("Executing transactions concurrently.");
             let chunk_size = self.config.concurrency_config.chunk_size;
@@ -198,18 +339,16 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
             assert!(
                 chunk_size > 0,
                 "When running transactions concurrently the chunk size must be greater than 0. It \
-                 equals {:?} ",
-                chunk_size
+                 equals {chunk_size:?} "
             );
             assert!(
                 n_workers > 0,
                 "When running transactions concurrently the number of workers must be greater \
-                 than 0. It equals {:?} ",
-                n_workers
+                 than 0. It equals {n_workers:?} "
             );
             txs.chunks(chunk_size)
                 .fold_while(Vec::new(), |mut results, chunk| {
-                    let chunk_results = self.execute_chunk(chunk);
+                    let chunk_results = self.execute_chunk(chunk, execution_deadline);
                     if chunk_results.len() < chunk.len() {
                         // Block is full.
                         results.extend(chunk_results);
@@ -223,80 +362,75 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
         }
     }
 
-    pub fn execute_chunk(
+    fn execute_txs_sequentially(
+        &mut self,
+        txs: &[Transaction],
+        execution_deadline: Option<Instant>,
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>> {
+        #[cfg(not(feature = "cairo_native"))]
+        return self.execute_txs_sequentially_inner(txs, execution_deadline);
+        #[cfg(feature = "cairo_native")]
+        {
+            // TODO(meshi): find a way to access the contract class manager config from transaction
+            // executor.
+            let txs = txs.to_vec();
+            std::thread::scope(|s| {
+                std::thread::Builder::new()
+                    // when running Cairo natively, the real stack is used and could get overflowed
+                    // (unlike the VM where the stack is simulated in the heap as a memory segment).
+                    //
+                    // We pre-allocate the stack here, and not during Native execution (not trivial), so it
+                    // needs to be big enough ahead.
+                    // However, making it very big is wasteful (especially with multi-threading).
+                    // So, the stack size should support calls with a reasonable gas limit, for extremely deep
+                    // recursions to reach out-of-gas before hitting the bottom of the recursion.
+                    //
+                    // The gas upper bound is MAX_POSSIBLE_SIERRA_GAS, and sequencers must not raise it without
+                    // adjusting the stack size.
+                    .stack_size(self.config.stack_size)
+                    .spawn_scoped(s, || self.execute_txs_sequentially_inner(&txs, execution_deadline))
+                    .expect("Failed to spawn thread")
+                    .join()
+                    .expect("Failed to join thread.")
+            })
+        }
+    }
+
+    fn execute_chunk(
         &mut self,
         chunk: &[Transaction],
-    ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
-        use crate::concurrency::utils::AbortIfPanic;
-
+        execution_deadline: Option<Instant>,
+    ) -> Vec<TransactionExecutorResult<TransactionExecutionOutput>>
+    where
+        S: 'static,
+    {
         let block_state = self.block_state.take().expect("The block state should be `Some`.");
 
         let worker_executor = Arc::new(WorkerExecutor::initialize(
             block_state,
-            chunk,
-            &self.block_context,
-            Mutex::new(&mut self.bouncer),
+            // We need to clone the transactions so that ownership can be shared between threads,
+            // that will live longer than the current function.
+            // TODO(lior): Move the transactions instead of cloning them.
+            chunk.to_vec(),
+            self.block_context.clone(),
+            self.bouncer.clone(),
+            execution_deadline,
         ));
 
-        // No thread pool implementation is needed here since we already have our scheduler. The
-        // initialized threads below will "busy wait" for new tasks using the `run` method until the
-        // chunk execution is completed, and then they will be joined together in a for loop.
-        // TODO(barak, 01/07/2024): Consider using tokio and spawn tasks that will be served by some
-        // upper level tokio thread pool (Runtime in tokio terminology).
-        std::thread::scope(|s| {
-            for _ in 0..self.config.concurrency_config.n_workers {
-                let worker_executor = Arc::clone(&worker_executor);
-                s.spawn(move || {
-                    // Making sure that the program will abort if a panic accured while halting the
-                    // scheduler.
-                    let abort_guard = AbortIfPanic;
-                    // If a panic is not handled or the handling logic itself panics, then we abort
-                    // the program.
-                    if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
-                        worker_executor.run();
-                    })) {
-                        // If the program panics here, the abort guard will exit the program.
-                        // In this case, no panic message will be logged. Add the cargo flag
-                        // --nocapture to log the panic message.
-
-                        worker_executor.scheduler.halt();
-                        abort_guard.release();
-                        panic::resume_unwind(err);
-                    }
-
-                    abort_guard.release();
-                });
-            }
-        });
-
-        let n_committed_txs = worker_executor.scheduler.get_n_committed_txs();
-        let mut tx_execution_results = Vec::new();
-        let mut visited_pcs: HashMap<ClassHash, HashSet<usize>> = HashMap::new();
-        for execution_output in worker_executor.execution_outputs.iter() {
-            if tx_execution_results.len() >= n_committed_txs {
-                break;
-            }
-            let locked_execution_output = execution_output
-                .lock()
-                .expect("Failed to lock execution output.")
-                .take()
-                .expect("Output must be ready.");
-            tx_execution_results
-                .push(locked_execution_output.result.map_err(TransactionExecutorError::from));
-            for (class_hash, class_visited_pcs) in locked_execution_output.visited_pcs {
-                visited_pcs.entry(class_hash).or_default().extend(class_visited_pcs);
-            }
+        if let Some(worker_pool) = &mut self.worker_pool {
+            worker_pool.run_and_wait(worker_executor.clone(), chunk.len());
+        } else {
+            // If a pool is not given, create a new pool and wait for it to finish.
+            let worker_pool = WorkerPool::start(&self.config.get_worker_pool_config());
+            worker_pool.run_and_wait(worker_executor.clone(), chunk.len());
+            worker_pool.join();
         }
 
-        let block_state_after_commit = Arc::try_unwrap(worker_executor)
-            .unwrap_or_else(|_| {
-                panic!(
-                    "To consume the block state, you must have only one strong reference to the \
-                     worker executor factory. Consider dropping objects that hold a reference to \
-                     it."
-                )
-            })
-            .commit_chunk_and_recover_block_state(n_committed_txs, visited_pcs);
+        let tx_execution_results = worker_executor.extract_execution_outputs(0);
+        let n_committed_txs = tx_execution_results.len();
+
+        let block_state_after_commit =
+            worker_executor.commit_chunk_and_recover_block_state(n_committed_txs);
         self.block_state.replace(block_state_after_commit);
 
         tx_execution_results

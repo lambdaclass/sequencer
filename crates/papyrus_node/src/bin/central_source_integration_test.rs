@@ -1,10 +1,10 @@
 use std::{env, fs};
 
+use apollo_central_sync::sources::central::{CentralSource, CentralSourceTrait};
+use apollo_storage::open_storage;
 use futures_util::pin_mut;
 use papyrus_node::config::NodeConfig;
 use papyrus_node::version::VERSION_FULL;
-use papyrus_storage::open_storage;
-use papyrus_sync::sources::central::{CentralSource, CentralSourceTrait};
 use starknet_api::block::BlockNumber;
 use tokio_stream::StreamExt;
 
@@ -17,8 +17,9 @@ async fn main() {
     let _ = fs::remove_dir_all(path.clone());
     fs::create_dir_all(path.clone()).expect("Should make a temporary `data` directory");
     let config = NodeConfig::load_and_process(vec![
+        "Placeholder-binary-name".to_owned(),
         "--chain_id=SN_SEPOLIA".to_owned(),
-        "--starknet_url=https://alpha-sepolia.starknet.io/".to_owned(),
+        "--starknet_url=https://feeder.alpha-sepolia.starknet.io/".to_owned(),
         "--base_layer.node_url=https://mainnet.infura.io/v3/1234".to_owned(),
         format!("--storage.db_config.path_prefix={}", path.display()),
     ])

@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use blockifier::transaction::transaction_types::TransactionType;
 use pyo3::prelude::*;
 use starknet_api::core::{ClassHash, ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
-use starknet_api::executable_transaction::DeployAccountTransaction;
+use starknet_api::executable_transaction::{DeployAccountTransaction, TransactionType};
 use starknet_api::transaction::fields::{
     Calldata,
     ContractAddressSalt,
@@ -38,7 +37,7 @@ impl From<PyDeployAccountTransactionV1> for DeployAccountTransactionV1 {
     fn from(tx: PyDeployAccountTransactionV1) -> Self {
         Self {
             max_fee: Fee(tx.max_fee),
-            signature: TransactionSignature(from_py_felts(tx.signature)),
+            signature: TransactionSignature(from_py_felts(tx.signature).into()),
             nonce: Nonce(tx.nonce.0),
             class_hash: ClassHash(tx.class_hash.0),
             contract_address_salt: ContractAddressSalt(tx.contract_address_salt.0),
@@ -67,7 +66,7 @@ impl TryFrom<PyDeployAccountTransactionV3> for DeployAccountTransactionV3 {
         Ok(Self {
             resource_bounds: tx.resource_bounds.try_into()?,
             tip: Tip(tx.tip),
-            signature: TransactionSignature(from_py_felts(tx.signature)),
+            signature: TransactionSignature(from_py_felts(tx.signature).into()),
             nonce: Nonce(tx.nonce.0),
             class_hash: ClassHash(tx.class_hash.0),
             contract_address_salt: ContractAddressSalt(tx.contract_address_salt.0),
@@ -83,7 +82,7 @@ impl TryFrom<PyDeployAccountTransactionV3> for DeployAccountTransactionV3 {
 
 pub fn py_deploy_account(py_tx: &PyAny) -> NativeBlockifierResult<DeployAccountTransaction> {
     let version = py_attr::<PyFelt>(py_tx, "version")?.0;
-    // TODO: Make TransactionVersion an enum and use match here.
+    // TODO(Dori): Make TransactionVersion an enum and use match here.
     let tx = if version == Felt::ONE {
         let py_deploy_account_tx: PyDeployAccountTransactionV1 = py_tx.extract()?;
         let deploy_account_tx = DeployAccountTransactionV1::from(py_deploy_account_tx);

@@ -1,85 +1,137 @@
+use std::collections::HashMap;
+
 use ark_ec::short_weierstrass::{self, SWCurveConfig};
 use ark_ff::PrimeField;
 use cairo_vm::types::relocatable::Relocatable;
 use cairo_vm::vm::vm_core::VirtualMachine;
 use num_bigint::BigUint;
-use num_traits::ToPrimitive;
-use starknet_types_core::felt::Felt;
 
 use crate::abi::sierra_types::{SierraType, SierraU256};
-use crate::execution::execution_utils::{felt_from_ptr, write_maybe_relocatable, write_u256};
+use crate::execution::execution_utils::{
+    felt_from_ptr,
+    relocatable_from_ptr,
+    write_maybe_relocatable,
+    write_u256,
+};
 use crate::execution::secp::new_affine;
-use crate::execution::syscalls::hint_processor::{felt_to_bool, SyscallHintProcessor};
-use crate::execution::syscalls::{
-    SyscallExecutionError,
+use crate::execution::syscalls::hint_processor::felt_to_bool;
+use crate::execution::syscalls::vm_syscall_utils::{
+    SyscallBaseResult,
+    SyscallExecutorBaseError,
     SyscallRequest,
     SyscallResponse,
-    SyscallResult,
     WriteResponseResult,
 };
 
+const EC_POINT_SEGMENT_SIZE: usize = 6;
+
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct SecpHintProcessor<Curve: SWCurveConfig> {
-    points: Vec<short_weierstrass::Affine<Curve>>,
+    pub points: HashMap<Relocatable, short_weierstrass::Affine<Curve>>,
 }
 
 impl<Curve: SWCurveConfig> SecpHintProcessor<Curve>
 where
     Curve::BaseField: PrimeField,
 {
-    pub fn secp_add(&mut self, request: SecpAddRequest) -> SyscallResult<SecpAddResponse> {
-        let lhs = self.get_point_by_id(request.lhs_id)?;
-        let rhs = self.get_point_by_id(request.rhs_id)?;
-        let result = *lhs + *rhs;
-        let ec_point_id = self.allocate_point(result.into());
-        Ok(SecpOpRespone { ec_point_id })
+    pub fn new() -> Self {
+        Self { points: HashMap::new() }
     }
 
-    pub fn secp_mul(&mut self, request: SecpMulRequest) -> SyscallResult<SecpMulResponse> {
-        let ec_point = self.get_point_by_id(request.ec_point_id)?;
+    pub fn secp_add(
+        &mut self,
+        request: SecpAddRequest,
+        vm: &mut VirtualMachine,
+        points_segment_base: Relocatable,
+        id: usize,
+    ) -> SyscallBaseResult<SecpAddResponse> {
+        let lhs = self.get_point_by_ptr(request.lhs_ptr)?;
+        let rhs = self.get_point_by_ptr(request.rhs_ptr)?;
+        let result = *lhs + *rhs;
+        let ec_point_ptr =
+            self.allocate_point(result.into(), vm, &mut Some(points_segment_base), id)?;
+        Ok(SecpOpRespone { ec_point_ptr })
+    }
+
+    pub fn secp_mul(
+        &mut self,
+        request: SecpMulRequest,
+        vm: &mut VirtualMachine,
+        points_segment_base: Relocatable,
+        id: usize,
+    ) -> SyscallBaseResult<SecpMulResponse> {
+        let ec_point = self.get_point_by_ptr(request.ec_point_ptr)?;
         let result = *ec_point * Curve::ScalarField::from(request.multiplier);
-        let ec_point_id = self.allocate_point(result.into());
-        Ok(SecpOpRespone { ec_point_id })
+        let ec_point_ptr =
+            self.allocate_point(result.into(), vm, &mut Some(points_segment_base), id)?;
+        Ok(SecpOpRespone { ec_point_ptr })
     }
 
     pub fn secp_get_point_from_x(
         &mut self,
+        vm: &mut VirtualMachine,
         request: SecpGetPointFromXRequest,
-    ) -> SyscallResult<SecpGetPointFromXResponse> {
+        points_segment_base: &mut Option<Relocatable>,
+        id: usize,
+    ) -> SyscallBaseResult<SecpGetPointFromXResponse> {
         let affine = crate::execution::secp::get_point_from_x(request.x, request.y_parity)?;
-        Ok(SecpGetPointFromXResponse {
-            optional_ec_point_id: affine.map(|ec_point| self.allocate_point(ec_point)),
-        })
+        let optional_ec_point_ptr = match affine
+            .map(|ec_point| self.allocate_point(ec_point, vm, points_segment_base, id))
+        {
+            Some(Ok(ptr)) => Some(ptr),
+            Some(Err(err)) => return Err(err),
+            None => None,
+        };
+        Ok(SecpOptionalEcPointResponse { optional_ec_point_ptr })
     }
 
-    pub fn secp_get_xy(&mut self, request: SecpGetXyRequest) -> SyscallResult<SecpGetXyResponse> {
-        let ec_point = self.get_point_by_id(request.ec_point_id)?;
-
+    pub fn secp_get_xy(&self, request: SecpGetXyRequest) -> SyscallBaseResult<SecpGetXyResponse> {
+        let ec_point = self.get_point_by_ptr(request.ec_point_ptr)?;
         Ok(SecpGetXyResponse { x: ec_point.x.into(), y: ec_point.y.into() })
     }
 
-    pub fn secp_new(&mut self, request: SecpNewRequest) -> SyscallResult<SecpNewResponse> {
+    pub fn secp_new(
+        &mut self,
+        vm: &mut VirtualMachine,
+        request: SecpNewRequest,
+        points_segment_base: &mut Option<Relocatable>,
+        id: usize,
+    ) -> SyscallBaseResult<SecpNewResponse> {
         let affine = new_affine::<Curve>(request.x, request.y)?;
-        Ok(SecpNewResponse {
-            optional_ec_point_id: affine.map(|ec_point| self.allocate_point(ec_point)),
-        })
+        let optional_ec_point_ptr = match affine
+            .map(|ec_point| self.allocate_point(ec_point, vm, points_segment_base, id))
+        {
+            Some(Ok(ptr)) => Some(ptr),
+            Some(Err(err)) => return Err(err),
+            None => None,
+        };
+        Ok(SecpNewResponse { optional_ec_point_ptr })
     }
 
-    fn allocate_point(&mut self, ec_point: short_weierstrass::Affine<Curve>) -> usize {
-        let points = &mut self.points;
-        let id = points.len();
-        points.push(ec_point);
-        id
+    fn allocate_point(
+        &mut self,
+        ec_point: short_weierstrass::Affine<Curve>,
+        vm: &mut VirtualMachine,
+        points_segment_base: &mut Option<Relocatable>,
+        id: usize,
+    ) -> SyscallBaseResult<Relocatable> {
+        if points_segment_base.is_none() {
+            *points_segment_base = Some(vm.add_memory_segment());
+        }
+        let point_address = (points_segment_base.expect("Points segment base must be set.")
+            + EC_POINT_SEGMENT_SIZE * id)?;
+        self.points.insert(point_address, ec_point);
+        Ok(point_address)
     }
 
-    fn get_point_by_id(
+    fn get_point_by_ptr(
         &self,
-        ec_point_id: Felt,
-    ) -> SyscallResult<&short_weierstrass::Affine<Curve>> {
-        ec_point_id.to_usize().and_then(|id| self.points.get(id)).ok_or_else(|| {
-            SyscallExecutionError::InvalidSyscallInput {
-                input: ec_point_id,
-                info: "Invalid Secp point ID".to_string(),
+        ec_point_ptr: Relocatable,
+    ) -> SyscallBaseResult<&short_weierstrass::Affine<Curve>> {
+        self.points.get(&ec_point_ptr).ok_or_else(|| {
+            SyscallExecutorBaseError::InvalidSyscallInput {
+                input: ec_point_ptr.segment_index.into(),
+                info: "Invalid Secp point address".to_string(),
             }
         })
     }
@@ -94,25 +146,24 @@ pub struct EcPointCoordinates {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SecpOpRespone {
-    pub ec_point_id: usize,
+    pub ec_point_ptr: Relocatable,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SecpOptionalEcPointResponse {
     // `Option<SecpPoint>` which is represented as two felts.
-    // The first felt is a indicates if it is `Some` (0) or `None` (1).
-    // The second felt is only valid if the first felt is `Some` and contains the ID of the point.
-    // The ID allocated by the Secp hint processor.
-    pub optional_ec_point_id: Option<usize>,
+    // The first felt indicates if it is `Some` (0) or `None` (1). The second felt is only valid if
+    // the first felt is `Some` and contains a pointer to the ec_point in the vm.
+    pub optional_ec_point_ptr: Option<Relocatable>,
 }
 
 impl SyscallResponse for SecpOptionalEcPointResponse {
     fn write(self, vm: &mut VirtualMachine, ptr: &mut Relocatable) -> WriteResponseResult {
-        match self.optional_ec_point_id {
-            Some(id) => {
-                // Cairo 1 representation of Some(id).
+        match self.optional_ec_point_ptr {
+            Some(ec_point_ptr) => {
+                // Cairo 1 representation of Some(ptr).
                 write_maybe_relocatable(vm, ptr, 0)?;
-                write_maybe_relocatable(vm, ptr, id)?;
+                write_maybe_relocatable(vm, ptr, ec_point_ptr)?;
             }
             None => {
                 // Cairo 1 representation of None.
@@ -126,7 +177,7 @@ impl SyscallResponse for SecpOptionalEcPointResponse {
 
 impl SyscallResponse for SecpOpRespone {
     fn write(self, vm: &mut VirtualMachine, ptr: &mut Relocatable) -> WriteResponseResult {
-        write_maybe_relocatable(vm, ptr, self.ec_point_id)?;
+        write_maybe_relocatable(vm, ptr, self.ec_point_ptr)?;
         Ok(())
     }
 }
@@ -135,35 +186,20 @@ impl SyscallResponse for SecpOpRespone {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SecpAddRequest {
-    pub lhs_id: Felt,
-    pub rhs_id: Felt,
+    pub lhs_ptr: Relocatable,
+    pub rhs_ptr: Relocatable,
 }
 
 impl SyscallRequest for SecpAddRequest {
-    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<SecpAddRequest> {
-        Ok(SecpAddRequest { lhs_id: felt_from_ptr(vm, ptr)?, rhs_id: felt_from_ptr(vm, ptr)? })
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallBaseResult<SecpAddRequest> {
+        Ok(SecpAddRequest {
+            lhs_ptr: relocatable_from_ptr(vm, ptr)?,
+            rhs_ptr: relocatable_from_ptr(vm, ptr)?,
+        })
     }
 }
 
-type SecpAddResponse = SecpOpRespone;
-
-pub fn secp256k1_add(
-    request: SecpAddRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpOpRespone> {
-    syscall_handler.secp256k1_hint_processor.secp_add(request)
-}
-
-pub fn secp256r1_add(
-    request: SecpAddRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpOpRespone> {
-    syscall_handler.secp256r1_hint_processor.secp_add(request)
-}
+pub type SecpAddResponse = SecpOpRespone;
 
 // SecpGetPointFromXRequest syscall.
 
@@ -176,7 +212,10 @@ pub struct SecpGetPointFromXRequest {
 }
 
 impl SyscallRequest for SecpGetPointFromXRequest {
-    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<SecpGetPointFromXRequest> {
+    fn read(
+        vm: &VirtualMachine,
+        ptr: &mut Relocatable,
+    ) -> SyscallBaseResult<SecpGetPointFromXRequest> {
         let x = SierraU256::from_memory(vm, ptr)?.to_biguint();
 
         let y_parity = felt_to_bool(felt_from_ptr(vm, ptr)?, "Invalid y parity")?;
@@ -184,40 +223,22 @@ impl SyscallRequest for SecpGetPointFromXRequest {
     }
 }
 
-type SecpGetPointFromXResponse = SecpOptionalEcPointResponse;
-
-pub fn secp256k1_get_point_from_x(
-    request: SecpGetPointFromXRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpGetPointFromXResponse> {
-    syscall_handler.secp256k1_hint_processor.secp_get_point_from_x(request)
-}
-
-pub fn secp256r1_get_point_from_x(
-    request: SecpGetPointFromXRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpGetPointFromXResponse> {
-    syscall_handler.secp256r1_hint_processor.secp_get_point_from_x(request)
-}
+pub type SecpGetPointFromXResponse = SecpOptionalEcPointResponse;
 
 // SecpGetXy syscall.
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SecpGetXyRequest {
-    pub ec_point_id: Felt,
+    pub ec_point_ptr: Relocatable,
 }
 
 impl SyscallRequest for SecpGetXyRequest {
-    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<SecpGetXyRequest> {
-        Ok(SecpGetXyRequest { ec_point_id: felt_from_ptr(vm, ptr)? })
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallBaseResult<SecpGetXyRequest> {
+        Ok(SecpGetXyRequest { ec_point_ptr: relocatable_from_ptr(vm, ptr)? })
     }
 }
 
-type SecpGetXyResponse = EcPointCoordinates;
+pub type SecpGetXyResponse = EcPointCoordinates;
 
 impl SyscallResponse for SecpGetXyResponse {
     fn write(self, vm: &mut VirtualMachine, ptr: &mut Relocatable) -> WriteResponseResult {
@@ -227,91 +248,36 @@ impl SyscallResponse for SecpGetXyResponse {
     }
 }
 
-pub fn secp256k1_get_xy(
-    request: SecpGetXyRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpGetXyResponse> {
-    syscall_handler.secp256k1_hint_processor.secp_get_xy(request)
-}
-
-pub fn secp256r1_get_xy(
-    request: SecpGetXyRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpGetXyResponse> {
-    syscall_handler.secp256r1_hint_processor.secp_get_xy(request)
-}
-
 // SecpMul syscall.
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SecpMulRequest {
-    pub ec_point_id: Felt,
+    pub ec_point_ptr: Relocatable,
     pub multiplier: BigUint,
 }
 
 impl SyscallRequest for SecpMulRequest {
-    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<SecpMulRequest> {
-        let ec_point_id = felt_from_ptr(vm, ptr)?;
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallBaseResult<SecpMulRequest> {
+        let ec_point_ptr = relocatable_from_ptr(vm, ptr)?;
         let multiplier = SierraU256::from_memory(vm, ptr)?.to_biguint();
-        Ok(SecpMulRequest { ec_point_id, multiplier })
+        Ok(SecpMulRequest { ec_point_ptr, multiplier })
     }
 }
 
-type SecpMulResponse = SecpOpRespone;
-
-pub fn secp256k1_mul(
-    request: SecpMulRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpMulResponse> {
-    syscall_handler.secp256k1_hint_processor.secp_mul(request)
-}
-
-pub fn secp256r1_mul(
-    request: SecpMulRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpMulResponse> {
-    syscall_handler.secp256r1_hint_processor.secp_mul(request)
-}
+pub type SecpMulResponse = SecpOpRespone;
 
 // SecpNew syscall.
 
-type SecpNewRequest = EcPointCoordinates;
+pub type SecpNewRequest = EcPointCoordinates;
 
 impl SyscallRequest for SecpNewRequest {
-    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<SecpNewRequest> {
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallBaseResult<SecpNewRequest> {
         let x = SierraU256::from_memory(vm, ptr)?.to_biguint();
         let y = SierraU256::from_memory(vm, ptr)?.to_biguint();
         Ok(SecpNewRequest { x, y })
     }
 }
 
-type SecpNewResponse = SecpOptionalEcPointResponse;
-
-pub fn secp256k1_new(
-    request: SecpNewRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<SecpNewResponse> {
-    syscall_handler.secp256k1_hint_processor.secp_new(request)
-}
-
-type Secp256r1NewRequest = EcPointCoordinates;
-type Secp256r1NewResponse = SecpOptionalEcPointResponse;
-
-pub fn secp256r1_new(
-    request: Secp256r1NewRequest,
-    _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
-    _remaining_gas: &mut u64,
-) -> SyscallResult<Secp256r1NewResponse> {
-    syscall_handler.secp256r1_hint_processor.secp_new(request)
-}
+pub type SecpNewResponse = SecpOptionalEcPointResponse;
+pub type Secp256r1NewRequest = EcPointCoordinates;
+pub type Secp256r1NewResponse = SecpOptionalEcPointResponse;

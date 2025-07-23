@@ -1,7 +1,21 @@
+name: Bootstrap
+description: Install dependencies.
+
+inputs:
+  extra_rust_toolchains:
+    description: "Extra toolchains to install, but aren't used by default"
+    required: false
+  github_token:
+    description: "Github token to use for authentication"
+    required: false
+
 runs:
   using: "composite"
   steps:
     - name: Install rust.
       uses: ./.github/actions/install_rust
+      with:
+        extra_rust_toolchains: ${{ inputs.extra_rust_toolchains }}
+        github_token: ${{ inputs.github_token }}
     - name: Install cairo native.
       uses: ./.github/actions/setup_native_deps

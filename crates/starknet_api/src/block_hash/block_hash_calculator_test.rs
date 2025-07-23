@@ -7,7 +7,9 @@ use crate::block::{
     BlockHeaderWithoutHash,
     BlockNumber,
     BlockTimestamp,
+    GasPrice,
     GasPricePerToken,
+    StarknetVersion,
 };
 use crate::block_hash::block_hash_calculator::{
     calculate_block_commitments,
@@ -28,21 +30,25 @@ use crate::core::{
     TransactionCommitment,
 };
 use crate::data_availability::L1DataAvailabilityMode;
-use crate::felt;
+use crate::execution_resources::GasAmount;
 use crate::hash::PoseidonHash;
 use crate::transaction::fields::TransactionSignature;
-use crate::transaction::TransactionHash;
+use crate::{felt, tx_hash};
 
 /// Macro to test if changing any field in the header or commitments
 /// results a change in the block hash.
 /// The macro clones the original header and commitments, modifies each specified field,
 /// and asserts that the block hash changes as a result.
+/// Allows excluding specific fields that aren't part of the hash.
 macro_rules! test_hash_changes {
     (
-        BlockHeaderWithoutHash { $($header_field:ident: $header_value:expr),* },
-        BlockHeaderCommitments { $($commitments_field:ident: $commitments_value:expr),* }
+        BlockHeaderWithoutHash { $($header_field:ident: $header_value:expr),* $(,)? },
+        BlockHeaderCommitments { $($commitments_field:ident: $commitments_value:expr),* $(,)? },
+        exclude_header_fields = [ $( $excluded_field:ident ),* $(,)? ]
     ) => {
         {
+            let excluded_fields = vec![$(stringify!($excluded_field)),*];
+
             let header = BlockHeaderWithoutHash {
                 l1_da_mode: L1DataAvailabilityMode::Blob,
                 starknet_version: BlockHashVersion::V0_13_4.into(),
@@ -54,11 +60,17 @@ macro_rules! test_hash_changes {
             let original_hash = calculate_block_hash(header.clone(), commitments.clone()).unwrap();
 
             $(
-                // Test changing the field in the header.
                 let mut modified_header = header.clone();
                 modified_header.$header_field = Default::default();
                 let new_hash = calculate_block_hash(modified_header, commitments.clone()).unwrap();
-                assert_ne!(original_hash, new_hash, concat!("Hash should change when ", stringify!($header_field), " is modified"));
+                if excluded_fields.contains(&stringify!($header_field)) {
+                    // Hash should not change.
+                    assert_eq!(original_hash, new_hash, concat!("Hash should NOT change when ", stringify!($header_field), " is modified"));
+                }
+                else{
+                    // Hash should change.
+                    assert_ne!(original_hash, new_hash, concat!("Hash should change when ", stringify!($header_field), " is modified"));
+                }
             )*
 
             $(
@@ -89,13 +101,15 @@ fn test_block_hash_regression(
             price_in_wei: 9_u8.into(),
         },
         l2_gas_price: GasPricePerToken { price_in_fri: 11_u8.into(), price_in_wei: 12_u8.into() },
+        l2_gas_consumed: GasAmount(13),
+        next_l2_gas_price: GasPrice(14),
         starknet_version: block_hash_version.clone().into(),
         parent_hash: BlockHash(Felt::from(11_u8)),
     };
     let transactions_data = vec![TransactionHashingData {
-        transaction_signature: TransactionSignature(vec![Felt::TWO, Felt::THREE]),
+        transaction_signature: TransactionSignature(vec![Felt::TWO, Felt::THREE].into()),
         transaction_output: get_transaction_output(),
-        transaction_hash: TransactionHash(Felt::ONE),
+        transaction_hash: tx_hash!(1),
     }];
 
     let state_diff = get_state_diff();
@@ -118,6 +132,28 @@ fn test_block_hash_regression(
     assert_eq!(
         BlockHash(expected_hash),
         calculate_block_hash(block_header, block_commitments).unwrap()
+    );
+}
+
+#[test]
+fn test_tx_commitment_with_an_empty_signature() {
+    let transactions_data = vec![TransactionHashingData {
+        transaction_signature: TransactionSignature::default(),
+        transaction_output: get_transaction_output(),
+        transaction_hash: tx_hash!(1),
+    }];
+    let block_commitments = calculate_block_commitments(
+        &transactions_data,
+        &get_state_diff(),
+        L1DataAvailabilityMode::Blob,
+        &StarknetVersion::V0_13_2,
+    );
+    let actual_tx_commitment = block_commitments.transaction_commitment;
+    let expected_tx_commitment_hash_when_signature_vec_of_zero =
+        felt!("0x30259cdf52543aa0866b46a839c5e089184408a97945b4ffa8dcae78177dfde");
+    assert_eq!(
+        TransactionCommitment(expected_tx_commitment_hash_when_signature_vec_of_zero),
+        actual_tx_commitment
     );
 }
 
@@ -162,6 +198,8 @@ fn change_field_of_hash_input() {
                 price_in_wei: 1_u8.into(),
             },
             l2_gas_price: GasPricePerToken { price_in_fri: 1_u8.into(), price_in_wei: 1_u8.into() },
+            l2_gas_consumed: GasAmount(1),
+            next_l2_gas_price: GasPrice(1),
             state_root: GlobalRoot(Felt::ONE),
             sequencer: SequencerContractAddress(ContractAddress::from(1_u128)),
             timestamp: BlockTimestamp(1)
@@ -172,7 +210,11 @@ fn change_field_of_hash_input() {
             receipt_commitment: ReceiptCommitment(Felt::ONE),
             state_diff_commitment: StateDiffCommitment(PoseidonHash(Felt::ONE)),
             concatenated_counts: Felt::ONE
-        }
+        },
+        // Excluding l2_gas_consumed, l2_gas_consumed as they're not currently included in the
+        // block hash.
+        // TODO(Ayelet): Remove these fields after 0.14.0, once they are included in the hash.
+        exclude_header_fields = [l2_gas_consumed, next_l2_gas_price]
     );
     // TODO(Aviv, 10/06/2024): add tests that changes the first hash input, and the const zero.
 }

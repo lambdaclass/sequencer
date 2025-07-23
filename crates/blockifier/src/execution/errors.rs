@@ -50,6 +50,11 @@ pub enum PreExecutionError {
     UninitializedStorageAddress(ContractAddress),
     #[error("Called builtins: {0:?} are unsupported in a Cairo0 contract")]
     UnsupportedCairo0Builtin(HashSet<BuiltinName>),
+    #[error(
+        "Insufficient entry point initial gas, must be greater than the entry point initial \
+         budget."
+    )]
+    InsufficientEntryPointGas,
 }
 
 impl From<RunnerError> for PreExecutionError {
@@ -83,7 +88,7 @@ impl From<RunnerError> for PostExecutionError {
 #[derive(Debug, Error)]
 pub enum EntryPointExecutionError {
     #[error(transparent)]
-    CairoRunError(#[from] CairoRunError),
+    CairoRunError(#[from] Box<CairoRunError>),
     #[error("{error_trace}")]
     ExecutionFailed { error_trace: Cairo1RevertSummary },
     #[error("Internal error: {0}")]
@@ -116,7 +121,7 @@ pub enum ConstructorEntryPointExecutionError {
     )]
     ExecutionError {
         #[source]
-        error: EntryPointExecutionError,
+        error: Box<EntryPointExecutionError>,
         class_hash: ClassHash,
         contract_address: ContractAddress,
         constructor_selector: Option<EntryPointSelector>,
@@ -130,7 +135,7 @@ impl ConstructorEntryPointExecutionError {
         selector: Option<EntryPointSelector>,
     ) -> Self {
         Self::ExecutionError {
-            error,
+            error: Box::new(error),
             class_hash: ctor_context.class_hash,
             contract_address: ctor_context.storage_address,
             constructor_selector: selector,

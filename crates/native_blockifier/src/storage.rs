@@ -1,16 +1,18 @@
+#![allow(non_local_definitions)]
+
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 
+use apollo_storage::class::ClassStorageWriter;
+use apollo_storage::compiled_class::CasmStorageWriter;
+use apollo_storage::header::{HeaderStorageReader, HeaderStorageWriter};
+use apollo_storage::state::{StateStorageReader, StateStorageWriter};
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use indexmap::IndexMap;
-use papyrus_storage::class::ClassStorageWriter;
-use papyrus_storage::compiled_class::CasmStorageWriter;
-use papyrus_storage::header::{HeaderStorageReader, HeaderStorageWriter};
-use papyrus_storage::state::{StateStorageReader, StateStorageWriter};
 use pyo3::prelude::*;
 use starknet_api::block::{BlockHash, BlockHeader, BlockHeaderWithoutHash, BlockNumber};
-use starknet_api::core::{ChainId, ClassHash, CompiledClassHash, ContractAddress};
+use starknet_api::core::{ChainId, ClassHash, CompiledClassHash};
 use starknet_api::deprecated_contract_class::ContractClass as DeprecatedContractClass;
 use starknet_api::hash::StarkHash;
 use starknet_api::state::{SierraContractClass, StateDiff, StateNumber, ThinStateDiff};
@@ -29,16 +31,17 @@ pub type RawDeprecatedDeclaredClassMapping = HashMap<PyFelt, String>;
 
 // Invariant: Only one instance of this struct should exist.
 // Reader and writer fields must be cleared before the struct goes out of scope in Python;
-// to prevent possible memory leaks (TODO: see if this is indeed necessary).
+// to prevent possible memory leaks
+// TODO(Dori): see if this is indeed necessary.
 pub struct PapyrusStorage {
-    reader: Option<papyrus_storage::StorageReader>,
-    writer: Option<papyrus_storage::StorageWriter>,
+    reader: Option<apollo_storage::StorageReader>,
+    writer: Option<apollo_storage::StorageWriter>,
 }
 
 impl PapyrusStorage {
     pub fn new(config: StorageConfig) -> NativeBlockifierResult<PapyrusStorage> {
         log::debug!("Initializing Blockifier storage...");
-        let db_config = papyrus_storage::db::DbConfig {
+        let db_config = apollo_storage::db::DbConfig {
             path_prefix: config.path_prefix,
             enforce_file_exists: config.enforce_file_exists,
             chain_id: config.chain_id,
@@ -46,18 +49,18 @@ impl PapyrusStorage {
             max_size: config.max_size,
             growth_step: 1 << 26, // 64MB.
         };
-        let storage_config = papyrus_storage::StorageConfig {
+        let storage_config = apollo_storage::StorageConfig {
             db_config,
-            scope: papyrus_storage::StorageScope::StateOnly, // Only stores blockifier-related data.
+            scope: apollo_storage::StorageScope::StateOnly, // Only stores blockifier-related data.
             // Storage for large objects (state-diffs, contracts). This sets total storage
             // allocated, maximum space an object can take, and how fast the storage grows.
-            mmap_file_config: papyrus_storage::mmap_file::MmapFileConfig {
+            mmap_file_config: apollo_storage::mmap_file::MmapFileConfig {
                 max_size: 1 << 40,        // 1TB
                 growth_step: 2 << 30,     // 2GB
                 max_object_size: 1 << 30, // 1GB
             },
         };
-        let (reader, writer) = papyrus_storage::open_storage(storage_config)?;
+        let (reader, writer) = apollo_storage::open_storage(storage_config)?;
         log::debug!("Initialized Blockifier storage.");
 
         Ok(PapyrusStorage { reader: Some(reader), writer: Some(writer) })
@@ -66,7 +69,7 @@ impl PapyrusStorage {
     /// Manually drops the storage reader and writer.
     /// Python does not necessarily drop them even if instance is no longer live.
     pub fn new_for_testing(path_prefix: PathBuf, chain_id: &ChainId) -> PapyrusStorage {
-        let db_config = papyrus_storage::db::DbConfig {
+        let db_config = apollo_storage::db::DbConfig {
             path_prefix,
             chain_id: chain_id.clone(),
             enforce_file_exists: false,
@@ -74,8 +77,8 @@ impl PapyrusStorage {
             max_size: 1 << 35,    // 32GB
             growth_step: 1 << 26, // 64MB
         };
-        let storage_config = papyrus_storage::StorageConfig { db_config, ..Default::default() };
-        let (reader, writer) = papyrus_storage::open_storage(storage_config).unwrap();
+        let storage_config = apollo_storage::StorageConfig { db_config, ..Default::default() };
+        let (reader, writer) = apollo_storage::open_storage(storage_config).unwrap();
 
         PapyrusStorage { reader: Some(reader), writer: Some(writer) }
     }
@@ -99,7 +102,7 @@ impl Storage for PapyrusStorage {
             .reader()
             .begin_ro_txn()?
             .get_block_header(block_number)?
-            .map(|block_header| Vec::from(block_header.block_hash.0.to_bytes_be().as_slice()));
+            .map(|block_header| Vec::from(block_header.block_hash.to_bytes_be().as_slice()));
         Ok(block_hash)
     }
 
@@ -149,27 +152,6 @@ impl Storage for PapyrusStorage {
             }
         }
 
-        // Collect replaced classes (changed class hash of an already allocated address;
-        // i.e.: pointing to a non-zeroed class hash). Rest would be (newly) deployed classes.
-        let mut replaced_classes = IndexMap::<ContractAddress, ClassHash>::new();
-        for (address, class_hash) in &py_state_diff.address_to_class_hash {
-            let address = ContractAddress::try_from(address.0)?;
-            let address_assigned: bool = self
-                .reader()
-                .begin_ro_txn()?
-                .get_state_reader()?
-                .get_class_hash_at(state_number, &address)?
-                .is_some();
-
-            if address_assigned {
-                replaced_classes.insert(address, ClassHash(class_hash.0));
-            }
-        }
-        let mut py_state_diff = py_state_diff;
-        replaced_classes.keys().for_each(|&address| {
-            py_state_diff.address_to_class_hash.remove(&address.into());
-        });
-
         let mut declared_classes =
             IndexMap::<ClassHash, (CompiledClassHash, SierraContractClass)>::new();
         let mut undeclared_casm_contracts = Vec::<(ClassHash, CasmContractClass)>::new();
@@ -204,7 +186,6 @@ impl Storage for PapyrusStorage {
         let mut state_diff = StateDiff::try_from(py_state_diff)?;
         state_diff.deprecated_declared_classes = deprecated_declared_classes;
         state_diff.declared_classes = declared_classes;
-        state_diff.replaced_classes = replaced_classes;
 
         let (thin_state_diff, declared_classes, deprecated_declared_classes) =
             ThinStateDiff::from_state_diff(state_diff);
@@ -254,11 +235,11 @@ impl Storage for PapyrusStorage {
         );
     }
 
-    fn reader(&self) -> &papyrus_storage::StorageReader {
+    fn reader(&self) -> &apollo_storage::StorageReader {
         self.reader.as_ref().expect("Storage should be initialized.")
     }
 
-    fn writer(&mut self) -> &mut papyrus_storage::StorageWriter {
+    fn writer(&mut self) -> &mut apollo_storage::StorageWriter {
         self.writer.as_mut().expect("Storage should be initialized.")
     }
 
@@ -310,8 +291,8 @@ pub trait Storage {
 
     fn validate_aligned(&self, source_block_number: u64);
 
-    fn reader(&self) -> &papyrus_storage::StorageReader;
-    fn writer(&mut self) -> &mut papyrus_storage::StorageWriter;
+    fn reader(&self) -> &apollo_storage::StorageReader;
+    fn writer(&mut self) -> &mut apollo_storage::StorageWriter;
 
     fn close(&mut self);
 }

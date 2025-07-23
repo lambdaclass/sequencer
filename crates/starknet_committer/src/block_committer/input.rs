@@ -1,45 +1,38 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-use starknet_patricia::felt::Felt;
+use starknet_api::core::{ClassHash, ContractAddress, Nonce};
 use starknet_patricia::hash::hash_trait::HashOutput;
 use starknet_patricia::patricia_merkle_tree::node_data::leaf::{LeafModifications, SkeletonLeaf};
 use starknet_patricia::patricia_merkle_tree::types::NodeIndex;
-use starknet_patricia::storage::storage_trait::{StorageKey, StorageValue};
+use starknet_patricia_storage::storage_trait::{DbKey, DbValue};
+use starknet_types_core::felt::Felt;
 use tracing::level_filters::LevelFilter;
 
-use crate::patricia_merkle_tree::types::{ClassHash, CompiledClassHash, Nonce};
+use crate::patricia_merkle_tree::types::{class_hash_into_node_index, CompiledClassHash};
 
 #[cfg(test)]
 #[path = "input_test.rs"]
 pub mod input_test;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-// TODO(Nimrod, 1/6/2025): Use the ContractAddress defined in starknet-types-core when available.
-pub struct ContractAddress(pub Felt);
-
-impl TryFrom<&NodeIndex> for ContractAddress {
-    type Error = String;
-
-    fn try_from(node_index: &NodeIndex) -> Result<ContractAddress, Self::Error> {
-        if !node_index.is_leaf() {
-            return Err("NodeIndex is not a leaf.".to_string());
-        }
-        let result = Felt::try_from(*node_index - NodeIndex::FIRST_LEAF);
-        match result {
-            Ok(felt) => Ok(ContractAddress(felt)),
-            Err(error) => Err(format!(
-                "Tried to convert node index to felt and got the following error: {:?}",
-                error.to_string()
-            )),
-        }
+pub fn try_node_index_into_contract_address(
+    node_index: &NodeIndex,
+) -> Result<ContractAddress, String> {
+    if !node_index.is_leaf() {
+        return Err("NodeIndex is not a leaf.".to_string());
+    }
+    let result = Felt::try_from(*node_index - NodeIndex::FIRST_LEAF);
+    match result {
+        Ok(felt) => Ok(ContractAddress::try_from(felt).map_err(|error| error.to_string())?),
+        Err(error) => Err(format!(
+            "Tried to convert node index to felt and got the following error: {:?}",
+            error.to_string()
+        )),
     }
 }
 
-impl From<&ContractAddress> for NodeIndex {
-    fn from(address: &ContractAddress) -> NodeIndex {
-        NodeIndex::from_leaf_felt(&address.0)
-    }
+pub fn contract_address_into_node_index(address: &ContractAddress) -> NodeIndex {
+    NodeIndex::from_leaf_felt(&address.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -100,7 +93,7 @@ impl ConfigImpl {
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Input<C: Config> {
-    pub storage: HashMap<StorageKey, StorageValue>,
+    pub storage: HashMap<DbKey, DbValue>,
     /// All relevant information for the state diff commitment.
     pub state_diff: StateDiff,
     pub contracts_trie_root_hash: HashOutput,
@@ -141,7 +134,7 @@ impl StateDiff {
         self.class_hash_to_compiled_class_hash
             .iter()
             .map(|(class_hash, compiled_class_hash)| {
-                (class_hash.into(), SkeletonLeaf::from(compiled_class_hash.0))
+                (class_hash_into_node_index(class_hash), SkeletonLeaf::from(compiled_class_hash.0))
             })
             .collect()
     }
@@ -166,7 +159,9 @@ impl StateDiff {
     pub(crate) fn actual_classes_updates(&self) -> LeafModifications<CompiledClassHash> {
         self.class_hash_to_compiled_class_hash
             .iter()
-            .map(|(class_hash, compiled_class_hash)| (class_hash.into(), *compiled_class_hash))
+            .map(|(class_hash, compiled_class_hash)| {
+                (class_hash_into_node_index(class_hash), *compiled_class_hash)
+            })
             .collect()
     }
 }

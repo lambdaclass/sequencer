@@ -1,17 +1,14 @@
-use std::collections::HashMap;
-
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use starknet_api::block::{BlockInfo, FeeType};
 use starknet_api::core::{ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
 use starknet_api::execution_resources::GasVector;
 use starknet_api::transaction::fields::{
     AccountDeploymentData,
-    AllResourceBounds,
     Fee,
     GasVectorComputationMode,
     PaymasterData,
-    ResourceBounds,
     Tip,
     TransactionSignature,
     ValidResourceBounds,
@@ -22,17 +19,16 @@ use starknet_api::transaction::{
     TransactionOptions,
     TransactionVersion,
 };
-use strum_macros::EnumIter;
 
 use crate::abi::constants as abi_constants;
-use crate::blockifier::block::BlockInfo;
-use crate::execution::call_info::{CallInfo, ExecutionSummary};
+use crate::blockifier_versioned_constants::VersionedConstants;
+use crate::execution::call_info::{BuiltinCounterMap, CallInfo, ExecutionSummary};
 use crate::execution::stack_trace::ErrorStack;
 use crate::fee::fee_checks::FeeCheckError;
 use crate::fee::fee_utils::get_fee_by_gas_vector;
 use crate::fee::receipt::TransactionReceipt;
 use crate::transaction::errors::{TransactionExecutionError, TransactionPreValidationError};
-use crate::versioned_constants::VersionedConstants;
+use crate::utils::add_maps;
 
 #[cfg(test)]
 #[path = "objects_test.rs"]
@@ -57,6 +53,14 @@ macro_rules! implement_getters {
 pub enum TransactionInfo {
     Current(CurrentTransactionInfo),
     Deprecated(DeprecatedTransactionInfo),
+}
+
+impl Default for TransactionInfo {
+    /// Creates a new transaction info with mostly default values, to be used for directly calling
+    /// contract entry points.
+    fn default() -> Self {
+        Self::Current(CurrentTransactionInfo::create_default_unlimited())
+    }
 }
 
 impl TransactionInfo {
@@ -86,7 +90,8 @@ impl TransactionInfo {
     pub fn enforce_fee(&self) -> bool {
         match self {
             TransactionInfo::Current(context) => {
-                context.resource_bounds.max_possible_fee() > Fee(0)
+                // Assumes that the tip is enabled, as it is in the OS.
+                context.resource_bounds.max_possible_fee(context.tip) > Fee(0)
             }
             TransactionInfo::Deprecated(context) => context.max_fee != Fee(0),
         }
@@ -131,27 +136,21 @@ pub struct CurrentTransactionInfo {
 }
 
 impl CurrentTransactionInfo {
-    /// Fetch the L1 resource bounds, if they exist.
-    // TODO(Nimrod): Consider removing this function and add equivalent method to
-    // `ValidResourceBounds`.
-    pub fn l1_resource_bounds(&self) -> ResourceBounds {
-        match self.resource_bounds {
-            ValidResourceBounds::L1Gas(bounds) => bounds,
-            ValidResourceBounds::AllResources(AllResourceBounds { l1_gas, .. }) => l1_gas,
-        }
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub fn create_for_testing() -> Self {
+    pub fn create_default_unlimited() -> Self {
         Self {
             common_fields: CommonAccountFields::default(),
-            resource_bounds: ValidResourceBounds::create_for_testing_no_fee_enforcement(),
+            resource_bounds: ValidResourceBounds::new_unlimited_gas_no_fee_enforcement(),
             tip: Tip::default(),
             nonce_data_availability_mode: DataAvailabilityMode::L2,
             fee_data_availability_mode: DataAvailabilityMode::L2,
             paymaster_data: PaymasterData::default(),
             account_deployment_data: AccountDeploymentData::default(),
         }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub fn create_for_testing() -> Self {
+        Self::create_default_unlimited()
     }
 }
 
@@ -213,11 +212,19 @@ pub struct TransactionExecutionInfo {
 }
 
 impl TransactionExecutionInfo {
+    // TODO(Arni): Add a flag to non_optional_call_infos to indicate the transaction
+    // type. Change the iteration order for `deploy_account` transactions.
     pub fn non_optional_call_infos(&self) -> impl Iterator<Item = &CallInfo> {
         self.validate_call_info
             .iter()
             .chain(self.execute_call_info.iter())
             .chain(self.fee_transfer_call_info.iter())
+    }
+
+    /// Returns call infos excluding fee transfer (to avoid double-counting in bouncer
+    /// calculations).
+    pub fn non_optional_call_infos_without_fee_transfer(&self) -> impl Iterator<Item = &CallInfo> {
+        self.validate_call_info.iter().chain(self.execute_call_info.iter())
     }
 
     pub fn is_reverted(&self) -> bool {
@@ -229,18 +236,28 @@ impl TransactionExecutionInfo {
     pub fn summarize(&self, versioned_constants: &VersionedConstants) -> ExecutionSummary {
         CallInfo::summarize_many(self.non_optional_call_infos(), versioned_constants)
     }
+
+    pub fn summarize_builtins(&self) -> BuiltinCounterMap {
+        let mut builtin_counters = BuiltinCounterMap::new();
+        // Remove fee transfer builtins to avoid double-counting in `get_tx_weights`
+        // in bouncer.rs (already included in os_vm_resources).
+        for call_info_iter in self.non_optional_call_infos_without_fee_transfer() {
+            for call_info in call_info_iter.iter() {
+                add_maps(&mut builtin_counters, &call_info.builtin_counters);
+            }
+        }
+        builtin_counters
+    }
 }
 pub trait ExecutionResourcesTraits {
     fn total_n_steps(&self) -> usize;
-    fn prover_builtins(&self) -> HashMap<BuiltinName, usize>;
+    fn prover_builtins(&self) -> BuiltinCounterMap;
+    fn div_ceil(&self, rhs: usize) -> ExecutionResources;
 }
 
 impl ExecutionResourcesTraits for ExecutionResources {
     fn total_n_steps(&self) -> usize {
         self.n_steps
-            // Memory holes are slightly cheaper than actual steps, but we count them as such
-            // for simplicity.
-            + self.n_memory_holes
             // The "segment arena" builtin is not part of the prover (not in any proof layout);
             // It is transformed into regular steps by the OS program - each instance requires
             // approximately 10 steps.
@@ -252,12 +269,25 @@ impl ExecutionResourcesTraits for ExecutionResources {
                     .unwrap_or_default()
     }
 
-    fn prover_builtins(&self) -> HashMap<BuiltinName, usize> {
+    fn prover_builtins(&self) -> BuiltinCounterMap {
         let mut builtins = self.builtin_instance_counter.clone();
 
         // See "total_n_steps" documentation.
         builtins.remove(&BuiltinName::segment_arena);
         builtins
+    }
+
+    fn div_ceil(&self, rhs: usize) -> ExecutionResources {
+        if rhs == 0 {
+            panic!("Division by zero");
+        }
+        let mut new = self.clone();
+        new.n_steps = self.n_steps.div_ceil(rhs);
+        new.n_memory_holes = self.n_memory_holes.div_ceil(rhs);
+        for counter in new.builtin_instance_counter.values_mut() {
+            *counter = counter.div_ceil(rhs);
+        }
+        new
     }
 }
 
@@ -274,15 +304,14 @@ pub trait HasRelatedFeeType {
         }
     }
 
-    fn get_fee_by_gas_vector(&self, block_info: &BlockInfo, gas_vector: GasVector) -> Fee {
-        get_fee_by_gas_vector(block_info, gas_vector, &self.fee_type())
+    fn get_fee_by_gas_vector(
+        &self,
+        block_info: &BlockInfo,
+        gas_vector: GasVector,
+        tip: Tip,
+    ) -> Fee {
+        get_fee_by_gas_vector(block_info, gas_vector, &self.fee_type(), tip)
     }
-}
-
-#[derive(Clone, Copy, Hash, EnumIter, Eq, PartialEq)]
-pub enum FeeType {
-    Strk,
-    Eth,
 }
 
 pub trait TransactionInfoCreator {

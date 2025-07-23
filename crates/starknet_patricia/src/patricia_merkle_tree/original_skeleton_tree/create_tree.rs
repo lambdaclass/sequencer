@@ -2,10 +2,13 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use starknet_patricia_storage::errors::StorageError;
+use starknet_patricia_storage::storage_trait::{create_db_key, DbKey, Storage};
 use tracing::warn;
 
 use crate::hash::hash_trait::HashOutput;
 use crate::patricia_merkle_tree::filled_tree::node::FilledNode;
+use crate::patricia_merkle_tree::filled_tree::node_serde::PatriciaPrefix;
 use crate::patricia_merkle_tree::node_data::inner_node::{
     BinaryData,
     EdgeData,
@@ -21,8 +24,6 @@ use crate::patricia_merkle_tree::original_skeleton_tree::tree::{
 };
 use crate::patricia_merkle_tree::original_skeleton_tree::utils::split_leaves;
 use crate::patricia_merkle_tree::types::{NodeIndex, SortedLeafIndices, SubTreeHeight};
-use crate::storage::errors::StorageError;
-use crate::storage::storage_trait::{create_db_key, StarknetPrefix, Storage, StorageKey};
 
 #[cfg(test)]
 #[path = "create_tree_test.rs"]
@@ -53,6 +54,14 @@ impl<'a> SubTree<'a> {
 
     pub(crate) fn is_unmodified(&self) -> bool {
         self.sorted_leaf_indices.is_empty()
+    }
+
+    pub(crate) fn get_root_prefix<L: Leaf>(&self) -> PatriciaPrefix {
+        if self.is_leaf() {
+            PatriciaPrefix::Leaf(L::get_static_prefix())
+        } else {
+            PatriciaPrefix::InnerNode
+        }
     }
 
     /// Returns the bottom subtree which is referred from `self` by the given path. When creating
@@ -217,15 +226,11 @@ impl<'a> OriginalSkeletonTreeImpl<'a> {
         storage: &impl Storage,
     ) -> OriginalSkeletonTreeResult<Vec<FilledNode<L>>> {
         let mut subtrees_roots = vec![];
-        let db_keys: Vec<StorageKey> = subtrees
+        let db_keys: Vec<DbKey> = subtrees
             .iter()
             .map(|subtree| {
                 create_db_key(
-                    if subtree.is_leaf() {
-                        L::prefix()
-                    } else {
-                        StarknetPrefix::InnerNode.to_storage_prefix()
-                    },
+                    subtree.get_root_prefix::<L>().into(),
                     &subtree.root_hash.0.to_bytes_be(),
                 )
             })

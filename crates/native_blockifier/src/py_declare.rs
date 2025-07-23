@@ -1,10 +1,9 @@
 use std::convert::TryFrom;
 
-use blockifier::transaction::transaction_types::TransactionType;
 use pyo3::prelude::*;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::data_availability::DataAvailabilityMode;
-use starknet_api::executable_transaction::DeclareTransaction;
+use starknet_api::executable_transaction::{DeclareTransaction, TransactionType};
 use starknet_api::transaction::fields::{
     AccountDeploymentData,
     Fee,
@@ -38,7 +37,7 @@ impl TryFrom<PyDeclareTransactionV0V1> for DeclareTransactionV0V1 {
     fn try_from(tx: PyDeclareTransactionV0V1) -> Result<Self, Self::Error> {
         Ok(Self {
             max_fee: Fee(tx.max_fee),
-            signature: TransactionSignature(from_py_felts(tx.signature)),
+            signature: TransactionSignature(from_py_felts(tx.signature).into()),
             nonce: Nonce(tx.nonce.0),
             class_hash: ClassHash(tx.class_hash.0),
             sender_address: ContractAddress::try_from(tx.sender_address.0)?,
@@ -61,7 +60,7 @@ impl TryFrom<PyDeclareTransactionV2> for DeclareTransactionV2 {
     fn try_from(tx: PyDeclareTransactionV2) -> Result<Self, Self::Error> {
         Ok(Self {
             max_fee: Fee(tx.max_fee),
-            signature: TransactionSignature(from_py_felts(tx.signature)),
+            signature: TransactionSignature(from_py_felts(tx.signature).into()),
             nonce: Nonce(tx.nonce.0),
             class_hash: ClassHash(tx.class_hash.0),
             compiled_class_hash: CompiledClassHash(tx.compiled_class_hash.0),
@@ -91,7 +90,7 @@ impl TryFrom<PyDeclareTransactionV3> for DeclareTransactionV3 {
         Ok(Self {
             resource_bounds: tx.resource_bounds.try_into()?,
             tip: Tip(tx.tip),
-            signature: TransactionSignature(from_py_felts(tx.signature)),
+            signature: TransactionSignature(from_py_felts(tx.signature).into()),
             nonce: Nonce(tx.nonce.0),
             class_hash: ClassHash(tx.class_hash.0),
             compiled_class_hash: CompiledClassHash(tx.compiled_class_hash.0),
@@ -113,7 +112,7 @@ pub fn py_declare(
     py_class_info: PyClassInfo,
 ) -> NativeBlockifierResult<DeclareTransaction> {
     let version = py_attr::<PyFelt>(py_tx, "version")?.0;
-    // TODO: Make TransactionVersion an enum and use match here.
+    // TODO(Dori): Make TransactionVersion an enum and use match here.
     let tx = if version == Felt::ZERO {
         let py_declare_tx: PyDeclareTransactionV0V1 = py_tx.extract()?;
         let declare_tx = DeclareTransactionV0V1::try_from(py_declare_tx)?;

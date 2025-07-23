@@ -9,15 +9,16 @@ license.workspace = true
 blockifier_regression_https_testing = []
 
 [dependencies]
+apollo_gateway.workspace = true
+apollo_rpc_execution.workspace = true
 assert_matches.workspace = true
 blockifier = { workspace = true, features = ["reexecution"] }
 cairo-lang-starknet-classes.workspace = true
 cairo-lang-utils.workspace = true
 clap = { workspace = true, features = ["cargo", "derive"] }
 flate2.workspace = true
-google-cloud-storage = "0.22.1"
+google-cloud-storage.workspace = true
 indexmap = { workspace = true, features = ["serde"] }
-papyrus_execution.workspace = true
 pretty_assertions.workspace = true
 retry.workspace = true
 serde.workspace = true
@@ -25,7 +26,6 @@ serde_json.workspace = true
 starknet-core.workspace = true
 starknet-types-core.workspace = true
 starknet_api.workspace = true
-starknet_gateway.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

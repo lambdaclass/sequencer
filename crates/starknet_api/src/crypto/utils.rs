@@ -8,6 +8,7 @@ mod crypto_test;
 use serde::{Deserialize, Serialize};
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::{Pedersen, Poseidon, StarkHash as CoreStarkHash};
+use thiserror::Error;
 
 use crate::hash::StarkHash;
 
@@ -27,7 +28,7 @@ pub enum CryptoError {
 
 /// A public key.
 #[derive(
-    Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+    Debug, Default, derive_more::Deref, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize,
 )]
 pub struct PublicKey(pub Felt);
 
@@ -37,10 +38,14 @@ impl std::fmt::LowerHex for PublicKey {
     }
 }
 
-/// A signature.
+/// A private key.
 #[derive(
-    Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+    Debug, Default, derive_more::Deref, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize,
 )]
+pub struct PrivateKey(pub Felt);
+
+/// A signature.
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct Signature {
     pub r: Felt,
     pub s: Felt,
@@ -114,5 +119,56 @@ impl HashChain {
     // Returns the poseidon hash of the chained felts.
     pub fn get_poseidon_hash(&self) -> StarkHash {
         Poseidon::hash_array(self.elements.as_slice())
+    }
+}
+
+/// A raw message to be signed, represented as a sequence of field elements (`Felt`).
+///
+/// Before signing, the message vector should be hashed to produce a digest suitable
+/// for the signature algorithm in use (e.g., Blake hash).
+#[derive(
+    Debug, Default, derive_more::Deref, Clone, Eq, PartialEq, Hash, Deserialize, Serialize,
+)]
+pub struct Message(pub Vec<Felt>);
+
+/// A raw Stark signature, represented as a list of field elements (`Felt`).
+///
+/// Depending on the signature scheme, this typically contains two elements
+/// (e.g., `(r, s)` for ECDSA-like schemes), but may vary for other algorithms.
+///
+/// This generic container allows higher-level traits to work without the burden of
+/// propagating generic signature types.
+#[derive(Clone, Debug, derive_more::Deref, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RawSignature(pub Vec<Felt>);
+
+impl From<starknet_crypto::Signature> for RawSignature {
+    fn from(signature: starknet_crypto::Signature) -> Self {
+        Self(vec![signature.r, signature.s])
+    }
+}
+
+impl From<starknet_crypto::ExtendedSignature> for RawSignature {
+    fn from(signature: starknet_crypto::ExtendedSignature) -> Self {
+        Self(vec![signature.r, signature.s])
+    }
+}
+
+#[derive(Clone, Debug, Error, Serialize, Deserialize, Eq, PartialEq)]
+pub enum SignatureConversionError {
+    #[error("expected a 2-element signature, but got length {0}")]
+    InvalidLength(usize),
+}
+
+impl TryFrom<RawSignature> for starknet_crypto::Signature {
+    type Error = SignatureConversionError;
+
+    fn try_from(signature: RawSignature) -> Result<Self, Self::Error> {
+        let signature_length = signature.len();
+        let [r, s]: [Felt; 2] = signature
+            .0
+            .try_into()
+            .map_err(|_| SignatureConversionError::InvalidLength(signature_length))?;
+
+        Ok(starknet_crypto::Signature { r, s })
     }
 }

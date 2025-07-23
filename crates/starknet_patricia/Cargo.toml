@@ -10,9 +10,11 @@ description = "Library for computing and updating Patricia trees."
 workspace = true
 
 [features]
-testing = []
+deserialize = []
+testing = ["dep:num-bigint"]
 
 [dev-dependencies]
+num-bigint = { workspace = true, features = ["rand"] }
 pretty_assertions.workspace = true
 rand.workspace = true
 rstest.workspace = true
@@ -21,11 +23,12 @@ rstest.workspace = true
 async-recursion.workspace = true
 derive_more.workspace = true
 ethnum.workspace = true
-hex.workspace = true
+num-bigint = { workspace = true, optional = true }
 rand.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 starknet-types-core.workspace = true
+starknet_patricia_storage.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 thiserror.workspace = true

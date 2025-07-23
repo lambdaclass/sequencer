@@ -2,14 +2,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use size_of::SizeOf;
 use starknet_types_core::felt::Felt;
 use strum_macros::EnumIter;
 
 use crate::block::{GasPrice, NonzeroGasPrice};
-use crate::execution_resources::GasAmount;
+use crate::execution_resources::{GasAmount, GasVector};
 use crate::hash::StarkHash;
 use crate::serde_utils::PrefixedBytesAsHex;
-use crate::StarknetApiError;
+use crate::{StarknetApiError, StarknetApiResult};
+
+pub const HIGH_GAS_AMOUNT: u64 = 10000000000; // A high gas amount that should be enough for execution.
 
 /// A fee.
 #[cfg_attr(any(test, feature = "testing"), derive(derive_more::Add, derive_more::Deref))]
@@ -85,16 +88,33 @@ impl From<Fee> for Felt {
 
 /// A contract address salt.
 #[derive(
-    Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+    Debug,
+    Copy,
+    Clone,
+    Default,
+    Eq,
+    PartialEq,
+    Hash,
+    Deserialize,
+    Serialize,
+    PartialOrd,
+    Ord,
+    SizeOf,
 )]
 pub struct ContractAddressSalt(pub StarkHash);
 
-/// A transaction signature.
-#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
-pub struct TransactionSignature(pub Vec<Felt>);
+/// A transaction signature, wrapped in `Arc` for efficient cloning and safe sharing across threads.
+/// `Rc` is avoided due to its lack of thread safety, and `Mutex` is unnecessary as the signature
+/// vector is immutable and never modified.
+#[derive(
+    Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord, SizeOf,
+)]
+pub struct TransactionSignature(pub Arc<Vec<Felt>>);
 
 /// The calldata of a transaction.
-#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord, SizeOf,
+)]
 pub struct Calldata(pub Arc<Vec<Felt>>);
 
 #[macro_export]
@@ -119,6 +139,7 @@ macro_rules! calldata {
     Serialize,
     derive_more::Deref,
     derive_more::Display,
+    SizeOf,
 )]
 #[serde(from = "PrefixedBytesAsHex<8_usize>", into = "PrefixedBytesAsHex<8_usize>")]
 pub struct Tip(pub u64);
@@ -139,6 +160,16 @@ impl From<Tip> for Felt {
     fn from(tip: Tip) -> Self {
         Self::from(tip.0)
     }
+}
+
+impl From<Tip> for GasPrice {
+    fn from(tip: Tip) -> Self {
+        Self(tip.0.into())
+    }
+}
+
+impl Tip {
+    pub const ZERO: Self = Self(0);
 }
 
 /// Execution resource.
@@ -162,6 +193,7 @@ pub enum Resource {
     #[serde(rename = "L2_GAS")]
     L2Gas,
     #[serde(rename = "L1_DATA")]
+    #[serde(alias = "L1_DATA_GAS")]
     L1DataGas,
 }
 
@@ -180,7 +212,18 @@ impl Resource {
 /// Fee bounds for an execution resource.
 /// TODO(Yael): add types ResourceAmount and ResourcePrice and use them instead of u64 and u128.
 #[derive(
-    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    SizeOf,
 )]
 // TODO(Nimrod): Consider renaming this struct.
 pub struct ResourceBounds {
@@ -244,6 +287,56 @@ where
     ))
 }
 
+pub fn hex_to_tip<'de, D>(deserializer: D) -> Result<Tip, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    Ok(Tip(u64::from_str_radix(s.trim_start_matches("0x"), 16).map_err(serde::de::Error::custom)?))
+}
+
+pub struct ResourceAsFelts {
+    pub resource_name: Felt,
+    pub max_amount: Felt,
+    pub max_price_per_unit: Felt,
+}
+
+impl ResourceAsFelts {
+    pub fn new(resource: Resource, resource_bounds: &ResourceBounds) -> StarknetApiResult<Self> {
+        let resource_as_hex = resource.to_hex();
+        Ok(Self {
+            resource_name: Felt::from_hex(resource_as_hex).map_err(|_| {
+                StarknetApiError::ResourceHexToFeltConversion(resource_as_hex.to_string())
+            })?,
+            max_amount: Felt::from(resource_bounds.max_amount),
+            max_price_per_unit: Felt::from(resource_bounds.max_price_per_unit),
+        })
+    }
+
+    pub fn flatten(self) -> Vec<Felt> {
+        vec![self.resource_name, self.max_amount, self.max_price_per_unit]
+    }
+}
+
+pub fn valid_resource_bounds_as_felts(
+    resource_bounds: &ValidResourceBounds,
+    exclude_l1_data_gas: bool,
+) -> Result<Vec<ResourceAsFelts>, StarknetApiError> {
+    let mut resource_bounds_vec: Vec<_> = vec![
+        ResourceAsFelts::new(Resource::L1Gas, &resource_bounds.get_l1_bounds())?,
+        ResourceAsFelts::new(Resource::L2Gas, &resource_bounds.get_l2_bounds())?,
+    ];
+    if exclude_l1_data_gas {
+        return Ok(resource_bounds_vec);
+    }
+    if let ValidResourceBounds::AllResources(AllResourceBounds { l1_data_gas, .. }) =
+        resource_bounds
+    {
+        resource_bounds_vec.push(ResourceAsFelts::new(Resource::L1DataGas, l1_data_gas)?)
+    }
+    Ok(resource_bounds_vec)
+}
+
 #[derive(Debug, PartialEq)]
 pub enum GasVectorComputationMode {
     All,
@@ -279,7 +372,7 @@ impl ValidResourceBounds {
     /// Returns the maximum possible fee that can be charged for the transaction.
     /// The computation is saturating, meaning that if the result is larger than the maximum
     /// possible fee, the maximum possible fee is returned.
-    pub fn max_possible_fee(&self) -> Fee {
+    pub fn max_possible_fee(&self, tip: Tip) -> Fee {
         match self {
             ValidResourceBounds::L1Gas(l1_bounds) => {
                 l1_bounds.max_amount.saturating_mul(l1_bounds.max_price_per_unit)
@@ -291,7 +384,11 @@ impl ValidResourceBounds {
             }) => l1_gas
                 .max_amount
                 .saturating_mul(l1_gas.max_price_per_unit)
-                .saturating_add(l2_gas.max_amount.saturating_mul(l2_gas.max_price_per_unit))
+                .saturating_add(
+                    l2_gas
+                        .max_amount
+                        .saturating_mul(l2_gas.max_price_per_unit.saturating_add(tip.into())),
+                )
                 .saturating_add(
                     l1_data_gas.max_amount.saturating_mul(l1_data_gas.max_price_per_unit),
                 ),
@@ -305,9 +402,8 @@ impl ValidResourceBounds {
         }
     }
 
-    #[cfg(any(feature = "testing", test))]
-    pub fn create_for_testing_no_fee_enforcement() -> Self {
-        let default_l2_gas_amount = GasAmount(10000000000); // Sufficient to avoid out of gas errors.
+    pub fn new_unlimited_gas_no_fee_enforcement() -> Self {
+        let default_l2_gas_amount = GasAmount(HIGH_GAS_AMOUNT); // Sufficient to avoid out of gas errors.
         let default_resource =
             ResourceBounds { max_amount: GasAmount(0), max_price_per_unit: GasPrice(1) };
         Self::AllResources(AllResourceBounds {
@@ -318,6 +414,11 @@ impl ValidResourceBounds {
             },
             l1_data_gas: default_resource,
         })
+    }
+
+    #[cfg(any(feature = "testing", test))]
+    pub fn create_for_testing_no_fee_enforcement() -> Self {
+        Self::new_unlimited_gas_no_fee_enforcement()
     }
 
     /// Utility method to "zip" an amount vector and a price vector to get an AllResourceBounds.
@@ -342,8 +443,25 @@ impl ValidResourceBounds {
     }
 }
 
+impl Default for ValidResourceBounds {
+    fn default() -> Self {
+        Self::AllResources(AllResourceBounds::default())
+    }
+}
+
 #[derive(
-    Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Serialize,
+    SizeOf,
 )]
 pub struct AllResourceBounds {
     pub l1_gas: ResourceBounds,
@@ -367,6 +485,14 @@ impl AllResourceBounds {
             Resource::L1Gas => self.l1_gas,
             Resource::L2Gas => self.l2_gas,
             Resource::L1DataGas => self.l1_data_gas,
+        }
+    }
+
+    pub fn to_max_amounts(&self) -> GasVector {
+        GasVector {
+            l1_gas: self.l1_gas.max_amount,
+            l1_data_gas: self.l1_data_gas.max_amount,
+            l2_gas: self.l2_gas.max_amount,
         }
     }
 }
@@ -445,7 +571,9 @@ impl TryFrom<DeprecatedResourceBoundsMapping> for ValidResourceBounds {
 }
 
 /// Paymaster-related data.
-#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, SizeOf,
+)]
 pub struct PaymasterData(pub Vec<Felt>);
 
 impl PaymasterData {
@@ -456,7 +584,9 @@ impl PaymasterData {
 
 /// If nonempty, will contain the required data for deploying and initializing an account contract:
 /// its class hash, address salt and constructor calldata.
-#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord, SizeOf,
+)]
 pub struct AccountDeploymentData(pub Vec<Felt>);
 
 impl AccountDeploymentData {

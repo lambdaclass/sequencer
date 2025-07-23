@@ -5,8 +5,11 @@ mod core_test;
 use std::fmt::Debug;
 use std::sync::LazyLock;
 
+use num_traits::ToPrimitive;
 use primitive_types::H160;
+use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use size_of::SizeOf;
 use starknet_types_core::felt::{Felt, NonZeroFelt};
 use starknet_types_core::hash::{Pedersen, StarkHash as CoreStarkHash};
 
@@ -19,7 +22,13 @@ use crate::{impl_from_through_intermediate, StarknetApiError};
 /// Felt.
 pub fn ascii_as_felt(ascii_str: &str) -> Result<Felt, StarknetApiError> {
     Felt::from_hex(hex::encode(ascii_str).as_str()).map_err(|_| StarknetApiError::OutOfRange {
-        string: format!("The str {}, does not fit into a single felt", ascii_str),
+        string: format!("The str {ascii_str}, does not fit into a single felt"),
+    })
+}
+
+pub fn felt_to_u128(felt: &Felt) -> Result<u128, StarknetApiError> {
+    felt.to_u128().ok_or(StarknetApiError::OutOfRange {
+        string: format!("Felt {} is too big to convert to 'u128'", *felt,),
     })
 }
 
@@ -66,7 +75,7 @@ impl std::fmt::Display for ChainId {
             ChainId::Mainnet => write!(f, "SN_MAIN"),
             ChainId::Sepolia => write!(f, "SN_SEPOLIA"),
             ChainId::IntegrationSepolia => write!(f, "SN_INTEGRATION_SEPOLIA"),
-            ChainId::Other(ref s) => write!(f, "{}", s),
+            ChainId::Other(ref s) => write!(f, "{s}"),
         }
     }
 }
@@ -75,19 +84,25 @@ impl ChainId {
     pub fn as_hex(&self) -> String {
         format!("0x{}", hex::encode(self.to_string()))
     }
+}
 
-    #[cfg(any(feature = "testing", test))]
-    pub fn create_for_testing() -> Self {
-        const CHAIN_ID_NAME: &str = "SN_GOERLI";
-
-        ChainId::Other(CHAIN_ID_NAME.to_string())
-    }
+pub fn deserialize_chain_id_from_hex<'de, D>(deserializer: D) -> Result<ChainId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let hex_str = String::deserialize(deserializer)?;
+    let chain_id_str =
+        std::str::from_utf8(&hex::decode(hex_str.trim_start_matches("0x")).map_err(|e| {
+            D::Error::custom(format!("Failed to decode the hex string {hex_str}. Error: {e:?}"))
+        })?)
+        .map_err(|e| D::Error::custom(format!("Failed to convert to UTF-8 string. Error: {e:?}")))?
+        .to_string();
+    Ok(ChainId::from(chain_id_str))
 }
 
 /// The address of a contract, used for example in [StateDiff](`crate::state::StateDiff`),
 /// [DeclareTransaction](`crate::transaction::DeclareTransaction`), and
 /// [BlockHeader](`crate::block::BlockHeader`).
-
 // The block hash table is stored in address 0x1,
 // this is a special address that is not used for contracts.
 pub const BLOCK_HASH_TABLE_ADDRESS: ContractAddress = ContractAddress(PatriciaKey(StarkHash::ONE));
@@ -106,6 +121,7 @@ pub const BLOCK_HASH_TABLE_ADDRESS: ContractAddress = ContractAddress(PatriciaKe
     PartialOrd,
     Ord,
     derive_more::Deref,
+    SizeOf,
 )]
 pub struct ContractAddress(pub PatriciaKey);
 
@@ -120,7 +136,7 @@ impl ContractAddress {
             return Ok(());
         }
 
-        Err(StarknetApiError::OutOfRange { string: format!("[0x2, {})", l2_address_upper_bound) })
+        Err(StarknetApiError::OutOfRange { string: format!("[0x2, {l2_address_upper_bound})") })
     }
 }
 
@@ -156,7 +172,7 @@ impl TryFrom<StarkHash> for ContractAddress {
     }
 }
 
-// TODO: Add a hash_function as a parameter
+// TODO(Noa): Add a hash_function as a parameter
 pub fn calculate_contract_address(
     salt: ContractAddressSalt,
     class_hash: ClassHash,
@@ -194,6 +210,7 @@ pub fn calculate_contract_address(
     Ord,
     derive_more::Display,
     derive_more::Deref,
+    SizeOf,
 )]
 pub struct ClassHash(pub StarkHash);
 
@@ -211,6 +228,7 @@ pub struct ClassHash(pub StarkHash);
     PartialOrd,
     Ord,
     derive_more::Display,
+    SizeOf,
 )]
 pub struct CompiledClassHash(pub StarkHash);
 
@@ -229,6 +247,7 @@ pub struct CompiledClassHash(pub StarkHash);
     PartialOrd,
     Ord,
     derive_more::Deref,
+    SizeOf,
 )]
 pub struct Nonce(pub Felt);
 
@@ -237,7 +256,7 @@ impl Nonce {
         // Check if an overflow occurred during increment.
         let incremented = self.0 + Felt::ONE;
         if incremented == Felt::ZERO {
-            return Err(StarknetApiError::OutOfRange { string: format!("{:?}", self) });
+            return Err(StarknetApiError::OutOfRange { string: format!("{self:?}") });
         }
         Ok(Self(incremented))
     }
@@ -245,7 +264,7 @@ impl Nonce {
     pub fn try_decrement(&self) -> Result<Self, StarknetApiError> {
         // Check if an underflow occurred during decrement.
         if self.0 == Felt::ZERO {
-            return Err(StarknetApiError::OutOfRange { string: format!("{:?}", self) });
+            return Err(StarknetApiError::OutOfRange { string: format!("{self:?}") });
         }
         Ok(Self(self.0 - Felt::ONE))
     }
@@ -253,7 +272,18 @@ impl Nonce {
 
 /// The selector of an [EntryPoint](`crate::state::EntryPoint`).
 #[derive(
-    Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+    Debug,
+    Copy,
+    Clone,
+    Default,
+    Eq,
+    PartialEq,
+    Hash,
+    Deserialize,
+    Serialize,
+    PartialOrd,
+    Ord,
+    derive_more::Display,
 )]
 pub struct EntryPointSelector(pub StarkHash);
 
@@ -346,6 +376,7 @@ pub struct StateDiffCommitment(pub PoseidonHash);
     PartialOrd,
     Ord,
     derive_more:: Deref,
+    SizeOf,
 )]
 #[display(fmt = "{}", "_0.to_fixed_hex_string()")]
 pub struct PatriciaKey(StarkHash);
@@ -355,8 +386,16 @@ pub const PATRICIA_KEY_UPPER_BOUND: &str =
     "0x800000000000000000000000000000000000000000000000000000000000000";
 
 impl PatriciaKey {
+    pub const ZERO: Self = Self(StarkHash::ZERO);
+    pub const ONE: Self = Self(StarkHash::ONE);
+    pub const TWO: Self = Self(StarkHash::TWO);
+
     pub fn key(&self) -> &StarkHash {
         &self.0
+    }
+
+    pub const fn from_hex_unchecked(val: &str) -> Self {
+        Self(StarkHash::from_hex_unchecked(val))
     }
 }
 
@@ -420,6 +459,51 @@ macro_rules! contract_address {
 #[serde(try_from = "PrefixedBytesAsHex<20_usize>", into = "PrefixedBytesAsHex<20_usize>")]
 pub struct EthAddress(pub H160);
 
+#[derive(
+    Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+)]
+pub struct L1Address(pub Felt);
+
+impl From<ContractAddress> for L1Address {
+    fn from(address: ContractAddress) -> Self {
+        L1Address(address.0.0)
+    }
+}
+
+impl TryFrom<L1Address> for ContractAddress {
+    type Error = StarknetApiError;
+
+    fn try_from(address: L1Address) -> Result<Self, Self::Error> {
+        Ok(ContractAddress(PatriciaKey::try_from(address.0)?))
+    }
+}
+
+impl From<EthAddress> for L1Address {
+    fn from(address: EthAddress) -> Self {
+        L1Address(address.into())
+    }
+}
+
+impl TryFrom<L1Address> for EthAddress {
+    type Error = StarknetApiError;
+
+    fn try_from(address: L1Address) -> Result<Self, Self::Error> {
+        EthAddress::try_from(address.0)
+    }
+}
+
+impl From<Felt> for L1Address {
+    fn from(felt: Felt) -> Self {
+        L1Address(felt)
+    }
+}
+
+impl From<L1Address> for Felt {
+    fn from(address: L1Address) -> Self {
+        address.0
+    }
+}
+
 impl TryFrom<Felt> for EthAddress {
     type Error = StarknetApiError;
     fn try_from(felt: Felt) -> Result<Self, Self::Error> {
@@ -455,9 +539,7 @@ impl From<EthAddress> for PrefixedBytesAsHex<20_usize> {
 }
 
 /// A public key of a sequencer.
-#[derive(
-    Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
-)]
+#[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct SequencerPublicKey(pub PublicKey);
 
 #[derive(

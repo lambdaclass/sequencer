@@ -8,7 +8,7 @@ use starknet_api::transaction::{
     Transaction,
 };
 
-use crate::state_reader::test_state_reader::ReexecutionResult;
+use crate::state_reader::errors::ReexecutionResult;
 
 /// In old transaction, the resource bounds names are lowercase.
 /// need to convert to uppercase for deserialization to work.
@@ -27,6 +27,10 @@ pub fn upper_case_resource_bounds_names(raw_transaction: &mut Value) {
             .expect("If tx contains l1_gas, it should contain l2_gas");
         resource_bounds.insert("L2_GAS".to_string(), l2_gas_value);
     }
+
+    if let Some(l1_data_gas_value) = resource_bounds.remove("l1_data_gas") {
+        resource_bounds.insert("L1_DATA_GAS".to_string(), l1_data_gas_value);
+    }
 }
 
 pub fn deserialize_transaction_json_to_starknet_api_tx(
@@ -34,6 +38,20 @@ pub fn deserialize_transaction_json_to_starknet_api_tx(
 ) -> serde_json::Result<Transaction> {
     let tx_type: String = serde_json::from_value(raw_transaction["type"].clone())?;
     let tx_version: String = serde_json::from_value(raw_transaction["version"].clone())?;
+
+    // rpc_v8 fix (remove redundantly added L1DataGas)
+    let raw_resourcebounds = &raw_transaction["resource_bounds"];
+    if !raw_resourcebounds.is_null()
+        && !raw_resourcebounds["l1_data_gas"].is_null()
+        && raw_resourcebounds["l1_data_gas"]["max_amount"] == "0x0"
+        && !raw_resourcebounds["l2_gas"].is_null()
+        && raw_resourcebounds["l2_gas"]["max_amount"] == "0x0"
+    {
+        raw_transaction["resource_bounds"]
+            .as_object_mut()
+            .expect("should be map of resource bounds")
+            .remove("l1_data_gas");
+    }
 
     match (tx_type.as_str(), tx_version.as_str()) {
         ("INVOKE", "0x0") => {

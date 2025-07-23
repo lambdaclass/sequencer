@@ -5,6 +5,9 @@
 pub mod abi;
 pub mod block;
 pub mod block_hash;
+pub mod class_cache;
+pub mod compression_utils;
+pub mod consensus_transaction;
 pub mod contract_class;
 pub mod core;
 pub mod crypto;
@@ -16,12 +19,14 @@ pub mod execution_utils;
 pub mod hash;
 pub mod rpc_transaction;
 pub mod serde_utils;
+pub mod staking;
 pub mod state;
 #[cfg(any(feature = "testing", test))]
 pub mod test_utils;
 pub mod transaction;
 pub mod transaction_hash;
 pub mod type_utils;
+pub mod versioned_constants_logic;
 
 use std::num::ParseIntError;
 
@@ -45,6 +50,8 @@ pub enum StarknetApiError {
     /// Error when serializing into number.
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError),
+    #[error("Failed to convert the resource hex {0:?} to a felt.")]
+    ResourceHexToFeltConversion(String),
     /// Missing resource type / duplicated resource type.
     #[error("Missing resource type / duplicated resource type; got {0}.")]
     InvalidResourceMappingInitializer(String),
@@ -52,6 +59,8 @@ pub enum StarknetApiError {
     InvalidStarknetVersion(Vec<u8>),
     #[error("NonzeroGasPrice cannot be zero.")]
     ZeroGasPrice,
+    #[error("Gas price conversion error: {0}")]
+    GasPriceConversionError(String),
     #[error(
         "Sierra program length must be > 0 for Cairo1, and == 0 for Cairo0. Got: \
          {sierra_program_length:?} for contract class version {contract_class_version:?}"
@@ -65,6 +74,10 @@ pub enum StarknetApiError {
          version {cairo_version:?}.", **declare_version
     )]
     ContractClassVersionMismatch { declare_version: TransactionVersion, cairo_version: u64 },
+    #[error("Failed to parse Sierra version: {0}")]
+    ParseSierraVersionError(String),
+    #[error("Unsupported transaction type: {0}")]
+    UnknownTransactionType(String),
 }
 
 pub type StarknetApiResult<T> = Result<T, StarknetApiError>;

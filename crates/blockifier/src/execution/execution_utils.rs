@@ -18,18 +18,19 @@ use cairo_vm::vm::vm_core::VirtualMachine;
 use num_bigint::BigUint;
 use starknet_api::core::ClassHash;
 use starknet_api::deprecated_contract_class::Program as DeprecatedProgram;
+use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::Calldata;
 use starknet_types_core::felt::Felt;
 
 use crate::execution::call_info::{CallExecution, CallInfo, Retdata};
-use crate::execution::contract_class::{RunnableContractClass, TrackedResource};
+use crate::execution::contract_class::{RunnableCompiledClass, TrackedResource};
 use crate::execution::entry_point::{
     execute_constructor_entry_point,
-    CallEntryPoint,
     ConstructorContext,
     ConstructorEntryPointExecutionResult,
     EntryPointExecutionContext,
     EntryPointExecutionResult,
+    ExecutableCallEntryPoint,
 };
 use crate::execution::errors::{
     ConstructorEntryPointExecutionError,
@@ -40,10 +41,15 @@ use crate::execution::errors::{
 #[cfg(feature = "cairo_native")]
 use crate::execution::native::entry_point_execution as native_entry_point_execution;
 use crate::execution::stack_trace::{extract_trailing_cairo1_revert_trace, Cairo1RevertHeader};
-use crate::execution::syscalls::hint_processor::ENTRYPOINT_NOT_FOUND_ERROR;
+use crate::execution::syscalls::hint_processor::{ENTRYPOINT_NOT_FOUND_ERROR, OUT_OF_GAS_ERROR};
 use crate::execution::{deprecated_entry_point_execution, entry_point_execution};
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
+use crate::utils::u64_from_usize;
+
+#[cfg(test)]
+#[path = "execution_utils_test.rs"]
+pub mod test;
 
 pub type Args = Vec<CairoArg>;
 
@@ -51,39 +57,23 @@ pub const SEGMENT_ARENA_BUILTIN_SIZE: usize = 3;
 
 /// A wrapper for execute_entry_point_call that performs pre and post-processing.
 pub fn execute_entry_point_call_wrapper(
-    mut call: CallEntryPoint,
-    contract_class: RunnableContractClass,
+    mut call: ExecutableCallEntryPoint,
+    compiled_class: RunnableCompiledClass,
     state: &mut dyn State,
     context: &mut EntryPointExecutionContext,
     remaining_gas: &mut u64,
 ) -> EntryPointExecutionResult<CallInfo> {
-    let contract_tracked_resource = contract_class.tracked_resource(
-        &context.versioned_constants().min_compiler_version_for_sierra_gas,
-        context.tx_context.tx_info.gas_mode(),
-    );
+    let current_tracked_resource = compiled_class.get_current_tracked_resource(context);
+    if current_tracked_resource == TrackedResource::CairoSteps {
+        // Override the initial gas with a high value so it won't limit the run.
+        call.initial_gas = context.versioned_constants().infinite_gas_for_vm_mode();
+    }
+    let orig_call = call.clone();
     // Note: no return statements (explicit or implicit) should be added between the push and the
     // pop commands.
-
-    // Once we ran with CairoSteps, we will continue to run using it for all nested calls.
-    match context.tracked_resource_stack.last() {
-        Some(TrackedResource::CairoSteps) => {
-            context.tracked_resource_stack.push(TrackedResource::CairoSteps)
-        }
-        Some(TrackedResource::SierraGas) => {
-            if contract_tracked_resource == TrackedResource::CairoSteps {
-                // Switching from SierraGas to CairoSteps: override initial_gas with a high value so
-                // it won't limit the run.
-                call.initial_gas = context.versioned_constants().default_initial_gas_cost();
-            };
-            context.tracked_resource_stack.push(contract_tracked_resource)
-        }
-        None => context.tracked_resource_stack.push(contract_tracked_resource),
-    };
-
-    let orig_call = call.clone();
-    let res = execute_entry_point_call(call, contract_class, state, context);
-    let current_tracked_resource =
-        context.tracked_resource_stack.pop().expect("Unexpected empty tracked resource.");
+    context.tracked_resource_stack.push(current_tracked_resource);
+    let res = execute_entry_point_call(call, compiled_class, state, context);
+    context.tracked_resource_stack.pop().expect("Unexpected empty tracked resource.");
 
     match res {
         Ok(call_info) => {
@@ -99,58 +89,66 @@ pub fn execute_entry_point_call_wrapper(
             update_remaining_gas(remaining_gas, &call_info);
             Ok(call_info)
         }
-        Err(EntryPointExecutionError::PreExecutionError(
-            PreExecutionError::EntryPointNotFound(_)
-            | PreExecutionError::NoEntryPointOfTypeFound(_),
-        )) if context.versioned_constants().enable_reverts => Ok(CallInfo {
-            call: orig_call,
-            execution: CallExecution {
-                retdata: Retdata(vec![Felt::from_hex(ENTRYPOINT_NOT_FOUND_ERROR).unwrap()]),
-                failed: true,
-                gas_consumed: 0,
-                ..CallExecution::default()
-            },
-            tracked_resource: current_tracked_resource,
-            ..CallInfo::default()
-        }),
+        Err(EntryPointExecutionError::PreExecutionError(err))
+            if context.versioned_constants().enable_reverts =>
+        {
+            let error_code = match err {
+                PreExecutionError::EntryPointNotFound(_)
+                | PreExecutionError::NoEntryPointOfTypeFound(_) => ENTRYPOINT_NOT_FOUND_ERROR,
+                PreExecutionError::InsufficientEntryPointGas => OUT_OF_GAS_ERROR,
+                _ => return Err(err.into()),
+            };
+            Ok(CallInfo {
+                call: orig_call.into(),
+                execution: CallExecution {
+                    retdata: Retdata(vec![Felt::from_hex(error_code).unwrap()]),
+                    // FIXME: Should we get the `is_cairo_native` bool?
+                    failed: true,
+                    gas_consumed: 0,
+                    ..CallExecution::default()
+                },
+                tracked_resource: current_tracked_resource,
+                ..CallInfo::default()
+            })
+        }
         Err(err) => Err(err),
     }
 }
 
 /// Executes a specific call to a contract entry point and returns its output.
 pub fn execute_entry_point_call(
-    call: CallEntryPoint,
-    contract_class: RunnableContractClass,
+    call: ExecutableCallEntryPoint,
+    compiled_class: RunnableCompiledClass,
     state: &mut dyn State,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
-    match contract_class {
-        RunnableContractClass::V0(contract_class) => {
+    match compiled_class {
+        RunnableCompiledClass::V0(compiled_class) => {
             deprecated_entry_point_execution::execute_entry_point_call(
                 call,
-                contract_class,
+                compiled_class,
                 state,
                 context,
             )
         }
-        RunnableContractClass::V1(contract_class) => {
-            entry_point_execution::execute_entry_point_call(call, contract_class, state, context)
+        RunnableCompiledClass::V1(compiled_class) => {
+            entry_point_execution::execute_entry_point_call(call, compiled_class, state, context)
         }
         #[cfg(feature = "cairo_native")]
-        RunnableContractClass::V1Native(contract_class) => {
+        RunnableCompiledClass::V1Native(compiled_class) => {
             if context.tracked_resource_stack.last() == Some(&TrackedResource::CairoSteps) {
                 // We cannot run native with cairo steps as the tracked resources (it's a vm
                 // resouorce).
                 entry_point_execution::execute_entry_point_call(
                     call,
-                    contract_class.casm(),
+                    compiled_class.casm(),
                     state,
                     context,
                 )
             } else {
                 native_entry_point_execution::execute_entry_point_call(
                     call,
-                    contract_class,
+                    compiled_class,
                     state,
                     context,
                 )
@@ -177,6 +175,15 @@ pub fn read_execution_retdata(
     };
 
     Ok(Retdata(felt_range_from_ptr(&runner.vm, Relocatable::try_from(retdata_ptr)?, retdata_size)?))
+}
+
+pub fn relocatable_from_ptr(
+    vm: &VirtualMachine,
+    ptr: &mut Relocatable,
+) -> Result<Relocatable, VirtualMachineError> {
+    let value = vm.get_relocatable(*ptr)?;
+    *ptr = (*ptr + 1)?;
+    Ok(value)
 }
 
 pub fn felt_from_ptr(
@@ -359,4 +366,121 @@ pub fn poseidon_hash_many_cost(data_length: usize) -> ExecutionResources {
         n_memory_holes: 0,
         builtin_instance_counter: HashMap::from([(BuiltinName::poseidon, data_length / 2 + 1)]),
     }
+}
+
+// Constants that define how felts are encoded into u32s for BLAKE hashing.
+mod blake_encoding {
+    /// Number of u32s in a Blake input message.
+    pub const N_U32S_MESSAGE: usize = 16;
+
+    /// Number of u32s a felt is encoded into.
+    pub const N_U32S_BIG_FELT: usize = 8;
+    pub const N_U32S_SMALL_FELT: usize = 2;
+}
+
+// Constants used for estimating the cost of BLAKE hashing inside Starknet OS.
+// These values are based on empirical measurement by running
+// `encode_felt252_data_and_calc_blake_hash` on various combinations of big and small felts.
+mod blake_estimation {
+    // Per-felt step cost (measured).
+    pub const STEPS_BIG_FELT: usize = 45;
+    pub const STEPS_SMALL_FELT: usize = 15;
+
+    // One-time overhead.
+    // Overhead when input fills a full Blake message (16 u32s).
+    pub const BASE_STEPS_FULL_MSG: usize = 217;
+    // Overhead when input results in a partial message (remainder < 16 u32s).
+    pub const BASE_STEPS_PARTIAL_MSG: usize = 195;
+    // Extra steps per 2-u32 remainder in partial messages.
+    pub const STEPS_PER_2_U32_REMINDER: usize = 3;
+
+    // BLAKE opcode gas cost in Stwo.
+    // TODO(AvivG): Replace with actual cost when known.
+    pub const BLAKE_OPCODE_GAS: usize = 0;
+}
+
+/// Calculates the total number of u32s required to encode the given number of big and small felts.
+/// Big felts encode to 8 u32s each, small felts encode to 2 u32s each.
+fn total_u32s_from_felts(n_big_felts: usize, n_small_felts: usize) -> usize {
+    let big_u32s = n_big_felts
+        .checked_mul(blake_encoding::N_U32S_BIG_FELT)
+        .expect("Overflow computing big felts u32s");
+    let small_u32s = n_small_felts
+        .checked_mul(blake_encoding::N_U32S_SMALL_FELT)
+        .expect("Overflow computing small felts u32s");
+    big_u32s.checked_add(small_u32s).expect("Overflow computing total u32s")
+}
+
+fn base_steps_for_blake_hash(n_u32s: usize) -> usize {
+    let rem_u32s = n_u32s % blake_encoding::N_U32S_MESSAGE;
+    if rem_u32s == 0 {
+        blake_estimation::BASE_STEPS_FULL_MSG
+    } else {
+        // This computation is based on running blake2s with different inputs.
+        // Note: all inputs expand to an even number of u32s --> `rem_u32s` is always even.
+        blake_estimation::BASE_STEPS_PARTIAL_MSG
+            + (rem_u32s / 2) * blake_estimation::STEPS_PER_2_U32_REMINDER
+    }
+}
+
+fn felts_steps(n_big_felts: usize, n_small_felts: usize) -> usize {
+    let big_steps = n_big_felts
+        .checked_mul(blake_estimation::STEPS_BIG_FELT)
+        .expect("Overflow computing big felt steps");
+    let small_steps = n_small_felts
+        .checked_mul(blake_estimation::STEPS_SMALL_FELT)
+        .expect("Overflow computing small felt steps");
+    big_steps.checked_add(small_steps).expect("Overflow computing total felt steps")
+}
+
+/// Estimates the number of VM steps needed to hash the given felts with Blake in Starknet OS.
+/// Each small felt unpacks into 2 u32s, and each big felt into 8 u32s.
+/// Adds a base cost depending on whether the total fits exactly into full 16-u32 messages.
+fn compute_blake_hash_steps(n_big_felts: usize, n_small_felts: usize) -> usize {
+    let total_u32s = total_u32s_from_felts(n_big_felts, n_small_felts);
+    let base_steps = base_steps_for_blake_hash(total_u32s);
+    let felt_steps = felts_steps(n_big_felts, n_small_felts);
+
+    base_steps.checked_add(felt_steps).expect("Overflow computing total Blake hash steps")
+}
+
+/// Returns the number of BLAKE opcodes needed to hash the given felts.
+/// Each BLAKE opcode processes 16 u32s (partial messages are padded).
+fn count_blake_opcode(n_big_felts: usize, n_small_felts: usize) -> usize {
+    // Count the total number of u32s to be hashed.
+    let total_u32s = total_u32s_from_felts(n_big_felts, n_small_felts);
+    total_u32s.div_ceil(blake_encoding::N_U32S_MESSAGE)
+}
+
+/// Estimates the VM resources for `encode_felt252_data_and_calc_blake_hash` in the Starknet OS.
+/// Assumes small felts unpack into 2 u32s and big felts into 8 u32s, matching the logic of the OS
+/// function being estimated.
+/// TODO(AvivG): Consider evaluating the cost of `encode_felt252_to_u32s` and `blake_with_opcode`
+/// separately for better granularity.
+pub fn cost_of_encode_felt252_data_and_calc_blake_hash<F>(
+    n_big_felts: usize,
+    n_small_felts: usize,
+    resources_to_gas_fn: F,
+) -> GasAmount
+where
+    F: Fn(&ExecutionResources) -> GasAmount,
+{
+    let n_steps = compute_blake_hash_steps(n_big_felts, n_small_felts);
+    let n_felts =
+        n_big_felts.checked_add(n_small_felts).expect("Overflow computing total number of felts");
+
+    // One `range_check` per input felt to validate its size.
+    let builtins = HashMap::from([(BuiltinName::range_check, n_felts)]);
+    let resources =
+        ExecutionResources { n_steps, n_memory_holes: 0, builtin_instance_counter: builtins };
+    let gas = resources_to_gas_fn(&resources);
+
+    let blake_op_count = count_blake_opcode(n_big_felts, n_small_felts);
+    let blake_op_gas = blake_op_count
+        .checked_mul(blake_estimation::BLAKE_OPCODE_GAS)
+        .map(u64_from_usize)
+        .map(GasAmount)
+        .expect("Overflow computing Blake opcode gas.");
+
+    gas.checked_add_panic_on_overflow(blake_op_gas)
 }

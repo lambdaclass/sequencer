@@ -1,17 +1,20 @@
+#[cfg(test)]
+#[path = "executable_transaction_test.rs"]
+mod executable_transaction_test;
+
+use std::str::FromStr;
+
+use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use serde::{Deserialize, Serialize};
+use starknet_types_core::felt::Felt;
+use strum_macros::EnumIter;
+use thiserror::Error;
 
 use crate::contract_class::{ClassInfo, ContractClass};
-use crate::core::{calculate_contract_address, ChainId, ClassHash, ContractAddress, Nonce};
+use crate::core::{ChainId, ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use crate::data_availability::DataAvailabilityMode;
-use crate::rpc_transaction::{
-    RpcDeployAccountTransaction,
-    RpcDeployAccountTransactionV3,
-    RpcInvokeTransaction,
-    RpcInvokeTransactionV3,
-};
 use crate::transaction::fields::{
     AccountDeploymentData,
-    AllResourceBounds,
     Calldata,
     ContractAddressSalt,
     Fee,
@@ -20,7 +23,12 @@ use crate::transaction::fields::{
     TransactionSignature,
     ValidResourceBounds,
 };
-use crate::transaction::{TransactionHash, TransactionHasher, TransactionVersion};
+use crate::transaction::{
+    CalculateContractAddress,
+    TransactionHash,
+    TransactionHasher,
+    TransactionVersion,
+};
 use crate::StarknetApiError;
 
 macro_rules! implement_inner_tx_getter_calls {
@@ -49,6 +57,47 @@ macro_rules! implement_account_tx_inner_getters {
             }
         })*
     };
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, EnumIter, Eq, Hash, PartialEq, Serialize)]
+pub enum TransactionType {
+    Declare,
+    DeployAccount,
+    InvokeFunction,
+    L1Handler,
+}
+
+impl FromStr for TransactionType {
+    type Err = StarknetApiError;
+
+    fn from_str(tx_type: &str) -> Result<Self, Self::Err> {
+        match tx_type {
+            "Declare" | "DECLARE" => Ok(Self::Declare),
+            "DeployAccount" | "DEPLOY_ACCOUNT" => Ok(Self::DeployAccount),
+            "InvokeFunction" | "INVOKE_FUNCTION" => Ok(Self::InvokeFunction),
+            "L1Handler" | "L1_HANDLER" => Ok(Self::L1Handler),
+            unknown_tx_type => Err(Self::Err::UnknownTransactionType(unknown_tx_type.to_string())),
+        }
+    }
+}
+
+impl std::fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let type_str = match self {
+            Self::Declare => "DECLARE",
+            Self::DeployAccount => "DEPLOY_ACCOUNT",
+            Self::InvokeFunction => "INVOKE_FUNCTION",
+            Self::L1Handler => "L1_HANDLER",
+        };
+        write!(f, "{type_str}")
+    }
+}
+
+impl TransactionType {
+    pub fn tx_type_as_felt(&self) -> Felt {
+        let tx_type_name = self.to_string();
+        Felt::from_bytes_be_slice(tx_type_name.as_bytes())
+    }
 }
 
 /// Represents a paid Starknet transaction.
@@ -90,50 +139,12 @@ impl AccountTransaction {
             AccountTransaction::Invoke(tx_data) => tx_data.tx_hash,
         }
     }
-}
 
-// TODO: add a converter for Declare transactions as well.
-
-impl From<InvokeTransaction> for RpcInvokeTransactionV3 {
-    fn from(tx: InvokeTransaction) -> Self {
-        Self {
-            sender_address: tx.sender_address(),
-            tip: tx.tip(),
-            nonce: tx.nonce(),
-            resource_bounds: match tx.resource_bounds() {
-                ValidResourceBounds::AllResources(all_resource_bounds) => all_resource_bounds,
-                ValidResourceBounds::L1Gas(l1_gas) => {
-                    AllResourceBounds { l1_gas, ..Default::default() }
-                }
-            },
-            signature: tx.signature(),
-            calldata: tx.calldata(),
-            nonce_data_availability_mode: tx.nonce_data_availability_mode(),
-            fee_data_availability_mode: tx.fee_data_availability_mode(),
-            paymaster_data: tx.paymaster_data(),
-            account_deployment_data: tx.account_deployment_data(),
-        }
-    }
-}
-
-impl From<DeployAccountTransaction> for RpcDeployAccountTransactionV3 {
-    fn from(tx: DeployAccountTransaction) -> Self {
-        Self {
-            class_hash: tx.class_hash(),
-            constructor_calldata: tx.constructor_calldata(),
-            contract_address_salt: tx.contract_address_salt(),
-            nonce: tx.nonce(),
-            signature: tx.signature(),
-            resource_bounds: match tx.resource_bounds() {
-                ValidResourceBounds::AllResources(all_resource_bounds) => all_resource_bounds,
-                ValidResourceBounds::L1Gas(l1_gas) => {
-                    AllResourceBounds { l1_gas, ..Default::default() }
-                }
-            },
-            tip: tx.tip(),
-            nonce_data_availability_mode: tx.nonce_data_availability_mode(),
-            fee_data_availability_mode: tx.fee_data_availability_mode(),
-            paymaster_data: tx.paymaster_data(),
+    pub fn tx_type(&self) -> TransactionType {
+        match self {
+            Self::Declare(_) => TransactionType::Declare,
+            Self::DeployAccount(_) => TransactionType::DeployAccount,
+            Self::Invoke(_) => TransactionType::InvokeFunction,
         }
     }
 }
@@ -152,7 +163,16 @@ impl DeclareTransaction {
         (nonce, Nonce),
         (sender_address, ContractAddress),
         (signature, TransactionSignature),
-        (version, TransactionVersion)
+        (version, TransactionVersion),
+        // compiled_class_hash is only supported in V2 and V3, otherwise the getter panics.
+        (compiled_class_hash, CompiledClassHash),
+        // The following fields are only supported in V3, otherwise the getter panics.
+        (tip, Tip),
+        (nonce_data_availability_mode, DataAvailabilityMode),
+        (fee_data_availability_mode, DataAvailabilityMode),
+        (paymaster_data, PaymasterData),
+        (account_deployment_data, AccountDeploymentData),
+        (resource_bounds, ValidResourceBounds)
     );
 
     pub fn create(
@@ -168,26 +188,48 @@ impl DeclareTransaction {
         Ok(Self { tx: declare_tx, tx_hash, class_info })
     }
 
-    /// Validates that the compiled class hash of the compiled contract class matches the supplied
-    /// compiled class hash.
-    /// Relevant only for version 3 transactions.
-    pub fn validate_compiled_class_hash(&self) -> bool {
-        let supplied_compiled_class_hash = match &self.tx {
-            crate::transaction::DeclareTransaction::V3(tx) => tx.compiled_class_hash,
-            crate::transaction::DeclareTransaction::V2(tx) => tx.compiled_class_hash,
-            crate::transaction::DeclareTransaction::V1(_)
-            | crate::transaction::DeclareTransaction::V0(_) => return true,
-        };
-
-        let contract_class = &self.class_info.contract_class;
-        let compiled_class_hash = contract_class.compiled_class_hash();
-
-        compiled_class_hash == supplied_compiled_class_hash
-    }
-
     pub fn contract_class(&self) -> ContractClass {
         self.class_info.contract_class.clone()
     }
+
+    /// Casm contract class exists only for contract class V1, for version V0 the getter panics.
+    pub fn casm_contract_class(&self) -> &CasmContractClass {
+        let ContractClass::V1(versioned_casm) = &self.class_info.contract_class else {
+            panic!("Contract class version must be V1.")
+        };
+        &versioned_casm.0
+    }
+
+    // Returns whether the declare transaction is for bootstrapping.
+    // In this case, no account-related actions should be made besides the declaration.
+    pub fn is_bootstrap_declare(&self, charge_fee: bool) -> bool {
+        if let crate::transaction::DeclareTransaction::V3(tx) = &self.tx {
+            return tx.sender_address == Self::bootstrap_address()
+                && tx.nonce == Nonce(Felt::ZERO)
+                && !charge_fee;
+        }
+        false
+    }
+
+    /// Returns the address of the bootstrap contract.
+    /// Declare transactions can be sent from this contract with no validation, fee or nonce
+    /// change. This is used for starting a new Starknet system.
+    pub fn bootstrap_address() -> ContractAddress {
+        // A felt representation of the string 'BOOTSTRAP'.
+        ContractAddress::from(0x424f4f545354524150_u128)
+    }
+}
+
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ValidateCompiledClassHashError {
+    #[error(
+        "Computed compiled class hash: {computed_class_hash} does not match the given value: \
+         {supplied_class_hash}."
+    )]
+    CompiledClassHashMismatch {
+        computed_class_hash: CompiledClassHash,
+        supplied_class_hash: CompiledClassHash,
+    },
 }
 
 /// Validates that the Declare transaction version is compatible with the Cairo contract version.
@@ -239,23 +281,10 @@ impl DeployAccountTransaction {
         deploy_account_tx: crate::transaction::DeployAccountTransaction,
         chain_id: &ChainId,
     ) -> Result<Self, StarknetApiError> {
-        let contract_address = calculate_contract_address(
-            deploy_account_tx.contract_address_salt(),
-            deploy_account_tx.class_hash(),
-            &deploy_account_tx.constructor_calldata(),
-            ContractAddress::default(),
-        )?;
+        let contract_address = deploy_account_tx.calculate_contract_address()?;
         let tx_hash =
             deploy_account_tx.calculate_transaction_hash(chain_id, &deploy_account_tx.version())?;
         Ok(Self { tx: deploy_account_tx, tx_hash, contract_address })
-    }
-
-    pub fn from_rpc_tx(
-        rpc_tx: RpcDeployAccountTransaction,
-        chain_id: &ChainId,
-    ) -> Result<Self, StarknetApiError> {
-        let deploy_account_tx: crate::transaction::DeployAccountTransaction = rpc_tx.into();
-        Self::create(deploy_account_tx, chain_id)
     }
 }
 
@@ -292,17 +321,9 @@ impl InvokeTransaction {
         let tx_hash = invoke_tx.calculate_transaction_hash(chain_id, &invoke_tx.version())?;
         Ok(Self { tx: invoke_tx, tx_hash })
     }
-
-    pub fn from_rpc_tx(
-        rpc_tx: RpcInvokeTransaction,
-        chain_id: &ChainId,
-    ) -> Result<Self, StarknetApiError> {
-        let invoke_tx: crate::transaction::InvokeTransaction = rpc_tx.into();
-        Self::create(invoke_tx, chain_id)
-    }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Hash)]
 pub struct L1HandlerTransaction {
     pub tx: crate::transaction::L1HandlerTransaction,
     pub tx_hash: TransactionHash,
@@ -310,12 +331,24 @@ pub struct L1HandlerTransaction {
 }
 
 impl L1HandlerTransaction {
+    pub const L1_HANDLER_TYPE_NAME: &str = "L1_HANDLER";
+
+    pub fn create(
+        raw_tx: crate::transaction::L1HandlerTransaction,
+        chain_id: &ChainId,
+        paid_fee_on_l1: Fee,
+    ) -> Result<L1HandlerTransaction, StarknetApiError> {
+        let tx_hash = raw_tx.calculate_transaction_hash(chain_id, &raw_tx.version)?;
+        Ok(Self { tx: raw_tx, tx_hash, paid_fee_on_l1 })
+    }
+
     pub fn payload_size(&self) -> usize {
         // The calldata includes the "from" field, which is not a part of the payload.
         self.tx.calldata.0.len() - 1
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Transaction {
     Account(AccountTransaction),
@@ -325,8 +358,29 @@ pub enum Transaction {
 impl Transaction {
     pub fn tx_hash(&self) -> TransactionHash {
         match self {
-            Transaction::Account(tx) => tx.tx_hash(),
-            Transaction::L1Handler(tx) => tx.tx_hash,
+            Self::Account(tx) => tx.tx_hash(),
+            Self::L1Handler(tx) => tx.tx_hash,
+        }
+    }
+
+    pub fn tx_type(&self) -> TransactionType {
+        match self {
+            Self::Account(account_tx) => account_tx.tx_type(),
+            Self::L1Handler(_) => TransactionType::L1Handler,
+        }
+    }
+
+    pub fn version(&self) -> TransactionVersion {
+        match self {
+            Self::Account(account_tx) => account_tx.version(),
+            Self::L1Handler(l1_handler_tx) => l1_handler_tx.tx.version,
+        }
+    }
+
+    pub fn nonce(&self) -> Nonce {
+        match self {
+            Self::Account(account_tx) => account_tx.nonce(),
+            Self::L1Handler(l1_handler_tx) => l1_handler_tx.tx.nonce,
         }
     }
 }

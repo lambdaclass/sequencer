@@ -7,63 +7,45 @@ on:
       - reopened
       - synchronize
     paths:
-      - 'Cargo.toml'
       - '.github/workflows/blockifier_compiled_cairo.yml'
-      - 'crates/blockifier/feature_contracts/**'
-      - 'crates/blockifier/src/test_utils/cairo_compile.rs'
-      - 'crates/blockifier/tests/feature_contracts_compatibility_test.rs'
-      - 'crates/blockifier/tests/requirements.txt'
+      - 'crates/apollo_compile_to_casm/src/constants.rs' # Contains the Cairo1 compiler version.
+      - 'crates/apollo_infra_utils/src/cairo0_compiler.rs' # Contains the Cairo0 compiler version.
+      - 'crates/blockifier_test_utils/**'
       - 'scripts/dependencies.sh'
 
+env:
+  RUSTFLAGS: "-D warnings -C link-arg=-fuse-ld=lld"
+
 # On PR events, cancel existing CI runs on this same PR for this workflow.
+# Also, create different concurrency groups for different pushed commits, on push events.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.job }}
+  group: >
+    ${{ github.workflow }}-
+    ${{ github.ref }}-
+    ${{ github.event_name == 'pull_request' && 'PR' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify_cairo_file_dependencies:
-    runs-on: starkware-ubuntu-20-04-medium
+    runs-on: starkware-ubuntu-24.04-medium
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       # Setup pypy and link to the location expected by .cargo/config.toml.
       - uses: actions/setup-python@v5
         id: setup-pypy
         with:
           python-version: 'pypy3.9'
+          cache: 'pip'
       - run: ln -s '${{ steps.setup-pypy.outputs.python-path }}' /usr/local/bin/pypy3.9
       - env:
           LD_LIBRARY_PATH: ${{ env.Python3_ROOT_DIR }}/bin
         run: echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> $GITHUB_ENV
-
-      # Checkout sequencer into a dedicated directory - technical requirement in order to be able to checkout `cairo` in a sibling directory.
-      - name: checkout sequencer into `sequencer` directory.
-        uses: actions/checkout@v4
-        with:
-          repository: 'starkware-libs/sequencer'
-          path: 'sequencer'
-
-      - name: checkout cairo1 repo in order to compile cairo1 contracts.
-        uses: actions/checkout@v4
-        with:
-          repository: 'starkware-libs/cairo'
-          fetch-depth: 0
-          fetch-tags: true
-          path: 'cairo'
-
-      - name: install toolchain for legacy contract compilation (old compiler tag)
-        uses: actions-rs/toolchain@master
-        with:
-          toolchain: nightly-2023-07-05
-
-      - name: install toolchain for cairo steps test contract compilation (old compiler tag)
-        uses: actions-rs/toolchain@master
-        with:
-          toolchain: nightly-2024-04-29
+      - run: pip install -r crates/blockifier_test_utils/resources/blockifier-test-utils-requirements.txt
 
       - name: Verify cairo contract recompilation (both cairo versions).
         run:
-          cd sequencer &&
-          pip install -r crates/blockifier/tests/requirements.txt &&
-          cargo test -p blockifier --test feature_contracts_compatibility_test --features testing -- --include-ignored
+          cargo test -p blockifier_test_utils --test feature_contracts_compatibility_test -- --include-ignored --nocapture

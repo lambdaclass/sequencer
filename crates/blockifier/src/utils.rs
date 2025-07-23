@@ -1,5 +1,10 @@
 use std::collections::HashMap;
 
+use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
+use starknet_api::core::{ClassHash, CompiledClassHash};
+
+use crate::blockifier_versioned_constants::{BaseGasCosts, BuiltinGasCosts};
+use crate::state::state_api::{StateReader, StateResult};
 use crate::transaction::errors::NumericConversionError;
 
 #[cfg(test)]
@@ -48,6 +53,7 @@ pub const fn const_max(a: u128, b: u128) -> u128 {
     [a, b][(a < b) as usize]
 }
 
+// TODO(Meshi): Move this code to starknet API.
 /// Conversion from u64 to usize. This conversion should only be used if the value came from a
 /// usize.
 pub fn usize_from_u64(val: u64) -> Result<usize, NumericConversionError> {
@@ -58,4 +64,60 @@ pub fn usize_from_u64(val: u64) -> Result<usize, NumericConversionError> {
 /// of address space.
 pub fn u64_from_usize(val: usize) -> u64 {
     val.try_into().expect("Conversion from usize to u64 should not fail.")
+}
+
+pub fn get_gas_cost_from_vm_resources(
+    execution_resources: &ExecutionResources,
+    base_costs: &BaseGasCosts,
+    builtin_costs: &BuiltinGasCosts,
+) -> u64 {
+    let n_steps = u64_from_usize(execution_resources.n_steps);
+    let n_memory_holes = u64_from_usize(execution_resources.n_memory_holes);
+    let total_builtin_gas_cost: u64 = execution_resources
+        .builtin_instance_counter
+        .iter()
+        .map(|(builtin, amount)| {
+            let builtin_cost = builtin_costs
+                .get_builtin_gas_cost(builtin)
+                .unwrap_or_else(|err| panic!("Failed to get gas cost: {err}"));
+            builtin_cost * u64_from_usize(*amount)
+        })
+        .sum();
+
+    n_steps * base_costs.step_gas_cost
+        + n_memory_holes * base_costs.memory_hole_gas_cost
+        + total_builtin_gas_cost
+}
+
+/// Adds values from `source` into `dest` by key.
+/// - If a key exists in both maps, the values are combined using `CheckedAdd`.
+/// - If a key exists only in `source`, it is inserted into `dest`
+pub fn add_maps<K, V>(dest: &mut HashMap<K, V>, source: &HashMap<K, V>)
+where
+    K: Clone + Eq + std::hash::Hash,
+    V: Clone + num_traits::CheckedAdd + std::fmt::Debug,
+{
+    for (key, value) in source {
+        dest.entry(key.clone())
+            .and_modify(|existing| {
+                *existing = existing.checked_add(value).unwrap_or_else(|| {
+                    panic!("add counters: overflow when adding {value:?} to {existing:?}")
+                });
+            })
+            .or_insert_with(|| value.clone());
+    }
+}
+
+// TODO(Meshi): Delete this function.
+pub fn should_migrate(_state_reader: &impl StateReader, _class_hash: ClassHash) -> bool {
+    false
+}
+
+// TODO(Meshi): Remove default implementation.
+// Returns the compiled class hash v2 of the given class hash.
+pub fn get_compiled_class_hash_v2(
+    _state_reader: &impl StateReader,
+    _class_hash: ClassHash,
+) -> StateResult<CompiledClassHash> {
+    Ok(CompiledClassHash::default())
 }

@@ -2,12 +2,18 @@
 #[path = "block_test.rs"]
 mod block_test;
 
+use std::fmt::Display;
+use std::ops::Deref;
+
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use size_of::SizeOf;
 use starknet_types_core::felt::Felt;
 use starknet_types_core::hash::{Poseidon, StarkHash as CoreStarkHash};
+use strum_macros::EnumIter;
 
 use crate::core::{
+    ContractAddress,
     EventCommitment,
     GlobalRoot,
     ReceiptCommitment,
@@ -25,11 +31,19 @@ use crate::transaction::fields::Fee;
 use crate::transaction::{Transaction, TransactionHash, TransactionOutput};
 use crate::StarknetApiError;
 
+// These prices are in WEI. If we don't set them high enough the gas price when converted
+// to FRI will be 0 (not allowed).
+pub const TEMP_ETH_GAS_FEE_IN_WEI: u128 = u128::pow(10, 9); // 1 GWei.
+pub const TEMP_ETH_BLOB_GAS_FEE_IN_WEI: u128 = u128::pow(10, 8); // 0.1 GWei.
+
+pub const WEI_PER_ETH: u128 = u128::pow(10, 18);
+
 /// A block.
 #[derive(Debug, Default, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Block {
-    // TODO: Consider renaming to BlockWithCommitments, for the header use BlockHeaderWithoutHash
-    // instead of BlockHeader, and add BlockHeaderCommitments and BlockHash fields.
+    // TODO(YoavGr): Consider renaming to BlockWithCommitments, for the header use
+    // BlockHeaderWithoutHash instead of BlockHeader, and add BlockHeaderCommitments and
+    // BlockHash fields.
     pub header: BlockHeader,
     pub body: BlockBody,
 }
@@ -96,7 +110,11 @@ starknet_version_enum! {
     (V0_13_2_1, 0, 13, 2, 1),
     (V0_13_3, 0, 13, 3),
     (V0_13_4, 0, 13, 4),
-    V0_13_4
+    (V0_13_5, 0, 13, 5),
+    (V0_13_6, 0, 13, 6),
+    (V0_14_0, 0, 14, 0),
+    (V0_15_0, 0, 15, 0),
+    V0_15_0
 }
 
 impl Default for StarknetVersion {
@@ -166,13 +184,13 @@ impl<'de> Deserialize<'de> for StarknetVersion {
 /// The header of a [Block](`crate::block::Block`).
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
 pub struct BlockHeader {
-    // TODO: Consider removing the block hash from the header (note it can be computed from
+    // TODO(Gilad): Consider removing the block hash from the header (note it can be computed from
     // the rest of the fields.
     pub block_hash: BlockHash,
     pub block_header_without_hash: BlockHeaderWithoutHash,
     // The optional fields below are not included in older versions of the block.
     // Currently they are not included in any RPC spec, so we skip their serialization.
-    // TODO: Once all environments support these fields, remove the Option (make sure to
+    // TODO(Yair): Once all environments support these fields, remove the Option (make sure to
     // update/resync any storage is missing the data).
     #[serde(skip_serializing)]
     pub state_diff_commitment: Option<StateDiffCommitment>,
@@ -198,6 +216,8 @@ pub struct BlockHeaderWithoutHash {
     pub l1_gas_price: GasPricePerToken,
     pub l1_data_gas_price: GasPricePerToken,
     pub l2_gas_price: GasPricePerToken,
+    pub l2_gas_consumed: GasAmount,
+    pub next_l2_gas_price: GasPrice,
     pub state_root: GlobalRoot,
     pub sequencer: SequencerContractAddress,
     pub timestamp: BlockTimestamp,
@@ -245,6 +265,7 @@ pub enum BlockStatus {
     PartialOrd,
     Ord,
     derive_more::Display,
+    derive_more::Deref,
 )]
 pub struct BlockHash(pub StarkHash);
 
@@ -325,9 +346,36 @@ pub struct GasPricePerToken {
     Serialize,
     PartialOrd,
     Ord,
+    SizeOf,
 )]
 #[serde(from = "PrefixedBytesAsHex<16_usize>", into = "PrefixedBytesAsHex<16_usize>")]
 pub struct GasPrice(pub u128);
+
+impl GasPrice {
+    pub fn wei_to_fri(self, eth_to_fri_rate: u128) -> Result<GasPrice, StarknetApiError> {
+        // We use integer division since wei * eth_to_fri_rate is expected to be high enough to not
+        // cause too much precision loss.
+        Ok(self
+            .checked_mul_u128(eth_to_fri_rate)
+            .ok_or_else(|| {
+                StarknetApiError::GasPriceConversionError("Gas price is too high".to_string())
+            })?
+            .checked_div(WEI_PER_ETH)
+            .expect("WEI_PER_ETH must be non-zero"))
+    }
+    pub fn fri_to_wei(self, eth_to_fri_rate: u128) -> Result<GasPrice, StarknetApiError> {
+        self.checked_mul_u128(WEI_PER_ETH)
+            .ok_or_else(|| {
+                StarknetApiError::GasPriceConversionError("Gas price is too high".to_string())
+            })?
+            .checked_div(eth_to_fri_rate)
+            .ok_or_else(|| {
+                StarknetApiError::GasPriceConversionError(
+                    "FRI to ETH rate must be non-zero".to_string(),
+                )
+            })
+    }
+}
 
 macro_rules! impl_from_uint_for_gas_price {
     ($($uint:ty),*) => {
@@ -367,14 +415,32 @@ impl GasPrice {
         Fee(self.0.saturating_mul(rhs.0 as u128))
     }
 
+    pub fn saturating_add(self, rhs: Self) -> Self {
+        Self(self.0.saturating_add(rhs.0))
+    }
+
     pub fn checked_mul(self, rhs: GasAmount) -> Option<Fee> {
         self.0.checked_mul(u128::from(rhs.0)).map(Fee)
+    }
+
+    pub fn checked_mul_u128(self, rhs: u128) -> Option<GasPrice> {
+        self.0.checked_mul(rhs).map(Self)
+    }
+
+    pub fn checked_add(self, rhs: Self) -> Option<Self> {
+        self.0.checked_add(rhs.0).map(Self)
+    }
+
+    pub fn checked_div(self, rhs: u128) -> Option<Self> {
+        self.0.checked_div(rhs).map(Self)
     }
 }
 
 /// Utility struct representing a non-zero gas price. Useful when a gas amount must be computed by
 /// taking a fee amount and dividing by the gas price.
-#[derive(Copy, Clone, Debug, Deserialize, Serialize, derive_more::Display)]
+#[derive(
+    Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize, PartialOrd, Ord, derive_more::Display,
+)]
 pub struct NonzeroGasPrice(GasPrice);
 
 impl NonzeroGasPrice {
@@ -393,6 +459,12 @@ impl NonzeroGasPrice {
 
     pub const fn saturating_mul(self, rhs: GasAmount) -> Fee {
         self.get().saturating_mul(rhs)
+    }
+
+    pub fn checked_add(self, rhs: GasPrice) -> Option<Self> {
+        self.get()
+            .checked_add(rhs)
+            .map(|x| Self::new(x).expect("Add GasPrice should not result in zero"))
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -437,11 +509,46 @@ macro_rules! impl_try_from_uint_for_nonzero_gas_price {
 
 impl_try_from_uint_for_nonzero_gas_price!(u8, u16, u32, u64, u128);
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+// TODO(Arni): Remove derive of Default. Gas prices should always be set.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GasPriceVector {
     pub l1_gas_price: NonzeroGasPrice,
     pub l1_data_gas_price: NonzeroGasPrice,
     pub l2_gas_price: NonzeroGasPrice,
+}
+
+#[derive(Clone, Copy, Hash, EnumIter, Eq, PartialEq)]
+pub enum FeeType {
+    Strk,
+    Eth,
+}
+
+// TODO(Arni): Remove derive of Default. Gas prices should always be set.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GasPrices {
+    pub eth_gas_prices: GasPriceVector,  // In wei.
+    pub strk_gas_prices: GasPriceVector, // In fri.
+}
+
+impl GasPrices {
+    pub fn l1_gas_price(&self, fee_type: &FeeType) -> NonzeroGasPrice {
+        self.gas_price_vector(fee_type).l1_gas_price
+    }
+
+    pub fn l1_data_gas_price(&self, fee_type: &FeeType) -> NonzeroGasPrice {
+        self.gas_price_vector(fee_type).l1_data_gas_price
+    }
+
+    pub fn l2_gas_price(&self, fee_type: &FeeType) -> NonzeroGasPrice {
+        self.gas_price_vector(fee_type).l2_gas_price
+    }
+
+    pub fn gas_price_vector(&self, fee_type: &FeeType) -> &GasPriceVector {
+        match fee_type {
+            FeeType::Strk => &self.strk_gas_prices,
+            FeeType::Eth => &self.eth_gas_prices,
+        }
+    }
 }
 
 /// The timestamp of a [Block](`crate::block::Block`).
@@ -450,11 +557,50 @@ pub struct GasPriceVector {
 )]
 pub struct BlockTimestamp(pub u64);
 
+impl BlockTimestamp {
+    pub fn saturating_add(self, rhs: &u64) -> Self {
+        Self(self.0.saturating_add(*rhs))
+    }
+
+    pub fn saturating_sub(self, rhs: &u64) -> Self {
+        Self(self.0.saturating_sub(*rhs))
+    }
+}
+
+impl Deref for BlockTimestamp {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<u64> for BlockTimestamp {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl Display for BlockTimestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlockInfo {
+    pub block_number: BlockNumber,
+    pub block_timestamp: BlockTimestamp,
+
+    // Fee-related.
+    pub sequencer_address: ContractAddress,
+    pub gas_prices: GasPrices,
+    pub use_kzg_da: bool,
+}
+
 /// The signature of a [Block](`crate::block::Block`), signed by the sequencer. The signed message
 /// is defined as poseidon_hash(block_hash, state_diff_commitment).
-#[derive(
-    Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord,
-)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Deserialize, Serialize)]
 pub struct BlockSignature(pub Signature);
 
 /// The error type returned from the block verification functions.
