@@ -771,11 +771,11 @@ impl StarknetSyscallHandler for &mut NativeSyscallHandler<'_> {
         signature: &[Felt],
         remaining_gas: &mut u64,
     ) -> SyscallResult<Vec<Felt>> {
-        self.increment_syscall_count_by(&SyscallSelector::Deploy, 1);
-        self.increment_syscall_linear_factor_by(
-            &SyscallSelector::MetaTxV0,
-            calldata.len(),
-        );
+        // self.increment_syscall_count_by(&SyscallSelector::Deploy, 1);
+        // self.increment_syscall_linear_factor_by(
+        //     &SyscallSelector::MetaTxV0,
+        //     calldata.len(),
+        // );
         todo!(
             "implement meta_tx_v0 {:?}",
             (address, entry_point_selector, calldata, signature, remaining_gas)
