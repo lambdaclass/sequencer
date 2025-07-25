@@ -275,7 +275,7 @@ fn process_compilation_request(
     );
     match compilation_result {
         Ok(executor) => {
-            let native_compiled_class = NativeCompiledClassV1::new(executor, casm);
+            let native_compiled_class = NativeCompiledClassV1::new(executor.into(), casm);
             cache.set(
                 class_hash,
                 CompiledClasses::V1Native(CachedCairoNative::Compiled(native_compiled_class)),

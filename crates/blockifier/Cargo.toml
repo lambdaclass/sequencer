@@ -15,13 +15,17 @@ cairo_native = [
   "apollo_compile_to_native/cairo_native",
   "blockifier_test_utils/cairo_native",
   "dep:cairo-native",
+  "dep:sierra-emu"
 ]
+with-trace-dump = ["cairo_native", "cairo-native/with-trace-dump"]
+with-libfunc-profiling = ["cairo_native", "cairo-native/with-libfunc-profiling"]
 native_blockifier = []
 node_api = []
 reexecution = ["transaction_serde"]
 testing = ["blockifier_test_utils", "rand", "rstest", "rstest_reuse", "starknet_api/testing"]
 tracing = []
 transaction_serde = []
+only-native = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -38,10 +42,12 @@ ark-secp256k1.workspace = true
 ark-secp256r1.workspace = true
 blockifier_test_utils = { workspace = true, optional = true }
 cached.workspace = true
+cairo-lang-sierra.workspace = true
 cairo-lang-casm = { workspace = true, features = ["parity-scale-codec"] }
 cairo-lang-runner.workspace = true
 cairo-lang-starknet-classes.workspace = true
 cairo-native = { workspace = true, optional = true }
+sierra-emu = { workspace = true, optional = true }
 cairo-vm.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true

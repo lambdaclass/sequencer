@@ -115,6 +115,7 @@ fn create_callinfo(
             call_result.builtin_stats,
             syscall_resources,
         ),
+        ..Default::default()
     })
 }
 

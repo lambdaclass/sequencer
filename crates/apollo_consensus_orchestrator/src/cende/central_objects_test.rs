@@ -523,6 +523,7 @@ fn call_info() -> CallInfo {
         },
         // TODO(Meshi): insert relevant values.
         builtin_counters: execution_resources().prover_builtins(),
+        ..Default::default()
     }
 }
 
