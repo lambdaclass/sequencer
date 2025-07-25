@@ -35,6 +35,13 @@
       },
       "anti_affinity": true,
       "ports": {
+        "Batcher": 55000,
+        "ClassManager": 55001,
+        "ConsensusManager": 53080,
+        "L1EndpointMonitor": 55005,
+        "L1GasPriceProvider": 55003,
+        "L1Provider": 55004,
+        "StateSync": 55008,
         "MonitoringEndpoint": 8082
       }
     },
@@ -115,6 +122,40 @@
       },
       "anti_affinity": false,
       "ports": {
+        "Gateway": 55002,
+        "MonitoringEndpoint": 8082
+      }
+    },
+    {
+      "name": "L1",
+      "controller": "Deployment",
+      "config_paths": [
+        "base_app_config.json",
+        "deployments/upgrade_test/deployment_config_override.json",
+        "deployments/upgrade_test/hybrid_1.json",
+        "services/hybrid/l1.json"
+      ],
+      "ingress": null,
+      "k8s_service_config": null,
+      "autoscale": false,
+      "replicas": 1,
+      "storage": null,
+      "toleration": "apollo-general-service",
+      "resources": {
+        "requests": {
+          "cpu": 1,
+          "memory": 2
+        },
+        "limits": {
+          "cpu": 2,
+          "memory": 4
+        }
+      },
+      "external_secret": {
+        "gcsm_key": "apollo-alpha-test-1"
+      },
+      "anti_affinity": false,
+      "ports": {
         "MonitoringEndpoint": 8082
       }
     },
@@ -152,6 +193,7 @@
       },
       "anti_affinity": true,
       "ports": {
+        "Mempool": 55006,
         "MonitoringEndpoint": 8082
       }
     },
@@ -185,6 +227,7 @@
       },
       "anti_affinity": false,
       "ports": {
+        "SierraCompiler": 55007,
         "MonitoringEndpoint": 8082
       }
     }

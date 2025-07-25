@@ -29,6 +29,13 @@
       "external_secret": null,
       "anti_affinity": false,
       "ports": {
+        "Batcher": 55000,
+        "ClassManager": 55001,
+        "ConsensusManager": 53080,
+        "L1EndpointMonitor": 55005,
+        "L1GasPriceProvider": 55003,
+        "L1Provider": 55004,
+        "StateSync": 55008,
         "MonitoringEndpoint": 8082
       }
     },
@@ -103,6 +110,38 @@
       "external_secret": null,
       "anti_affinity": false,
       "ports": {
+        "Gateway": 55002,
+        "MonitoringEndpoint": 8082
+      }
+    },
+    {
+      "name": "L1",
+      "controller": "Deployment",
+      "config_paths": [
+        "base_app_config.json",
+        "deployments/testing/deployment_config_override.json",
+        "deployments/testing/hybrid.json",
+        "services/hybrid/l1.json"
+      ],
+      "ingress": null,
+      "k8s_service_config": null,
+      "autoscale": false,
+      "replicas": 1,
+      "storage": null,
+      "toleration": null,
+      "resources": {
+        "requests": {
+          "cpu": 1,
+          "memory": 2
+        },
+        "limits": {
+          "cpu": 4,
+          "memory": 8
+        }
+      },
+      "external_secret": null,
+      "anti_affinity": false,
+      "ports": {
         "MonitoringEndpoint": 8082
       }
     },
@@ -134,6 +173,7 @@
       "external_secret": null,
       "anti_affinity": false,
       "ports": {
+        "Mempool": 55006,
         "MonitoringEndpoint": 8082
       }
     },
@@ -165,6 +205,7 @@
       "external_secret": null,
       "anti_affinity": false,
       "ports": {
+        "SierraCompiler": 55007,
         "MonitoringEndpoint": 8082
       }
     }
