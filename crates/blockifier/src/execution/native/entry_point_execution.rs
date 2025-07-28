@@ -114,6 +114,7 @@ fn create_callinfo(
             syscall_resources,
         ),
         time: std::time::Duration::default(),
+        call_counter: 0,
     })
 }
 
