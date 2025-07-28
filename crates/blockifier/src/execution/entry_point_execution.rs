@@ -482,6 +482,8 @@ pub fn finalize_execution(
         resources: vm_resources,
         storage_access_tracker: syscall_handler_base.storage_access_tracker,
         builtin_counters: vm_resources_without_inner_calls.prover_builtins(),
+        time: std::time::Duration::default(),
+        call_counter: 0,
     })
 }
 
