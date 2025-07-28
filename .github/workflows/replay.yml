@@ -2,7 +2,9 @@ name: Replay
 
 on:
   push:
-    branches: [main, replay]
+    branches:
+      - main
+      - main-v[0-9].**
   pull_request:
 
 jobs:
@@ -12,12 +14,7 @@ jobs:
       MLIR_SYS_190_PREFIX: /usr/lib/llvm-19/
       LLVM_SYS_191_PREFIX: /usr/lib/llvm-19/
       TABLEGEN_190_PREFIX: /usr/lib/llvm-19/
-      CAIRO_NATIVE_RUNTIME_LIBRARY: libcairo_native_runtime.a
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # required to clone native as a git submodule
-          submodules: recursive
       - uses: dtolnay/rust-toolchain@1.82.0
         with:
           components: clippy
