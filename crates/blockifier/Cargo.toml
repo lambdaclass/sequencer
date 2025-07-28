@@ -10,6 +10,8 @@ description = "The transaction-executing component in the Starknet sequencer."
 workspace = true
 
 [features]
+with-trace-dump = ["cairo_native", "cairo-native/with-trace-dump"]
+with-libfunc-profiling = ["cairo_native", "cairo-native/with-libfunc-profiling"]
 cairo_native = [
   "blockifier_test_utils/cairo_native",
   "dep:apollo_compilation_utils",
