@@ -113,6 +113,7 @@ fn create_callinfo(
             call_result.builtin_stats,
             syscall_resources,
         ),
+        time: std::time::Duration::default(),
     })
 }
 

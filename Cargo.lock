@@ -3309,6 +3309,7 @@ dependencies = [
  "cached",
  "cairo-lang-casm",
  "cairo-lang-runner",
+ "cairo-lang-sierra",
  "cairo-lang-starknet-classes",
  "cairo-native",
  "cairo-vm",
@@ -3337,6 +3338,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sierra-emu",
  "starknet-types-core",
  "starknet_api",
  "strum 0.25.0",
@@ -4366,9 +4368,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.24"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9560b07a799281c7e0958b9296854d6fafd4c5f31444a7e5bb1ad6dde5ccf1bd"
+checksum = "be92d32e80243a54711e5d7ce823c35c41c9d929dc4ab58e1276f625841aadf9"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -4376,9 +4378,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.24"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "874e0dd3eb68bf99058751ac9712f622e61e6f393a94f7128fa26e3f02f5c7cd"
+checksum = "707eab41e9622f9139419d573eca0900137718000c517d47da73045f54331c3d"
 dependencies = [
  "anstream",
  "anstyle",
@@ -4388,9 +4390,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.24"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54b755194d6389280185988721fffba69495eed5ee9feeee9a599b53db80318c"
+checksum = "ef4f52386a59ca4c860f7393bcf8abd8dfd91ecccc0f774635ff68e92eeef491"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -5294,6 +5296,7 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
@@ -9417,6 +9420,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
+name = "p256"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
+dependencies = [
+ "ecdsa",
+ "elliptic-curve",
+ "primeorder",
+ "sha2",
+]
+
+[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10019,6 +10034,15 @@ checksum = "483f8c21f64f3ea09fe0f30f5d48c3e8eefe5dac9129f0075f76593b4c1da705"
 dependencies = [
  "proc-macro2",
  "syn 2.0.100",
+]
+
+[[package]]
+name = "primeorder"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
+dependencies = [
+ "elliptic-curve",
 ]
 
 [[package]]
@@ -11758,6 +11782,46 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "sierra-emu"
+version = "0.6.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e5431f771bd0919c8663b29fb288ea75cc79fd819562e1fc85ef5eb875896ba"
+dependencies = [
+ "cairo-lang-compiler",
+ "cairo-lang-filesystem",
+ "cairo-lang-runner",
+ "cairo-lang-sierra",
+ "cairo-lang-sierra-ap-change",
+ "cairo-lang-sierra-gas",
+ "cairo-lang-sierra-generator",
+ "cairo-lang-sierra-to-casm",
+ "cairo-lang-starknet-classes",
+ "cairo-lang-test-plugin",
+ "cairo-lang-utils",
+ "clap",
+ "k256",
+ "keccak",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand 0.8.5",
+ "rayon",
+ "sec1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "starknet-crypto",
+ "starknet-curve",
+ "starknet-types-core",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "signal-hook-registry"
