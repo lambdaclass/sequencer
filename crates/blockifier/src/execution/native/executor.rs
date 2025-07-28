@@ -1,3 +1,7 @@
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use cairo_lang_sierra::program::Program;
@@ -10,13 +14,46 @@ use cairo_native::utils::BuiltinCosts;
 use itertools::Itertools;
 use sierra_emu::VirtualMachine;
 use starknet_types_core::felt::Felt;
+#[cfg(feature = "with-libfunc-profiling")]
+use {
+    cairo_lang_sierra::ids::ConcreteLibfuncId,
+    cairo_native::metadata::profiler::LibfuncProfileData,
+    std::collections::HashMap,
+    std::sync::{LazyLock, Mutex},
+};
 
 use super::syscall_handler::NativeSyscallHandler;
+#[cfg(feature = "with-libfunc-profiling")]
+pub struct EntrypointProfile {
+    pub class_hash: Felt,
+    pub selector: Felt,
+    // Map a libfunc id to its respective profile
+    pub profile: HashMap<ConcreteLibfuncId, LibfuncProfileData>,
+    pub program: Program,
+}
+
+#[cfg(feature = "with-libfunc-profiling")]
+pub struct TransactionProfile {
+    pub block_number: u64,
+    pub tx_hash: String,
+    pub entrypoint_profiles: Vec<EntrypointProfile>,
+}
+
+#[cfg(feature = "with-libfunc-profiling")]
+// Map a transaction hash to its profile
+type ProfilesByBlockTx = HashMap<String, TransactionProfile>;
+
+#[cfg(feature = "with-libfunc-profiling")]
+pub static LIBFUNC_PROFILES_MAP: LazyLock<Mutex<ProfilesByBlockTx>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub enum ContractExecutor {
     Aot(AotContractExecutor),
     Emu((Arc<Program>, ContractEntryPoints, VersionId)),
+    // must use a different variant as we need `Program` for trace feature
+    #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
+    AotWithProgram((AotContractExecutor, Program)),
 }
 
 impl From<AotContractExecutor> for ContractExecutor {
@@ -60,15 +97,161 @@ impl ContractExecutor {
                 let args = args.to_owned();
                 virtual_machine.call_contract(selector, gas, args, builtin_costs);
 
-                let result = virtual_machine.run(&mut syscall_handler).unwrap();
+                let result = if cfg!(feature = "with-trace-dump") {
+                    static COUNTER: AtomicU64 = AtomicU64::new(0);
+                    let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    let trace = virtual_machine.run_with_trace(&mut syscall_handler);
+
+                    let trace_path = PathBuf::from(format!("traces/emu/{counter}.json"));
+                    let trace_parent_path = trace_path.parent().unwrap();
+                    fs::create_dir_all(trace_parent_path).unwrap();
+                    let trace_file = File::create(&trace_path).unwrap();
+                    serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+
+                    let sierra_path = PathBuf::from(format!("traces/{counter}.sierra"));
+                    let mut sierra_file = File::create(&sierra_path).unwrap();
+                    write!(sierra_file, "{}", program).unwrap();
+
+                    sierra_emu::ContractExecutionResult::from_trace(&trace).unwrap()
+                } else {
+                    virtual_machine.run(&mut syscall_handler).unwrap()
+                };
 
                 Ok(ContractExecutionResult {
                     remaining_gas: result.remaining_gas,
                     failure_flag: result.failure_flag,
                     return_values: result.return_values,
                     error_msg: result.error_msg,
-                    ..Default::default()
+                    builtin_stats: Default::default(),
                 })
+            }
+            #[cfg(any(feature = "with-trace-dump", feature = "with-libfunc-profiling"))]
+            ContractExecutor::AotWithProgram((executor, program)) => {
+                #[cfg(feature = "with-trace-dump")]
+                use {
+                    cairo_lang_sierra::program_registry::ProgramRegistry,
+                    cairo_native::metadata::trace_dump::trace_dump_runtime::{
+                        TraceDump,
+                        TRACE_DUMP,
+                    },
+                    cairo_native::metadata::trace_dump::TraceBinding,
+                };
+                #[cfg(feature = "with-libfunc-profiling")]
+                use {
+                    cairo_native::metadata::profiler::ProfilerBinding,
+                    cairo_native::metadata::profiler::{ProfilerImpl, LIBFUNC_PROFILE},
+                };
+
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+                #[cfg(feature = "with-trace-dump")]
+                let trace_dump_trace_id: &mut u64;
+                #[cfg(feature = "with-trace-dump")]
+                let trace_dump_old_trace_id: u64;
+
+                #[cfg(feature = "with-libfunc-profiling")]
+                let libfunc_profiling_trace_id: &mut u64;
+                #[cfg(feature = "with-libfunc-profiling")]
+                let libfunc_profiling_old_trace_id: u64;
+                #[cfg(feature = "with-libfunc-profiling")]
+                let class_hash = *syscall_handler.base.call.class_hash;
+                #[cfg(feature = "with-libfunc-profiling")]
+                let tx_hash = syscall_handler
+                    .base
+                    .context
+                    .tx_context
+                    .tx_info
+                    .transaction_hash()
+                    .to_hex_string();
+                #[cfg(feature = "with-libfunc-profiling")]
+                let block_number =
+                    syscall_handler.base.context.tx_context.block_context.block_info.block_number.0;
+
+                let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                #[cfg(feature = "with-trace-dump")]
+                {
+                    TRACE_DUMP
+                        .lock()
+                        .unwrap()
+                        .insert(counter, TraceDump::new(ProgramRegistry::new(program).unwrap()));
+
+                    trace_dump_trace_id = unsafe {
+                        let trace_id_ptr =
+                            executor.find_symbol_ptr(TraceBinding::TraceId.symbol()).unwrap();
+                        trace_id_ptr.cast::<u64>().as_mut().unwrap()
+                    };
+
+                    trace_dump_old_trace_id = *trace_dump_trace_id;
+                    *trace_dump_trace_id = counter;
+                }
+
+                #[cfg(feature = "with-libfunc-profiling")]
+                {
+                    LIBFUNC_PROFILE.lock().unwrap().insert(counter, ProfilerImpl::new());
+
+                    libfunc_profiling_trace_id = unsafe {
+                        let trace_id_ptr =
+                            executor.find_symbol_ptr(ProfilerBinding::ProfileId.symbol()).unwrap();
+                        trace_id_ptr.cast::<u64>().as_mut().unwrap()
+                    };
+
+                    libfunc_profiling_old_trace_id = *libfunc_profiling_trace_id;
+                    *libfunc_profiling_trace_id = counter;
+                }
+
+                let result = executor.run(selector, args, gas, builtin_costs, syscall_handler);
+
+                #[cfg(feature = "with-trace-dump")]
+                {
+                    // Retreive trace dump for current execution
+                    let trace = TRACE_DUMP.lock().unwrap().remove(&counter).unwrap().trace;
+
+                    // Save trace dump to file
+                    let trace_path = PathBuf::from(format!("traces/native/{counter}.json"));
+                    let trace_parent_path = trace_path.parent().unwrap();
+                    fs::create_dir_all(trace_parent_path).unwrap();
+                    let trace_file = File::create(&trace_path).unwrap();
+                    serde_json::to_writer_pretty(trace_file, &trace).unwrap();
+
+                    *trace_dump_trace_id = trace_dump_old_trace_id;
+                }
+
+                #[cfg(feature = "with-libfunc-profiling")]
+                {
+                    // Retreive profile for current execution
+                    let profile = LIBFUNC_PROFILE.lock().unwrap().remove(&counter).unwrap();
+
+                    let raw_profile = profile.get_profile(program);
+
+                    let mut profiles_map = LIBFUNC_PROFILES_MAP.lock().unwrap();
+
+                    let profile = EntrypointProfile {
+                        class_hash,
+                        selector,
+                        profile: raw_profile,
+                        program: program.clone(),
+                    };
+
+                    match profiles_map.get_mut(&tx_hash) {
+                        Some(tx_profile) => {
+                            tx_profile.entrypoint_profiles.push(profile);
+                        }
+                        None => {
+                            let tx_profile = TransactionProfile {
+                                block_number,
+                                tx_hash: tx_hash.clone(),
+                                entrypoint_profiles: vec![profile],
+                            };
+                            profiles_map.insert(tx_hash, tx_profile);
+                        }
+                    };
+
+                    *libfunc_profiling_trace_id = libfunc_profiling_old_trace_id;
+                }
+
+                result
             }
         }
     }
