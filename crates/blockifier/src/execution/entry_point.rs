@@ -351,7 +351,7 @@ impl EntryPointExecutionContext {
             tracked_resource_stack: vec![],
             revert_infos: ExecutionRevertInfo(vec![]),
             sierra_gas_revert_tracker,
-            call_counter: 0
+            call_counter: 0,
         }
     }
 
