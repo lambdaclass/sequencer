@@ -492,7 +492,9 @@ define_stateless_hint_enum!(
         indoc! {r#"
     current_segment_info = next(bytecode_segments)
 
-    is_used = is_segment_used_callback(ids.data_ptr, current_segment_info.segment_length)
+    is_used = ids.full_contract or is_segment_used_callback(
+        ids.data_ptr, current_segment_info.segment_length
+    )
     ids.is_segment_used = 1 if is_used else 0
 
     is_used_leaf = is_used and isinstance(current_segment_info.inner_structure, BytecodeLeaf)
@@ -1672,7 +1674,7 @@ ids.contract_class_component_hashes = segments.gen_arg(class_component_hashes)"#
         indoc! {r#"
     if execution_helper.debug_mode:
         expected_initial_gas = execution_helper.call_info.call.initial_gas
-        call_initial_gas = ids.remaining_gas
+        call_initial_gas = ids.inner_remaining_gas
         assert expected_initial_gas == call_initial_gas, (
             f"Expected remaining_gas {expected_initial_gas}. Got: {call_initial_gas}.\n"
             f"{execution_helper.call_info=}"
