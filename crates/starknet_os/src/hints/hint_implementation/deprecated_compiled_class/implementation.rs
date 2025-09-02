@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use blockifier::state::state_api::StateReader;
 use cairo_vm::hint_processor::builtin_hint_processor::hint_utils::insert_value_from_var_name;
@@ -7,7 +8,7 @@ use cairo_vm::hint_processor::hint_processor_definition::{
     HintProcessorLogic,
     HintReference,
 };
-use cairo_vm::serde::deserialize_program::{HintParams, ReferenceManager};
+use cairo_vm::serde::deserialize_program::{HintParams, Identifier, ReferenceManager};
 use cairo_vm::types::relocatable::Relocatable;
 use cairo_vm::vm::errors::hint_errors::HintError as VmHintError;
 use starknet_api::core::CompiledClassHash;
@@ -114,6 +115,21 @@ pub(crate) fn load_deprecated_class<S: StateReader>(
     )?;
     let byte_code_ptr = vm.get_relocatable(byte_code_ptr_addr)?;
 
+    let identifiers: HashMap<String, Identifier> =
+        serde_json::from_value(dep_class.program.identifiers.clone()).map_err(|e| {
+            OsHintError::SerdeJsonDeserialize {
+                error: e,
+                value: dep_class.program.identifiers.clone(),
+            }
+        })?;
+    let constants = identifiers
+        .into_iter()
+        .filter_map(|(key, identifier)| {
+            if identifier.type_? == "const" { Some((key, identifier.value?)) } else { None }
+        })
+        .collect::<HashMap<_, _>>();
+    let constants_ref = Rc::new(constants);
+
     let mut hint_extension = HintExtension::new();
 
     for (pc, hints_params) in hints.into_iter() {
@@ -126,6 +142,7 @@ pub(crate) fn load_deprecated_class<S: StateReader>(
                 &params.flow_tracking_data.ap_tracking,
                 &params.flow_tracking_data.reference_ids,
                 &refs,
+                constants_ref.clone(),
             )?;
             compiled_hints.push(compiled_hint);
         }
