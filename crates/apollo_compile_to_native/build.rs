@@ -1,5 +1,3 @@
-use apollo_compilation_utils::build_utils::install_compiler_binary;
-
 include!("src/constants.rs");
 
 fn main() {
