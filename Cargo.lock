@@ -3340,7 +3340,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sierra-emu",
+ "sierra-emu 0.6.0 (git+https://github.com/lambdaclass/cairo_native.git?rev=80e6b125d2d99d1301833292bf97c8ea9f82ead4)",
  "starknet-types-core",
  "starknet_api",
  "strum 0.25.0",
@@ -4113,7 +4113,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.6.0"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=d7f8352657a4c1228b227807b90aea10f97f746d#d7f8352657a4c1228b227807b90aea10f97f746d"
+source = "git+https://github.com/lambdaclass/cairo_native.git?rev=a0730a8d64d43836ac8812b4eb212706f5aae14b#a0730a8d64d43836ac8812b4eb212706f5aae14b"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -4155,7 +4155,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sierra-emu",
+ "sierra-emu 0.6.0 (git+https://github.com/lambdaclass/cairo_native.git?rev=a0730a8d64d43836ac8812b4eb212706f5aae14b)",
  "starknet-curve",
  "starknet-types-core",
  "stats_alloc",
@@ -4253,10 +4253,11 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.16"
+version = "1.2.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be714c154be609ec7f5dad223a33bf1482fff90472de28f7362806e6d4832b8c"
+checksum = "5252b3d2648e5eedbc1a6f501e3c795e07025c1e93bbf8bbdd6eef7f447a6d54"
 dependencies = [
+ "find-msvc-tools",
  "jobserver",
  "libc",
  "shlex",
@@ -4508,9 +4509,9 @@ dependencies = [
 
 [[package]]
 name = "comrak"
-version = "0.33.0"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39bff2cbb80102771ca62bd2375bc6f6611dc1493373440b23aa08a155538708"
+checksum = "2a4f05e73ca9a30af27bebc13600f91fd1651b2ec7d139ca82a89df7ca583af1"
 dependencies = [
  "caseless",
  "entities",
@@ -4597,15 +4598,6 @@ name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
-
-[[package]]
-name = "convert_case"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb402b8d4c85569410425650ce3eddc7d698ed96d39a73f941b08fb63082f1e7"
-dependencies = [
- "unicode-segmentation",
-]
 
 [[package]]
 name = "convert_case"
@@ -5913,6 +5905,12 @@ dependencies = [
  "libredox",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd99930f64d146689264c637b5af2f0233a933bef0d8570e2526bf9e083192d"
 
 [[package]]
 name = "fixed-hash"
@@ -8390,9 +8388,9 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 
 [[package]]
 name = "llvm-sys"
-version = "191.0.0"
+version = "201.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "893cddf1adf0354b93411e413553dd4daf5c43195d73f1acfa1e394bdd371456"
+checksum = "9bb947e8b79254ca10d496d0798a9ba1287dcf68e50a92b016fec1cc45bef447"
 dependencies = [
  "anyhow",
  "cc",
@@ -8528,9 +8526,9 @@ dependencies = [
 
 [[package]]
 name = "melior"
-version = "0.21.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2af6454b7bcd7edc8c2060a3726a18ceaed60e25c34d9f8de9c6b44e82eb647"
+checksum = "8a965d90213b0759491eeff1a94a3daf3c87918b13d2411227c1be8c26df6293"
 dependencies = [
  "melior-macro",
  "mlir-sys",
@@ -8538,18 +8536,18 @@ dependencies = [
 
 [[package]]
 name = "melior-macro"
-version = "0.14.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a99671327250df8e24e56d8304474a970e7a2c6bb8f6dc71382d188136fe4d1b"
+checksum = "49d9020b35c25d0f40d125e660386b6a374a9f79285d58f67eb8301b9509e6ef"
 dependencies = [
  "comrak",
- "convert_case 0.7.1",
+ "convert_case 0.8.0",
  "proc-macro2",
  "quote",
  "regex",
  "syn 2.0.100",
  "tblgen",
- "unindent 0.2.3",
+ "unindent 0.2.4",
 ]
 
 [[package]]
@@ -8724,9 +8722,9 @@ dependencies = [
 
 [[package]]
 name = "mlir-sys"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21b598f9c0fa7a453eeaa9fe419ae93759c94a66eb6f8a496d195ba596ae3c4d"
+checksum = "8e9348dd263d2680d657635d9dd084cdcd785d7486a41332ffa4c926d5882b54"
 dependencies = [
  "bindgen 0.71.1",
 ]
@@ -11791,7 +11789,46 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sierra-emu"
 version = "0.6.0"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=d7f8352657a4c1228b227807b90aea10f97f746d#d7f8352657a4c1228b227807b90aea10f97f746d"
+source = "git+https://github.com/lambdaclass/cairo_native.git?rev=80e6b125d2d99d1301833292bf97c8ea9f82ead4#80e6b125d2d99d1301833292bf97c8ea9f82ead4"
+dependencies = [
+ "cairo-lang-compiler",
+ "cairo-lang-filesystem",
+ "cairo-lang-runner",
+ "cairo-lang-sierra",
+ "cairo-lang-sierra-ap-change",
+ "cairo-lang-sierra-gas",
+ "cairo-lang-sierra-generator",
+ "cairo-lang-sierra-to-casm",
+ "cairo-lang-starknet-classes",
+ "cairo-lang-test-plugin",
+ "cairo-lang-utils",
+ "clap",
+ "k256",
+ "keccak",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand 0.8.5",
+ "rayon",
+ "sec1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "starknet-crypto",
+ "starknet-curve",
+ "starknet-types-core",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sierra-emu"
+version = "0.6.0"
+source = "git+https://github.com/lambdaclass/cairo_native.git?rev=a0730a8d64d43836ac8812b4eb212706f5aae14b#a0730a8d64d43836ac8812b4eb212706f5aae14b"
 dependencies = [
  "cairo-lang-compiler",
  "cairo-lang-filesystem",
@@ -12612,9 +12649,9 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "tblgen"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c155c9310c9e11e6f642b4c8a30ae572ea0cad013d5c9e28bb264b52fa8163bb"
+checksum = "836472eafcc544aa0167f880c0998d4a77b422d22100186e67fc6daf35cab94c"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -13383,9 +13420,9 @@ checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
 
 [[package]]
 name = "unindent"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7de7d73e1754487cb58364ee906a499937a0dfabd86bcb980fa99ec8c8fa2ce"
+checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "universal-hash"
