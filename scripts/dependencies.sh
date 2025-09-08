@@ -27,18 +27,18 @@ function setup_llvm_deps() {
     case "$(uname)" in
     Darwin)
         brew update
-        brew install llvm@19
+        brew install llvm@20
         ;;
     Linux)
         $SUDO bash -c 'curl https://apt.llvm.org/llvm.sh -Lo llvm.sh
-        bash ./llvm.sh 19 all
+        bash ./llvm.sh 20 all
         rm -f ./llvm.sh
         apt update && apt install -y \
             libgmp3-dev \
-            libmlir-19-dev \
-            libpolly-19-dev \
+            libmlir-20-dev \
+            libpolly-20-dev \
             libzstd-dev \
-            mlir-19-tools
+            mlir-20-tools
         '
         ;;
     *)
