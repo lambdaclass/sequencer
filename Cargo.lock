@@ -12248,7 +12248,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "size-of",
- "starknet-crypto 0.7.4",
+ "starknet-crypto 0.8.1",
  "starknet-types-core 0.1.8",
  "strum 0.25.0",
  "strum_macros 0.25.3",
