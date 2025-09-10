@@ -15,35 +15,35 @@ use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
 use num_bigint::{BigUint, TryFromBigIntError};
-use starknet_api::StarknetApiError;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::block::{BlockInfo, BlockNumber, BlockTimestamp};
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{
+    calculate_contract_address,
     ClassHash,
     ContractAddress,
     EntryPointSelector,
-    calculate_contract_address,
 };
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::constants::EXECUTE_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::Calldata;
-use starknet_api::transaction::{TransactionOptions, TransactionVersion, signed_tx_version};
+use starknet_api::transaction::{signed_tx_version, TransactionOptions, TransactionVersion};
+use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
 use crate::context::TransactionContext;
 use crate::execution::call_info::{CallInfo, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::common_hints::{
+    extended_builtin_hint_processor,
     ExecutionMode,
     HintExecutionResult,
-    extended_builtin_hint_processor,
 };
 use crate::execution::deprecated_syscalls::deprecated_syscall_executor::{
+    execute_next_deprecated_syscall,
     DeprecatedSyscallExecutor,
     DeprecatedSyscallExecutorBaseError,
     DeprecatedSyscallExecutorBaseResult,
-    execute_next_deprecated_syscall,
 };
 use crate::execution::deprecated_syscalls::{
     CallContractRequest,
@@ -89,16 +89,16 @@ use crate::execution::entry_point::{
 };
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
-    ReadOnlySegment,
-    ReadOnlySegments,
     execute_deployment,
     felt_from_ptr,
     felt_range_from_ptr,
+    ReadOnlySegment,
+    ReadOnlySegments,
 };
 use crate::execution::hint_code;
 use crate::execution::syscalls::hint_processor::EmitEventError;
 use crate::execution::syscalls::syscall_base::should_reject_deploy;
-use crate::execution::syscalls::vm_syscall_utils::{SyscallUsageMap, exceeds_event_size_limit};
+use crate::execution::syscalls::vm_syscall_utils::{exceeds_event_size_limit, SyscallUsageMap};
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
 use crate::transaction::objects::TransactionInfo;

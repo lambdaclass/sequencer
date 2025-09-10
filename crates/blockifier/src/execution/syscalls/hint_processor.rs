@@ -14,16 +14,16 @@ use cairo_vm::vm::errors::memory_errors::MemoryError;
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
-use starknet_api::StarknetApiError;
 use starknet_api::block::BlockHash;
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{ClassHash, ContractAddress, EntryPointSelector};
 use starknet_api::execution_resources::GasAmount;
 use starknet_api::transaction::fields::{
+    valid_resource_bounds_as_felts,
     Calldata,
     ResourceAsFelts,
-    valid_resource_bounds_as_felts,
 };
+use starknet_api::StarknetApiError;
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
@@ -38,16 +38,17 @@ use crate::execution::entry_point::{
 };
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
-    ReadOnlySegment,
-    ReadOnlySegments,
     felt_from_ptr,
     felt_range_from_ptr,
     write_maybe_relocatable,
+    ReadOnlySegment,
+    ReadOnlySegments,
 };
 use crate::execution::syscalls::secp::SecpHintProcessor;
 use crate::execution::syscalls::syscall_base::{SyscallHandlerBase, SyscallResult};
 use crate::execution::syscalls::syscall_executor::SyscallExecutor;
 use crate::execution::syscalls::vm_syscall_utils::{
+    execute_next_syscall,
     CallContractRequest,
     CallContractResponse,
     DeployRequest,
@@ -80,7 +81,6 @@ use crate::execution::syscalls::vm_syscall_utils::{
     SyscallSelector,
     SyscallUsageMap,
     TryExtractRevert,
-    execute_next_syscall,
 };
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
