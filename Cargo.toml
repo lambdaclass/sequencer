@@ -180,7 +180,7 @@ cairo-lang-starknet-classes = "2.12.2"
 cairo-lang-utils = "2.12.2"
 cairo-native = { git = "https://github.com/lambdaclass/cairo_native", rev = "4798e2f47a30f567f04fa7998b302c00653c47a9" }
 sierra-emu = { git = "https://github.com/lambdaclass/cairo_native", rev = "4798e2f47a30f567f04fa7998b302c00653c47a9" }
-cairo-vm = "2.2.0"
+cairo-vm = "2.4.1"
 camelpaste = "0.1.0"
 chrono = "0.4.26"
 clap = "4.5.4"
@@ -288,7 +288,7 @@ simple_logger = "4.0.0"
 size-of = "0.1.5"
 sizeof_internal = { path = "crates/sizeof/sizeof_internal" }
 socket2 = "0.5.8"
-starknet-core = "0.12.1"
+starknet-core = "0.16.0"
 starknet-crypto = "0.8.0"
 starknet-types-core = "0.2.0"
 starknet_api = { path = "crates/starknet_api", version = "0.15.0-rc.2" }
