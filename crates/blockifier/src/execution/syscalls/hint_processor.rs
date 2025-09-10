@@ -1,10 +1,11 @@
 use std::any::Any;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use cairo_lang_casm::hints::Hint;
 use cairo_lang_runner::casm_run::execute_core_hint_base;
 use cairo_vm::hint_processor::hint_processor_definition::{HintProcessorLogic, HintReference};
-use cairo_vm::serde::deserialize_program::ApTracking;
+use cairo_vm::serde::deserialize_program::{ApTracking, Identifier};
 use cairo_vm::types::errors::math_errors::MathError;
 use cairo_vm::types::exec_scope::ExecutionScopes;
 use cairo_vm::types::relocatable::{MaybeRelocatable, Relocatable};
@@ -778,7 +779,6 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
         hint_data: &Box<dyn Any>,
-        _constants: &HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<Hint>().ok_or(HintError::WrongHintData)?;
         // Segment arena finalization is relevant only for proof so there is no need to allocate
@@ -802,6 +802,8 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         _ap_tracking_data: &ApTracking,
         _reference_ids: &HashMap<String, usize>,
         _references: &[HintReference],
+        _identifiers: Rc<HashMap<String, Identifier>>,
+        _accessible_scopes: &[String],
     ) -> Result<Box<dyn Any>, VirtualMachineError> {
         Ok(Box::new(self.hints[hint_code].clone()))
     }
