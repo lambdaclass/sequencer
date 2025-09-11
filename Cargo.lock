@@ -4113,7 +4113,7 @@ dependencies = [
 [[package]]
 name = "cairo-native"
 version = "0.6.0"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=4798e2f47a30f567f04fa7998b302c00653c47a9#4798e2f47a30f567f04fa7998b302c00653c47a9"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=60521f90295ad70831cfa2ecfb04fb148fbed1ff#60521f90295ad70831cfa2ecfb04fb148fbed1ff"
 dependencies = [
  "anyhow",
  "aquamarine",
@@ -11758,7 +11758,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "sierra-emu"
 version = "0.6.0"
-source = "git+https://github.com/lambdaclass/cairo_native?rev=4798e2f47a30f567f04fa7998b302c00653c47a9#4798e2f47a30f567f04fa7998b302c00653c47a9"
+source = "git+https://github.com/lambdaclass/cairo_native?rev=60521f90295ad70831cfa2ecfb04fb148fbed1ff#60521f90295ad70831cfa2ecfb04fb148fbed1ff"
 dependencies = [
  "cairo-lang-compiler",
  "cairo-lang-filesystem",
