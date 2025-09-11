@@ -212,9 +212,12 @@ pub fn calculate_contract_address(
     Ord,
     derive_more::Display,
     derive_more::Deref,
-    SizeOf,
 )]
 pub struct ClassHash(pub StarkHash);
+
+impl SizeOf for ClassHash {
+    fn size_of_children(&self, _context: &mut size_of::Context) {}
+}
 
 /// The hash of a compiled ContractClass.
 #[derive(
@@ -230,9 +233,12 @@ pub struct ClassHash(pub StarkHash);
     PartialOrd,
     Ord,
     derive_more::Display,
-    SizeOf,
 )]
+
 pub struct CompiledClassHash(pub StarkHash);
+impl SizeOf for CompiledClassHash {
+    fn size_of_children(&self, _context: &mut size_of::Context) {}
+}
 
 /// A general type for nonces.
 #[derive(
@@ -249,9 +255,11 @@ pub struct CompiledClassHash(pub StarkHash);
     PartialOrd,
     Ord,
     derive_more::Deref,
-    SizeOf,
 )]
 pub struct Nonce(pub Felt);
+impl SizeOf for Nonce {
+    fn size_of_children(&self, _context: &mut size_of::Context) {}
+}
 
 impl Nonce {
     pub fn try_increment(&self) -> Result<Self, StarknetApiError> {
@@ -378,10 +386,13 @@ pub struct StateDiffCommitment(pub PoseidonHash);
     PartialOrd,
     Ord,
     derive_more:: Deref,
-    SizeOf,
 )]
 #[display(fmt = "{}", "_0.to_fixed_hex_string()")]
 pub struct PatriciaKey(StarkHash);
+
+impl SizeOf for PatriciaKey {
+    fn size_of_children(&self, _context: &mut size_of::Context) {}
+}
 
 // 2**251
 pub const PATRICIA_KEY_UPPER_BOUND: &str =
