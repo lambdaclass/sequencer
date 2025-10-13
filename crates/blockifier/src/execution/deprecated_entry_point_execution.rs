@@ -23,7 +23,7 @@ use crate::execution::entry_point::{
     ExecutableCallEntryPoint,
 };
 use crate::execution::errors::{PostExecutionError, PreExecutionError};
-use crate::execution::execution_utils::{read_execution_retdata, Args, ReadOnlySegments};
+use crate::execution::execution_utils::{Args, ReadOnlySegments, read_execution_retdata};
 use crate::state::state_api::State;
 use crate::transaction::objects::ExecutionResourcesTraits;
 
@@ -217,6 +217,7 @@ pub fn run_entry_point(
     let verify_secure = true;
     let program_segment_size = None; // Infer size from program.
     let args: Vec<&CairoArg> = args.iter().collect();
+    // println!("[deprecated/run_entry_point] ");
     let result = runner.run_from_entrypoint(
         entry_point_pc,
         &args,

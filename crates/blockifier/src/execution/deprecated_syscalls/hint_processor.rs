@@ -1,11 +1,12 @@
 use std::any::Any;
 use std::collections::HashSet;
 
+use cairo_vm::any_box;
 use cairo_vm::hint_processor::builtin_hint_processor::builtin_hint_processor_definition::{
     BuiltinHintProcessor,
     HintProcessorData,
 };
-use cairo_vm::hint_processor::hint_processor_definition::HintProcessorLogic;
+use cairo_vm::hint_processor::hint_processor_definition::{HintProcessorLogic, get_ids_data};
 use cairo_vm::types::errors::math_errors::MathError;
 use cairo_vm::types::exec_scope::ExecutionScopes;
 use cairo_vm::types::relocatable::{MaybeRelocatable, Relocatable};
@@ -15,35 +16,35 @@ use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::cairo_runner::{ResourceTracker, RunResources};
 use cairo_vm::vm::vm_core::VirtualMachine;
 use num_bigint::{BigUint, TryFromBigIntError};
+use starknet_api::StarknetApiError;
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::block::{BlockInfo, BlockNumber, BlockTimestamp};
 use starknet_api::contract_class::EntryPointType;
 use starknet_api::core::{
-    calculate_contract_address,
     ClassHash,
     ContractAddress,
     EntryPointSelector,
+    calculate_contract_address,
 };
 use starknet_api::state::StorageKey;
 use starknet_api::transaction::constants::EXECUTE_ENTRY_POINT_NAME;
 use starknet_api::transaction::fields::Calldata;
-use starknet_api::transaction::{signed_tx_version, TransactionOptions, TransactionVersion};
-use starknet_api::StarknetApiError;
+use starknet_api::transaction::{TransactionOptions, TransactionVersion, signed_tx_version};
 use starknet_types_core::felt::{Felt, FromStrError};
 use thiserror::Error;
 
 use crate::context::TransactionContext;
 use crate::execution::call_info::{CallInfo, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::common_hints::{
-    extended_builtin_hint_processor,
     ExecutionMode,
     HintExecutionResult,
+    extended_builtin_hint_processor,
 };
 use crate::execution::deprecated_syscalls::deprecated_syscall_executor::{
-    execute_next_deprecated_syscall,
     DeprecatedSyscallExecutor,
     DeprecatedSyscallExecutorBaseError,
     DeprecatedSyscallExecutorBaseResult,
+    execute_next_deprecated_syscall,
 };
 use crate::execution::deprecated_syscalls::{
     CallContractRequest,
@@ -89,16 +90,16 @@ use crate::execution::entry_point::{
 };
 use crate::execution::errors::{ConstructorEntryPointExecutionError, EntryPointExecutionError};
 use crate::execution::execution_utils::{
+    ReadOnlySegment,
+    ReadOnlySegments,
     execute_deployment,
     felt_from_ptr,
     felt_range_from_ptr,
-    ReadOnlySegment,
-    ReadOnlySegments,
 };
 use crate::execution::hint_code;
 use crate::execution::syscalls::hint_processor::EmitEventError;
 use crate::execution::syscalls::syscall_base::should_reject_deploy;
-use crate::execution::syscalls::vm_syscall_utils::{exceeds_event_size_limit, SyscallUsageMap};
+use crate::execution::syscalls::vm_syscall_utils::{SyscallUsageMap, exceeds_event_size_limit};
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
 use crate::transaction::objects::TransactionInfo;
@@ -459,6 +460,39 @@ impl HintProcessorLogic for DeprecatedSyscallHintProcessor<'_> {
         }
 
         self.builtin_hint_processor.execute_hint(vm, exec_scopes, hint_data)
+    }
+
+    fn compile_hint(
+        &self,
+        // Block of hint code as String
+        hint_code: &str,
+        // Ap Tracking Data corresponding to the Hint
+        ap_tracking_data: &cairo_vm::serde::deserialize_program::ApTracking,
+        // Map from variable name to reference id number
+        //(may contain other variables aside from those used by the hint)
+        reference_ids: &std::collections::HashMap<String, usize>,
+        // List of all references (key corresponds to element of the previous dictionary)
+        references: &[cairo_vm::hint_processor::hint_processor_definition::HintReference],
+        // Identifiers stored in the hint's program.
+        constants: std::rc::Rc<std::collections::HashMap<String, Felt>>,
+    ) -> Result<Box<dyn Any>, VirtualMachineError> {
+        if hint_code::SYSCALL_HINTS.contains(hint_code) {
+            let ids_data = get_ids_data(reference_ids, references)?;
+            return Ok(any_box!(HintProcessorData {
+                code: hint_code.to_string(),
+                ap_tracking: ap_tracking_data.clone(),
+                ids_data,
+                constants,
+                f: None
+            }));
+        }
+        self.builtin_hint_processor.compile_hint(
+            hint_code,
+            ap_tracking_data,
+            reference_ids,
+            references,
+            constants,
+        )
     }
 }
 
