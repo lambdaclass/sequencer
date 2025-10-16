@@ -1,14 +1,15 @@
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{hash_map, HashMap, HashSet};
 
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout_name::LayoutName;
 use cairo_vm::types::relocatable::{MaybeRelocatable, Relocatable};
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
-use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner};
+use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner, CairoRunnerBuilder, RunnerMode};
 use starknet_api::abi::abi_utils::selector_from_name;
 use starknet_api::abi::constants::{CONSTRUCTOR_ENTRY_POINT_NAME, DEFAULT_ENTRY_POINT_SELECTOR};
 use starknet_api::contract_class::EntryPointType;
-use starknet_api::core::EntryPointSelector;
+use starknet_api::core::{ClassHash, EntryPointSelector};
 use starknet_api::hash::StarkHash;
 
 use super::call_info::StorageAccessTracker;
@@ -68,6 +69,10 @@ pub fn execute_entry_point_call(
     Ok(finalize_execution(runner, syscall_handler, call, implicit_args, n_total_args)?)
 }
 
+thread_local! {
+    pub static CACHE: RefCell<HashMap<ClassHash, CairoRunnerBuilder>> = RefCell::new(HashMap::default());
+}
+
 pub fn initialize_execution_context<'a>(
     call: &ExecutableCallEntryPoint,
     compiled_class: CompiledClassV0,
@@ -87,35 +92,45 @@ pub fn initialize_execution_context<'a>(
 
     // Resolve initial PC from EP indicator.
     let entry_point_pc = resolve_entry_point_pc(call, &compiled_class)?;
-    // Instantiate Cairo runner.
-    let proof_mode = false;
-    let trace_enabled = false;
-    let dynamic_layout_params = None;
-    let allow_missing_builtins = false;
-    let disable_trace_padding = false;
-    let program_base = None;
-    let mut runner = CairoRunner::new(
-        &compiled_class.program,
-        LayoutName::starknet,
-        dynamic_layout_params,
-        proof_mode,
-        trace_enabled,
-        disable_trace_padding,
-    )?;
-
-    runner.initialize_builtins(allow_missing_builtins)?;
-    runner.initialize_segments(program_base);
 
     // Instantiate syscall handler.
-    let initial_syscall_ptr = runner.vm.add_memory_segment();
-    let syscall_handler = DeprecatedSyscallHintProcessor::new(
+    let mut syscall_handler = DeprecatedSyscallHintProcessor::new(
         state,
         context,
-        initial_syscall_ptr,
+        Relocatable::from((0, 0)),
         call.storage_address,
         call.caller_address,
         call.class_hash,
     );
+
+    let cairo_runner_builder = CACHE
+        .with_borrow_mut(|cache| -> Result<CairoRunnerBuilder, VirtualMachineError> {
+            match cache.entry(call.class_hash) {
+                hash_map::Entry::Occupied(occupied_entry) => Ok(occupied_entry.get().clone()),
+                hash_map::Entry::Vacant(vacant_entry) => {
+                    let mut cairo_runner_builder = CairoRunnerBuilder::new(
+                        &compiled_class.program,
+                        LayoutName::starknet,
+                        None,
+                        RunnerMode::ExecutionMode,
+                    )?;
+                    cairo_runner_builder.enable_trace(false);
+                    cairo_runner_builder.disable_trace_padding(false);
+                    cairo_runner_builder.allow_missing_builtins(false);
+                    cairo_runner_builder.initialize_base_segments();
+                    cairo_runner_builder.load_program()?;
+                    cairo_runner_builder.compile_hints(&mut syscall_handler).unwrap();
+                    cairo_runner_builder.initialize_builtin_runners_for_layout()?;
+                    cairo_runner_builder.initialize_builtin_segments();
+                    Ok(vacant_entry.insert(cairo_runner_builder).clone())
+                }
+            }
+        })
+        .unwrap();
+
+    let mut runner = cairo_runner_builder.build()?;
+    let initial_syscall_ptr = runner.vm.add_memory_segment();
+    syscall_handler.syscall_ptr = initial_syscall_ptr;
 
     Ok(VmExecutionContext { runner, syscall_handler, initial_syscall_ptr, entry_point_pc })
 }
@@ -217,7 +232,7 @@ pub fn run_entry_point(
     let verify_secure = true;
     let program_segment_size = None; // Infer size from program.
     let args: Vec<&CairoArg> = args.iter().collect();
-    let result = runner.run_from_entrypoint(
+    let result = runner.run_from_entrypoint_v2(
         entry_point_pc,
         &args,
         verify_secure,
@@ -235,6 +250,16 @@ pub fn finalize_execution(
     implicit_args: Vec<MaybeRelocatable>,
     n_total_args: usize,
 ) -> Result<CallInfo, PostExecutionError> {
+    CACHE.with_borrow_mut(|cache| -> Result<(), VirtualMachineError> {
+        match cache.get_mut(&call.class_hash) {
+            Some(builder) => {
+                builder.load_cached_instructions(runner.vm.take_instruction_cache())?
+            }
+            None => (),
+        }
+        Ok(())
+    })?;
+
     // Close memory holes in segments (OS code touches those memory cells, we simulate it).
     let initial_fp = runner
         .get_initial_fp()

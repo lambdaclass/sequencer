@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::collections::{hash_map, HashMap};
+
 use cairo_vm::hint_processor::hint_processor_definition::HintProcessor;
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::types::layout::CairoLayoutParams;
@@ -7,9 +10,16 @@ use cairo_vm::vm::errors::cairo_run_errors::CairoRunError;
 use cairo_vm::vm::errors::memory_errors::MemoryError;
 use cairo_vm::vm::errors::vm_errors::VirtualMachineError;
 use cairo_vm::vm::runners::builtin_runner::BuiltinRunner;
-use cairo_vm::vm::runners::cairo_runner::{CairoArg, CairoRunner, ExecutionResources};
+use cairo_vm::vm::runners::cairo_runner::{
+    CairoArg,
+    CairoRunner,
+    CairoRunnerBuilder,
+    ExecutionResources,
+    RunnerMode,
+};
 use cairo_vm::vm::security::verify_secure_runner;
 use num_traits::{ToPrimitive, Zero};
+use starknet_api::core::ClassHash;
 use starknet_types_core::felt::Felt;
 
 use crate::blockifier_versioned_constants::GasCosts;
@@ -139,6 +149,10 @@ pub fn execute_entry_point_call(
     )?)
 }
 
+thread_local! {
+    pub static CACHE: RefCell<HashMap<ClassHash, CairoRunnerBuilder>> = RefCell::new(HashMap::default());
+}
+
 pub fn initialize_execution_context_with_runner_mode<'a>(
     call: ExecutableCallEntryPoint,
     compiled_class: &'a CompiledClassV1,
@@ -148,35 +162,56 @@ pub fn initialize_execution_context_with_runner_mode<'a>(
 ) -> Result<VmExecutionContext<'a>, PreExecutionError> {
     let entry_point = compiled_class.get_entry_point(&call.type_and_selector())?;
 
-    // Instantiate Cairo runner.
-    let mut runner = CairoRunner::new(
-        &compiled_class.0.program,
-        LayoutName::starknet,
-        execution_runner_mode.dynamic_layout_params(),
-        execution_runner_mode.proof_mode(),
-        execution_runner_mode.trace_enabled(),
-        execution_runner_mode.disable_trace_padding(),
-    )?;
+    let class_hash = call.class_hash.clone();
 
-    runner.initialize_function_runner_cairo_1(&entry_point.builtins)?;
-    let mut read_only_segments = ReadOnlySegments::default();
+    // Instantiate syscall handler.
+    let mut syscall_handler = SyscallHintProcessor::new(
+        state,
+        context,
+        Relocatable::from((0, 0)),
+        call,
+        &compiled_class.hints,
+        ReadOnlySegments::default(),
+    );
+
+    let mut cairo_runner_builder: CairoRunnerBuilder = CACHE
+        .with_borrow_mut(|cache| -> Result<_, VirtualMachineError> {
+            match cache.entry(class_hash) {
+                hash_map::Entry::Occupied(occupied_entry) => Ok(occupied_entry.get().clone()),
+                hash_map::Entry::Vacant(vacant_entry) => {
+                    let mut cairo_runner_builder = CairoRunnerBuilder::new(
+                        &compiled_class.program,
+                        LayoutName::starknet,
+                        None,
+                        RunnerMode::ExecutionMode,
+                    )?;
+                    cairo_runner_builder.enable_trace(execution_runner_mode.trace_enabled());
+                    cairo_runner_builder.disable_trace_padding(false);
+                    cairo_runner_builder.allow_missing_builtins(false);
+                    cairo_runner_builder.initialize_base_segments();
+                    cairo_runner_builder.load_program()?;
+                    cairo_runner_builder.compile_hints(&mut syscall_handler).unwrap();
+                    cairo_runner_builder
+                        .preallocate_segment(cairo_runner_builder.get_program_base().unwrap(), 2)?;
+                    Ok(vacant_entry.insert(cairo_runner_builder).clone())
+                }
+            }
+        })
+        .unwrap();
+
+    cairo_runner_builder.initialize_builtin_runners(&entry_point.builtins)?;
+    cairo_runner_builder.initialize_builtin_segments();
+
+    let mut runner = cairo_runner_builder.build()?;
+    let initial_syscall_ptr = runner.vm.add_memory_segment();
+    syscall_handler.syscall_ptr = initial_syscall_ptr;
+
     let program_extra_data_length = prepare_program_extra_data(
         &mut runner,
         compiled_class.bytecode_length(),
-        &mut read_only_segments,
-        &context.versioned_constants().os_constants.gas_costs,
+        &mut syscall_handler.read_only_segments,
+        &syscall_handler.base.context.versioned_constants().os_constants.gas_costs,
     )?;
-
-    // Instantiate syscall handler.
-    let initial_syscall_ptr = runner.vm.add_memory_segment();
-    let syscall_handler = SyscallHintProcessor::new(
-        state,
-        context,
-        initial_syscall_ptr,
-        call,
-        &compiled_class.hints,
-        read_only_segments,
-    );
 
     Ok(VmExecutionContext {
         runner,
@@ -309,7 +344,7 @@ pub fn run_entry_point<HP: HintProcessor>(
     // Note that we run `verify_secure_runner` manually after filling the holes in the rc96 segment.
     let verify_secure = false;
     let args: Vec<&CairoArg> = args.iter().collect();
-    runner.run_from_entrypoint(
+    runner.run_from_entrypoint_v2(
         entry_point.pc(),
         &args,
         verify_secure,
@@ -444,6 +479,16 @@ pub fn finalize_execution(
     program_extra_data_length: usize,
     tracked_resource: TrackedResource,
 ) -> Result<CallInfo, PostExecutionError> {
+    CACHE.with_borrow_mut(|cache| -> Result<(), VirtualMachineError> {
+        match cache.get_mut(&syscall_handler.base.call.class_hash) {
+            Some(builder) => {
+                builder.load_cached_instructions(runner.vm.take_instruction_cache())?
+            }
+            None => (),
+        }
+        Ok(())
+    })?;
+
     finalize_runner(&mut runner, n_total_args, program_extra_data_length)?;
     syscall_handler.read_only_segments.mark_as_accessed(&mut runner)?;
 
