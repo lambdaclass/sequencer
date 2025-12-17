@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use apollo_config::dumping::{prepend_sub_config_name, ser_param, SerializeConfig};
+use apollo_config::dumping::{SerializeConfig, prepend_sub_config_name, ser_param};
 use apollo_config::{ParamPath, ParamPrivacyInput, SerializedParam};
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
@@ -969,7 +969,7 @@ pub fn get_patricia_update_resources(
 
     let resources_per_tree_access = ExecutionResources {
         n_steps: TREE_HEIGHT_UPPER_BOUND * STEPS_IN_TREE_PER_HEIGHT,
-        builtin_instance_counter: HashMap::from([(
+        builtin_instance_counter: BTreeMap::from([(
             BuiltinName::pedersen,
             TREE_HEIGHT_UPPER_BOUND * PEDERSENS_PER_HEIGHT,
         )]),

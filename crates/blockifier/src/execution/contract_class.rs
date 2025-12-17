@@ -1,16 +1,16 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{Deref, Index};
 use std::sync::{Arc, LazyLock};
 
 use cairo_lang_casm;
 use cairo_lang_casm::hints::Hint;
+use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_starknet_classes::casm_contract_class::{
     CasmContractClass,
     CasmContractEntryPoint,
     CasmContractEntryPoints,
 };
-use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cairo_vm::serde::deserialize_program::{
     ApTracking,
@@ -356,7 +356,7 @@ impl CompiledClassV0 {
         ExecutionResources {
             n_steps,
             n_memory_holes: 0,
-            builtin_instance_counter: HashMap::from([(BuiltinName::pedersen, hashed_data_size)]),
+            builtin_instance_counter: BTreeMap::from([(BuiltinName::pedersen, hashed_data_size)]),
         }
     }
 

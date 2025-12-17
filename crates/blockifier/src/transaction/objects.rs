@@ -15,10 +15,10 @@ use starknet_api::transaction::fields::{
     ValidResourceBounds,
 };
 use starknet_api::transaction::{
-    signed_tx_version,
     TransactionHash,
     TransactionOptions,
     TransactionVersion,
+    signed_tx_version,
 };
 
 use crate::abi::constants as abi_constants;
@@ -288,7 +288,7 @@ impl ExecutionResourcesTraits for ExecutionResources {
 
         // See "total_n_steps" documentation.
         builtins.remove(&BuiltinName::segment_arena);
-        builtins
+        builtins.into_iter().collect()
     }
 
     fn div_ceil(&self, rhs: usize) -> ExecutionResources {
