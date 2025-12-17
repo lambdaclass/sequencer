@@ -15,10 +15,10 @@ use starknet_api::transaction::fields::{
     ValidResourceBounds,
 };
 use starknet_api::transaction::{
+    signed_tx_version,
     TransactionHash,
     TransactionOptions,
     TransactionVersion,
-    signed_tx_version,
 };
 
 use crate::abi::constants as abi_constants;

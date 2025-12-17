@@ -5,12 +5,12 @@ use std::sync::{Arc, LazyLock};
 
 use cairo_lang_casm;
 use cairo_lang_casm::hints::Hint;
-use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_starknet_classes::casm_contract_class::{
     CasmContractClass,
     CasmContractEntryPoint,
     CasmContractEntryPoints,
 };
+use cairo_lang_starknet_classes::NestedIntList;
 use cairo_lang_utils::bigint::BigUintAsHex;
 use cairo_vm::serde::deserialize_program::{
     ApTracking,
