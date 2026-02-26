@@ -72,7 +72,7 @@ impl ContractExecutor {
         args: &[Felt],
         gas: u64,
         builtin_costs: Option<BuiltinCosts>,
-        syscall_handler: &mut NativeSyscallHandler<'_>,
+        mut syscall_handler: &mut NativeSyscallHandler<'_>,
     ) -> cairo_native::error::Result<ContractExecutionResult> {
         match self {
             ContractExecutor::Aot(aot_contract_executor) => {
@@ -100,7 +100,7 @@ impl ContractExecutor {
                     static COUNTER: AtomicU64 = AtomicU64::new(0);
                     let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                    let trace = virtual_machine.run_with_trace(syscall_handler);
+                    let trace = virtual_machine.run_with_trace(&mut syscall_handler);
 
                     let trace_path = PathBuf::from(format!("traces/emu/{counter}.json"));
                     let trace_parent_path = trace_path.parent().unwrap();
@@ -114,7 +114,7 @@ impl ContractExecutor {
 
                     sierra_emu::ContractExecutionResult::from_trace(&trace).unwrap()
                 } else {
-                    virtual_machine.run(syscall_handler).unwrap()
+                    virtual_machine.run(&mut syscall_handler).unwrap()
                 };
 
                 Ok(ContractExecutionResult {
