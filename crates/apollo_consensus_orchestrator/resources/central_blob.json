@@ -436,7 +436,12 @@
                 "call_count": 2,
                 "linear_factor": 0
               }
-            }
+            },
+            "time": {
+              "secs": 0,
+              "nanos": 0
+            },
+            "call_counter": 0
           }
         ],
         "resources": {
@@ -491,7 +496,12 @@
             "call_count": 2,
             "linear_factor": 0
           }
-        }
+        },
+        "time": {
+          "secs": 0,
+          "nanos": 0
+        },
+        "call_counter": 0
       },
       "execute_call_info": {
         "call": {
@@ -653,7 +663,12 @@
                 "call_count": 2,
                 "linear_factor": 0
               }
-            }
+            },
+            "time": {
+              "secs": 0,
+              "nanos": 0
+            },
+            "call_counter": 0
           }
         ],
         "resources": {
@@ -708,7 +723,12 @@
             "call_count": 2,
             "linear_factor": 0
           }
-        }
+        },
+        "time": {
+          "secs": 0,
+          "nanos": 0
+        },
+        "call_counter": 0
       },
       "fee_transfer_call_info": {
         "call": {
@@ -870,7 +890,12 @@
                 "call_count": 2,
                 "linear_factor": 0
               }
-            }
+            },
+            "time": {
+              "secs": 0,
+              "nanos": 0
+            },
+            "call_counter": 0
           }
         ],
         "resources": {
@@ -925,7 +950,12 @@
             "call_count": 2,
             "linear_factor": 0
           }
-        }
+        },
+        "time": {
+          "secs": 0,
+          "nanos": 0
+        },
+        "call_counter": 0
       },
       "actual_fee": "0x26fe9d250e000",
       "da_gas": {

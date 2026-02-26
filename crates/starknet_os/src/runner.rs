@@ -80,6 +80,7 @@ fn run_program<'a, HP: HintProcessor + CommonHintProcessor<'a>>(
         cairo_run_config.disable_trace_padding,
         disable_finalize_all,
         hint_processor,
+        cairo_run_config.fill_holes,
     )?;
 
     if cairo_run_config.proof_mode {
@@ -93,7 +94,7 @@ fn run_program<'a, HP: HintProcessor + CommonHintProcessor<'a>>(
         .read_return_values(allow_missing_builtins)
         .map_err(StarknetOsError::RunnerError)?;
     cairo_runner
-        .relocate(cairo_run_config.relocate_mem)
+        .relocate(cairo_run_config.relocate_mem, true)
         .map_err(|e| StarknetOsError::VirtualMachineError(e.into()))?;
 
     // Parse the Cairo VM output.

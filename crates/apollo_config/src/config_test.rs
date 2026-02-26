@@ -226,11 +226,13 @@ fn test_config_presentation() {
         f: 0.5,
     };
     let presentation = get_config_presentation(&config, true).unwrap();
-    let keys: Vec<_> = presentation.as_object().unwrap().keys().collect();
+    let mut keys: Vec<_> = presentation.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
     assert_eq!(keys, vec!["a", "b", "c", "d", "e", "f"]);
 
     let public_presentation = get_config_presentation(&config, false).unwrap();
-    let keys: Vec<_> = public_presentation.as_object().unwrap().keys().collect();
+    let mut keys: Vec<_> = public_presentation.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
     assert_eq!(keys, vec!["a", "b", "d", "e", "f"]);
 }
 
@@ -252,10 +254,12 @@ fn test_nested_config_presentation() {
 
     for config in configs {
         let presentation = get_config_presentation(&config, true).unwrap();
-        let keys: Vec<_> = presentation.as_object().unwrap().keys().collect();
+        let mut keys: Vec<_> = presentation.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
         assert_eq!(keys, vec!["inner_config", "opt_config", "opt_elem"]);
         let public_presentation = get_config_presentation(&config, false).unwrap();
-        let keys: Vec<_> = public_presentation.as_object().unwrap().keys().collect();
+        let mut keys: Vec<_> = public_presentation.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
         assert_eq!(keys, vec!["inner_config", "opt_config", "opt_elem"]);
     }
 }

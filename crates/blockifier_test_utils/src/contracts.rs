@@ -86,9 +86,9 @@ const LEGACY_CONTRACT_COMPILER_VERSION: &str = "2.1.0";
 const CAIRO_STEPS_TEST_CONTRACT_COMPILER_VERSION: &str = "2.7.0";
 
 const ACCOUNT_LONG_VALIDATE_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0x10a750f887ff1b9a48e323e882f4a46e60922c398aa3b661333aafb1dd4d408"];
+    expect!["0x3b95a890b6ec1c7360dae74c79bd3c6c8702b615c0959857263f1012ee8fd95"];
 const ACCOUNT_LONG_VALIDATE_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x542acbb40fad0e9bf07b0d40ed72bfa3bea011a99d56ca568acdd9cf4360da4"];
+    expect!["0x14403806028aca329d0b0688e7657c20fababbbf84c943c2d3f7a5826efdeb3"];
 
 const ACCOUNT_WITHOUT_VALIDATIONS_COMPILED_CLASS_HASH_V1: expect_test::Expect =
     expect!["0x4709fae1451c5a159b880f568d01ca623ce96e8943c7df91cf696940692b58"];
@@ -116,9 +116,9 @@ const EMPTY_COMPILED_CLASS_HASH_V2: expect_test::Expect =
     expect!["0x6ee46561691e785d643a8296b9bf08008e432df405a1a4beb6ed784541b571c"];
 
 const FAULTY_ACCOUNT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0xfdb78bea47a0b1464f38b2d29997edac084bbed4e63e1eef240ffb86a34ab2"];
+    expect!["0x66128249de909088d8a1826f9f8a250843b7ac5f76ed14b179255cf0385bc36"];
 const FAULTY_ACCOUNT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x61b026bb31a602576477ad3b683aa3dd4080e3f845ab7f24ffc125a5dfc71bf"];
+    expect!["0x19faeef03ae8855f401c441166218ebf68b600244021b611a11a349839ce628"];
 
 const LEGACY_CONTRACT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
     expect!["0x1e9f18319ec0f9a4158522e9ccf356c08e9a074609b972a3b8fb2a8e49a2994"];
@@ -126,24 +126,24 @@ const LEGACY_CONTRACT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
     expect!["0x6d9f03fde30543af9a457c4fcc13aced0ce27ef4e5a498a143d483b23711f32"];
 
 const TEST_CONTRACT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0x4c5e714439d366f95ead7c04ca8c2b7d428f9bf37e7eb443d894e76f1110a19"];
+    expect!["0x7bf1a53ea7f205115746efb6d6a2b4a5c28ff9908044f07583de6043dbd8104"];
 const TEST_CONTRACT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x143ef3b65791304f28f3db97b9bd687bc7491a635724282857bb8347f3a9a52"];
+    expect!["0x3b3b31bc2cc18ff8a5e8d07a60ac0b48be629ff7b33aed4fdb9f1a324a79df8"];
 
 const SIERRA_EXECUTION_INFO_V1_CONTRACT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0x728a998871aed1335e5a7757119cdd88785e4ce9cc90bbf90075f39b34b22e5"];
+    expect!["0x6dc569620302cd04c9b4aee168d0c87db66c5c70c804b68311d2bb5a0ff51c0"];
 const SIERRA_EXECUTION_INFO_V1_CONTRACT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x2d7880420d28543b7a71d3b90d786729170e494c92b9cf97e04b5a0c7ffbe49"];
+    expect!["0x603c1e16f3271a8a4a77c1776b4e8c7c50a9f7297cf44282b8e1afc919357fc"];
 
 const META_TX_CONTRACT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0x7d8d6dab768dcdb34839588cb7e8279646a864c44755168d5c49c63cedf4fe8"];
+    expect!["0x35b01a1ca23819705dafc6a79cc1d66a387f0551b2d0998b90f38a0b702c38a"];
 const META_TX_CONTRACT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x6417ea9b788437bba0d1d34b725dfad6f4c0cbc6de13563b2a1647958c2e41f"];
+    expect!["0x7bf49f8ae41e9b6b1c9431c3aa8856f5470645fa87f27655b4b1299e2066e0f"];
 
 const MOCK_STAKING_CONTRACT_COMPILED_CLASS_HASH_V1: expect_test::Expect =
-    expect!["0x49a8fc93d796516a98d5517d6440ed71f479319f5b0aa786c9cb03440e84982"];
+    expect!["0x6f914e6a788e95c72ab740ce44b652233aa49ac5b551484625e2ef41be1fc47"];
 const MOCK_STAKING_CONTRACT_COMPILED_CLASS_HASH_V2: expect_test::Expect =
-    expect!["0x3effc9574d4d25956524a806d0582a64a62fa8ec66f335366462ec670527724"];
+    expect!["0x3019f5a9a95de7e95701dc4ddd3c794588284505e3679e7581d34e5f97ce487"];
 
 pub type CairoVersionString = String;
 

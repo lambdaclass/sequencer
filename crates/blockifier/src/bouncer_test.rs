@@ -669,14 +669,16 @@ fn test_proving_gas_minus_sierra_gas_equals_builtin_gas(
     .unwrap();
 
     // Combine TX + TX overhead (OS) + CASM and patricia builtin usage.
+    let mut combined_builtins: HashMap<BuiltinName, usize> =
+        tx_builtin_counters.into_iter().collect();
     add_maps(
-        &mut tx_builtin_counters.clone().into_iter().collect(),
+        &mut combined_builtins,
         &os_vm_resources.builtin_instance_counter.into_iter().collect(),
     );
-    add_maps(&mut tx_builtin_counters.clone().into_iter().collect(), &additional_os_resources);
+    add_maps(&mut combined_builtins, &additional_os_resources);
 
     // Compute expected gas delta from builtin delta (absolute difference between Stwo and Stone).
-    let (total_stwo_gas, total_stone_gas) = tx_builtin_counters
+    let (total_stwo_gas, total_stone_gas) = combined_builtins
         .iter()
         .map(|(name, count)| {
             let stwo_gas = block_context
@@ -782,11 +784,11 @@ fn class_hash_migration_data_from_state(
 
     if should_migrate {
         expect![[r#"
-            80595392
+            81030024
         "#]]
         .assert_debug_eq(&migration_sierra_gas.0);
         expect![[r#"
-            208984480
+            209990980
         "#]]
         .assert_debug_eq(&migration_proving_gas.0);
     } else {
