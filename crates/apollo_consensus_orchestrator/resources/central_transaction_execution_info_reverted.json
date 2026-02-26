@@ -171,7 +171,12 @@
             "call_count": 2,
             "linear_factor": 0
           }
-        }
+        },
+        "time": {
+          "secs": 0,
+          "nanos": 0
+        },
+        "call_counter": 0
       }
     ],
     "resources": {
@@ -226,7 +231,12 @@
         "call_count": 2,
         "linear_factor": 0
       }
-    }
+    },
+    "time": {
+      "secs": 0,
+      "nanos": 0
+    },
+    "call_counter": 0
   },
   "revert_error": "Insufficient fee token balance. Fee: 1, balance: low/high 2/3.",
   "total_gas": {
@@ -394,7 +404,12 @@
             "call_count": 2,
             "linear_factor": 0
           }
-        }
+        },
+        "time": {
+          "secs": 0,
+          "nanos": 0
+        },
+        "call_counter": 0
       }
     ],
     "resources": {
@@ -449,6 +464,11 @@
         "call_count": 2,
         "linear_factor": 0
       }
-    }
+    },
+    "time": {
+      "secs": 0,
+      "nanos": 0
+    },
+    "call_counter": 0
   }
 }

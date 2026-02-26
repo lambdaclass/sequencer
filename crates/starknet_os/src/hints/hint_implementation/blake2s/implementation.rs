@@ -41,6 +41,8 @@ pub(crate) fn unpack_setup<'a>(
 /// Unpacks felt values into u32 arrays for Blake2s processing.
 /// This implements the Cairo hint that converts felt values to u32 arrays
 /// following the Blake2s encoding scheme.
+/// Note: As of cairo-vm 3.1.0, this hint is handled natively by the VM.
+#[allow(dead_code)]
 pub(crate) fn unpack_felts_to_u32s(
     HintArgs { vm, ids_data, ap_tracking, .. }: HintArgs<'_>,
 ) -> OsHintResult {
@@ -74,6 +76,8 @@ pub(crate) fn unpack_felts_to_u32s(
 
 /// Checks if we've reached the end of packed_values and if the current value is small (< 2^63).
 /// This implements the Cairo hint that determines loop continuation and value size.
+/// Note: As of cairo-vm 3.1.0, this hint is handled natively by the VM.
+#[allow(dead_code)]
 pub(crate) fn check_packed_values_end_and_size(
     HintArgs { vm, ids_data, ap_tracking, .. }: HintArgs<'_>,
 ) -> OsHintResult {

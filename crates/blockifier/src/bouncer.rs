@@ -414,6 +414,7 @@ impl BuiltinWeights {
                 mul_mod: 0,
                 add_mod: 0,
                 range_check96: 0,
+                blake: 0,
             },
         }
     }
@@ -433,6 +434,7 @@ impl Default for BuiltinWeights {
                 add_mod: 358,
                 mul_mod: 358,
                 range_check96: 179,
+                blake: 0, // TODO(tomerstarkware): Add blake gas cost
             },
         }
     }

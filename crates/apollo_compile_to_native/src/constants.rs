@@ -3,5 +3,11 @@
 // must avoid relying on env variables such as 'CARGO_*' or 'OUT_DIR'.
 
 pub(crate) const CAIRO_NATIVE_BINARY_NAME: &str = "starknet-native-compile";
+// TODO(Avi): Remove git URL/branch constants once cairo-native publishes a release with blake
+// builtin support, and revert to installing from crates.io.
+pub const CAIRO_NATIVE_GIT_URL: &str = "https://github.com/lambdaclass/cairo_native";
+pub const CAIRO_NATIVE_GIT_BRANCH: &str = "tomer/blake_builtin";
 
-pub const REQUIRED_CAIRO_NATIVE_VERSION: &str = "0.7.2";
+// Kept for the version check on the installed binary (--version output).Expand commentComment on
+// line R12Resolved
+pub const REQUIRED_CAIRO_NATIVE_VERSION: &str = "0.9.0-rc.1";

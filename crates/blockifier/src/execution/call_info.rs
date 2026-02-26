@@ -230,7 +230,7 @@ pub struct StorageAccessTracker {
 /// Represents the full effects of executing an entry point, including the inner calls it invoked.
 #[cfg_attr(any(test, feature = "testing"), derive(Clone))]
 #[cfg_attr(feature = "transaction_serde", derive(serde::Deserialize))]
-#[derive(Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Debug, Default, Eq, Serialize)]
 pub struct CallInfo {
     pub call: CallEntryPoint,
     pub execution: CallExecution,
@@ -239,6 +239,8 @@ pub struct CallInfo {
     pub tracked_resource: TrackedResource,
 
     // Additional information gathered during execution.
+    // Note: `time` and `call_counter` are excluded from PartialEq as they are non-deterministic
+    // execution metadata.
     pub time: std::time::Duration,
     pub call_counter: usize,
     pub storage_access_tracker: StorageAccessTracker,
@@ -247,6 +249,33 @@ pub struct CallInfo {
     pub builtin_counters: BuiltinCounterMap,
     // Tracks how many times each syscall was called during execution (excluding inner calls).
     pub syscalls_usage: SyscallUsageMap,
+}
+
+impl PartialEq for CallInfo {
+    fn eq(&self, other: &Self) -> bool {
+        let CallInfo {
+            call,
+            execution,
+            inner_calls,
+            resources,
+            tracked_resource,
+            // Exclude non-deterministic execution metadata from comparison.
+            time: _,
+            call_counter: _,
+            storage_access_tracker,
+            builtin_counters,
+            syscalls_usage,
+        } = self;
+
+        *call == other.call
+            && *execution == other.execution
+            && *inner_calls == other.inner_calls
+            && *resources == other.resources
+            && *tracked_resource == other.tracked_resource
+            && *storage_access_tracker == other.storage_access_tracker
+            && *builtin_counters == other.builtin_counters
+            && *syscalls_usage == other.syscalls_usage
+    }
 }
 
 impl CallInfo {

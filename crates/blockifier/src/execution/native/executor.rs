@@ -92,6 +92,7 @@ impl ContractExecutor {
                     poseidon: builtin_costs.poseidon,
                     add_mod: builtin_costs.add_mod,
                     mul_mod: builtin_costs.mul_mod,
+                    blake: builtin_costs.blake,
                 });
 
                 let args = args.to_owned();

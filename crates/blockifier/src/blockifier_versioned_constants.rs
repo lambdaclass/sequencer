@@ -922,6 +922,7 @@ pub struct BuiltinGasCosts {
     pub add_mod: u64,
     pub mul_mod: u64,
     pub ecdsa: u64,
+    pub blake: u64,
 }
 
 impl BuiltinGasCosts {

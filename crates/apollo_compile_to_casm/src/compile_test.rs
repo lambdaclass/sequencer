@@ -128,8 +128,10 @@ fn allowed_libfuncs_aligned_to_audited() {
 
     // Audited libfuncs are usually added as versions progress, but can also be deprecated;
     // test both directions.
-    let missing: Vec<_> = expected.difference(&actual).map(ToString::to_string).collect();
-    let extra: Vec<_> = actual.difference(&expected).map(ToString::to_string).collect();
+    let expected_keys: std::collections::HashSet<_> = expected.keys().collect();
+    let actual_keys: std::collections::HashSet<_> = actual.keys().collect();
+    let missing: Vec<_> = expected_keys.difference(&actual_keys).map(ToString::to_string).collect();
+    let extra: Vec<_> = actual_keys.difference(&expected_keys).map(ToString::to_string).collect();
     assert_eq!(
         (missing, extra),
         (Vec::<String>::new(), Vec::<String>::new()),
